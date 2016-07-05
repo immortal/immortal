@@ -11,11 +11,16 @@ import (
 var version, githash string
 
 func main() {
-	var p = flag.String("f", "", "Path of PID file")
-	var q = flag.Bool("q", false, "Quiet mode, redirect standar output, error to /dev/null")
-	var u = flag.String("u", "", "Execute command on behalf user")
-	var v = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
-	var c = flag.String("c", "", "run.yml configuration file")
+	var (
+		p   = flag.String("p", "", "PID file")
+		q   = flag.Bool("q", false, "Quiet mode, redirect standar output, error to /dev/null")
+		u   = flag.String("u", "", "Execute command on behalf user")
+		v   = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
+		c   = flag.String("c", "", "run.yml configuration file")
+		err error
+		usr *user.User
+		D   *ir.Daemon
+	)
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [-qv] [-f pid_file] [-u user] command arguments\n\n", os.Args[0])
@@ -42,14 +47,14 @@ func main() {
 	}
 
 	if *c != "" {
-		if _, err := os.Stat(*c); os.IsNotExist(err) {
+		if _, err = os.Stat(*c); os.IsNotExist(err) {
 			fmt.Printf("Cannot read file: %s, use -h for more info.\n\n", *c)
 			os.Exit(1)
 		}
 	}
 
 	if *u != "" {
-		_, err := user.Lookup(*u)
+		usr, err = user.Lookup(*u)
 		if err != nil {
 			if _, ok := err.(user.UnknownUserError); ok {
 				fmt.Printf("User %s does not exist.", *u)
@@ -60,15 +65,15 @@ func main() {
 		}
 	}
 
-	ir.Fork()
-
-	cmd, err := ir.New(u, p, q)
+	D, err = ir.New(usr, c, p, q)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	err = cmd.Run(flag.Args())
+	D.Fork()
+
+	err = D.Run(flag.Args())
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

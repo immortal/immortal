@@ -2,8 +2,9 @@ package immortal
 
 import (
 	"bufio"
-	"fmt"
+	"gopkg.in/yaml.v2"
 	"io"
+	"io/ioutil"
 	"os/exec"
 	"os/user"
 	"strconv"
@@ -11,28 +12,34 @@ import (
 )
 
 type Daemon struct {
-	owner  *user.User
-	follow string
-	quiet  bool
+	owner   *user.User
+	Pidfile string
+	Quiet   bool
+	Env     map[string]string
+	Cmd     string
+	Cwd     string
+	signals map[string]string
 }
 
-func New(u, f *string, q *bool) (*Daemon, error) {
-	if *u == "" {
-		return &Daemon{nil, *f, *q}, nil
-	}
-	// check if user exist and if not exit
-	usr, err := user.Lookup(*u)
-	if err != nil {
-		if _, ok := err.(user.UnknownUserError); ok {
-			return nil, fmt.Errorf("User %s does not exist.", *u)
-		} else if err != nil {
-			return nil, fmt.Errorf("Error looking up user: %s", *u)
+func New(u *user.User, c, p *string, q *bool) (*Daemon, error) {
+	if *c != "" {
+		yml_file, err := ioutil.ReadFile(*c)
+		if err != nil {
+			return nil, err
 		}
+
+		var D Daemon
+
+		if err := yaml.Unmarshal(yml_file, &D); err != nil {
+			return nil, err
+		}
+
+		return &D, nil
 	}
 	return &Daemon{
-		owner:  usr,
-		follow: *f,
-		quiet:  *q,
+		owner:   u,
+		Pidfile: *p,
+		Quiet:   *q,
 	}, nil
 }
 

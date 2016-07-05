@@ -7,7 +7,7 @@ import (
 	"syscall"
 )
 
-func Fork() {
+func (self *Daemon) Fork() {
 	if os.Getppid() > 1 {
 		args := os.Args[1:]
 		cmd := exec.Command(os.Args[0], args...)
