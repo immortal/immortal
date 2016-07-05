@@ -16,7 +16,7 @@ type Daemon struct {
 	quiet  bool
 }
 
-func NewDaemon(u, f *string, q *bool) (*Daemon, error) {
+func New(u, f *string, q *bool) (*Daemon, error) {
 	if *u == "" {
 		return &Daemon{nil, *f, *q}, nil
 	}
