@@ -2,12 +2,22 @@ package immortal
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"time"
 )
 
 func Log(s string) {
 	t := time.Now().UTC().Format(time.RFC3339Nano)
 	log := fmt.Sprintf("%s %s\n", t, s)
-	_ = ioutil.WriteFile("/tmp/immortal.log", []byte(log), 0644)
+
+	f, err := os.OpenFile("/tmp/immortal.log", os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		panic(err)
+	}
+
+	defer f.Close()
+
+	if _, err = f.WriteString(log); err != nil {
+		panic(err)
+	}
 }

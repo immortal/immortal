@@ -2,23 +2,16 @@ package immortal
 
 import (
 	"bufio"
-	"io"
-	"os/exec"
+	"fmt"
+	"os"
 	"strconv"
 	"syscall"
 )
 
 func (self *Daemon) Run(args []string) error {
-	cmd := exec.Command(args[0], args[1:]...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
+	procAttr := new(os.ProcAttr)
 
+	//	https://golang.org/pkg/syscall/#SysProcAttr
 	if self.owner != nil {
 		uid, err := strconv.Atoi(self.owner.Uid)
 		if err != nil {
@@ -30,7 +23,7 @@ func (self *Daemon) Run(args []string) error {
 			return err
 		}
 
-		cmd.SysProcAttr = &syscall.SysProcAttr{
+		procAttr.Sys = &syscall.SysProcAttr{
 			Credential: &syscall.Credential{
 				Uid: uint32(uid),
 				Gid: uint32(gid),
@@ -38,19 +31,30 @@ func (self *Daemon) Run(args []string) error {
 		}
 	}
 
-	if err := cmd.Start(); err != nil {
-		return err
+	r, w, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+	defer r.Close()
+	procAttr.Files = []*os.File{nil, w, w}
+	process, err := os.StartProcess(args[0], args, procAttr)
+	if err != nil {
+		Log(fmt.Sprintf("ERROR Unable to run %s: %s\n", os.Args[0], err.Error()))
 	}
 
-	// write each line to your log, or anything you need
-	in := bufio.NewScanner(io.MultiReader(stdout, stderr))
+	Log(fmt.Sprintf("%s running as pid %d", args[0], process.Pid))
+
+	// write log
+	in := bufio.NewScanner(r)
 	for in.Scan() {
 		Log(in.Text())
 	}
 
-	if err := cmd.Wait(); err != nil {
-		return err
+	processState, err := process.Wait()
+	if err != nil {
+		Log(err.Error())
 	}
+	Log(fmt.Sprintf("%#v", processState))
 
 	return nil
 }
