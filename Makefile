@@ -19,7 +19,7 @@ build: get
 	${GO} build -ldflags "-X main.version=${VERSION} -X main.githash=${GITHASH}" -o ${BIN_NAME} cmd/immortal/main.go;
 
 clean:
-	@rm -rf ${BIN_NAME} ${BIN_NAME}.debug *.out build debian
+	@rm -rf ir-* ${BIN_NAME} ${BIN_NAME}.debug *.out build debian
 
 test: get
 	${GO} test -v
