@@ -1,0 +1,17 @@
+cmd: bundle exec unicorn -c unicorn.rb
+cwd: /tmp
+env:
+    DEBUG: 1
+    ENVIROMENT: production
+pid: /path/to/unicorn.pid
+user: www
+# SIGKILL and SIGSTOP cannot be blocked.
+if_signal:
+    HUP:
+    INT:
+    TERM:
+    USR1:
+    USR2:
+    WINCH:
+    TTIN:
+    TTOU:

@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	ir "github.com/nbari/immortal"
+	ir "github.com/immortal/go"
 	"os"
 )
 
@@ -14,6 +14,7 @@ func main() {
 	var q = flag.Bool("q", false, "Redirect standar input, output, error to /dev/null\n")
 	var u = flag.String("u", "", "Execute command on behalf user\n")
 	var v = flag.Bool("v", false, fmt.Sprintf("Print version: %s\n", version))
+	var c = flag.String("c", "run.yml", "immortal configuration file")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [-qv] [-f pid_file] [-u user] command arguments\n\n", os.Args[0])
@@ -36,6 +37,11 @@ func main() {
 	// if no args exit
 	if len(flag.Args()) < 1 {
 		fmt.Fprintf(os.Stderr, "Missing command (\"%s -h\") for help", os.Args[0])
+		os.Exit(1)
+	}
+
+	if _, err := os.Stat(*c); os.IsNotExist(err) {
+		fmt.Printf("Cannot read file: %s, use -h for more info.\n\n", *f)
 		os.Exit(1)
 	}
 

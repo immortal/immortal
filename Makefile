@@ -15,7 +15,7 @@ build: get
 	${GO} build -ldflags "-X main.version=${VERSION} -X main.githash=${GITHASH}" -o immortal cmd/immortal/main.go;
 
 clean:
-	@rm -rf ir-* *.out immortalize build debian
+	@rm -rf ir-* *.out immortal build debian
 
 test: get
 	${GO} test -v
