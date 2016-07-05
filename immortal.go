@@ -8,7 +8,6 @@ import (
 	"os/user"
 	"strconv"
 	"syscall"
-	"time"
 )
 
 type Daemon struct {
@@ -35,11 +34,6 @@ func NewDaemon(u, f *string, q *bool) (*Daemon, error) {
 		follow: *f,
 		quiet:  *q,
 	}, nil
-}
-
-func (self *Daemon) Log(s string) {
-	t := time.Now().UTC().Format(time.RFC3339Nano)
-	fmt.Printf("%s %s\n", t, s)
 }
 
 func (self *Daemon) Run(args []string) error {
@@ -79,7 +73,7 @@ func (self *Daemon) Run(args []string) error {
 	// write each line to your log, or anything you need
 	in := bufio.NewScanner(io.MultiReader(stdout, stderr))
 	for in.Scan() {
-		self.Log(in.Text())
+		Log(in.Text())
 	}
 
 	if err := cmd.Wait(); err != nil {

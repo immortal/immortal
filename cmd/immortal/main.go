@@ -14,7 +14,7 @@ func main() {
 	var q = flag.Bool("q", false, "Redirect standar input, output, error to /dev/null\n")
 	var u = flag.String("u", "", "Execute command on behalf user\n")
 	var v = flag.Bool("v", false, fmt.Sprintf("Print version: %s\n", version))
-	var c = flag.String("c", "run.yml", "immortal configuration file")
+	var c = flag.String("c", "", "run.yml configuration file")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [-qv] [-f pid_file] [-u user] command arguments\n\n", os.Args[0])
@@ -40,9 +40,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := os.Stat(*c); os.IsNotExist(err) {
-		fmt.Printf("Cannot read file: %s, use -h for more info.\n\n", *f)
-		os.Exit(1)
+	if *c != "" {
+		if _, err := os.Stat(*c); os.IsNotExist(err) {
+			fmt.Printf("Cannot read file: %s, use -h for more info.\n\n", *f)
+			os.Exit(1)
+		}
 	}
 
 	cmd, err := ir.NewDaemon(u, f, q)
