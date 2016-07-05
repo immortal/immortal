@@ -2,46 +2,11 @@ package immortal
 
 import (
 	"bufio"
-	"gopkg.in/yaml.v2"
 	"io"
-	"io/ioutil"
 	"os/exec"
-	"os/user"
 	"strconv"
 	"syscall"
 )
-
-type Daemon struct {
-	owner   *user.User
-	Pidfile string
-	Quiet   bool
-	Env     map[string]string
-	Cmd     string
-	Cwd     string
-	signals map[string]string
-}
-
-func New(u *user.User, c, p *string, q *bool) (*Daemon, error) {
-	if *c != "" {
-		yml_file, err := ioutil.ReadFile(*c)
-		if err != nil {
-			return nil, err
-		}
-
-		var D Daemon
-
-		if err := yaml.Unmarshal(yml_file, &D); err != nil {
-			return nil, err
-		}
-
-		return &D, nil
-	}
-	return &Daemon{
-		owner:   u,
-		Pidfile: *p,
-		Quiet:   *q,
-	}, nil
-}
 
 func (self *Daemon) Run(args []string) error {
 	cmd := exec.Command(args[0], args[1:]...)

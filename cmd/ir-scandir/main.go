@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	ir "github.com/immortal/go"
+	ir "github.com/immortal/immortal"
 	"os"
 )
 

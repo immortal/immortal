@@ -20,7 +20,7 @@ func (self *Daemon) Fork() {
 	_ = syscall.Umask(0)
 	pid, err := syscall.Setsid()
 	if err != nil {
-		Log(fmt.Sprintf("Error: syscall.Setsid errno: %d", err))
+		Log(fmt.Sprintf("Error: syscall.Setsid errno: %s", err))
 		os.Exit(1)
 	}
 	Log(fmt.Sprintf("%c   %d", Icon(logo), pid))
