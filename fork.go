@@ -18,9 +18,10 @@ func Fork() {
 
 	os.Chdir("/")
 	_ = syscall.Umask(0)
-	_, err := syscall.Setsid()
+	pid, err := syscall.Setsid()
 	if err != nil {
-		fmt.Printf("Error: syscall.Setsid errno: %d", err)
+		Log(fmt.Sprintf("Error: syscall.Setsid errno: %d", err))
 		os.Exit(1)
 	}
+	Log(fmt.Sprintf("%c   %d", Icon(logo), pid))
 }

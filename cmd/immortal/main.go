@@ -11,10 +11,10 @@ import (
 var version, githash string
 
 func main() {
-	var f = flag.String("f", "", "Follow pid\n")
-	var q = flag.Bool("q", false, "Redirect standar input, output, error to /dev/null\n")
-	var u = flag.String("u", "", "Execute command on behalf user\n")
-	var v = flag.Bool("v", false, fmt.Sprintf("Print version: %s\n", version))
+	var p = flag.String("f", "", "Path of PID file")
+	var q = flag.Bool("q", false, "Quiet mode, redirect standar output, error to /dev/null")
+	var u = flag.String("u", "", "Execute command on behalf user")
+	var v = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
 	var c = flag.String("c", "", "run.yml configuration file")
 
 	flag.Usage = func() {
@@ -43,7 +43,7 @@ func main() {
 
 	if *c != "" {
 		if _, err := os.Stat(*c); os.IsNotExist(err) {
-			fmt.Printf("Cannot read file: %s, use -h for more info.\n\n", *f)
+			fmt.Printf("Cannot read file: %s, use -h for more info.\n\n", *c)
 			os.Exit(1)
 		}
 	}
@@ -62,7 +62,7 @@ func main() {
 
 	ir.Fork()
 
-	cmd, err := ir.New(u, f, q)
+	cmd, err := ir.New(u, p, q)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
