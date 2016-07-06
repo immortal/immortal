@@ -75,7 +75,8 @@ func main() {
 
 	err = D.Run(flag.Args())
 	if err != nil {
-		fmt.Println(err)
+		ir.Log(err)
 		os.Exit(1)
 	}
+
 }
