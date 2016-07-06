@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-func Log(s string) {
+func Log(s interface{}) {
 	t := time.Now().UTC().Format(time.RFC3339Nano)
-	log := fmt.Sprintf("%s %s\n", t, s)
+	log := fmt.Sprintf("%s %v\n", t, s)
 
 	f, err := os.OpenFile("/tmp/immortal.log", os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {

@@ -9,14 +9,14 @@ import (
 type Daemon struct {
 	owner   *user.User
 	Pidfile string
-	Quiet   bool
+	Log     string
 	Env     map[string]string
 	Cmd     string
 	Cwd     string
 	signals map[string]string
 }
 
-func New(u *user.User, c, p *string, q *bool) (*Daemon, error) {
+func New(u *user.User, c, p, l *string) (*Daemon, error) {
 	if *c != "" {
 		yml_file, err := ioutil.ReadFile(*c)
 		if err != nil {
@@ -31,9 +31,10 @@ func New(u *user.User, c, p *string, q *bool) (*Daemon, error) {
 
 		return &D, nil
 	}
+
 	return &Daemon{
 		owner:   u,
 		Pidfile: *p,
-		Quiet:   *q,
+		Log:     *l,
 	}, nil
 }

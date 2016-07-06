@@ -13,7 +13,7 @@ var version, githash string
 func main() {
 	var (
 		p   = flag.String("p", "", "PID file")
-		q   = flag.Bool("q", false, "Quiet mode, redirect standar output, error to /dev/null")
+		l   = flag.String("l", "", "Log path")
 		u   = flag.String("u", "", "Execute command on behalf user")
 		v   = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
 		c   = flag.String("c", "", "run.yml configuration file")
@@ -23,7 +23,7 @@ func main() {
 	)
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [-qv] [-f pid_file] [-u user] command arguments\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [-qv] [-p /pid/file] [-l /log/path/] [-u user] command arguments\n\n", os.Args[0])
 		fmt.Printf("  command   The command to supervise.\n\n")
 		flag.PrintDefaults()
 	}
@@ -65,7 +65,7 @@ func main() {
 		}
 	}
 
-	D, err = ir.New(usr, c, p, q)
+	D, err = ir.New(usr, c, p, l)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
