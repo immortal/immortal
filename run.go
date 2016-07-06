@@ -3,7 +3,6 @@ package immortal
 import (
 	"bufio"
 	"bytes"
-	"io"
 	"os/exec"
 	"strconv"
 	"syscall"
@@ -33,6 +32,7 @@ func (self *Daemon) Run(args []string) error {
 
 	cmd.SysProcAttr = sysProcAttr
 
+	//	var stdout bytes.Buffer
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 
@@ -43,15 +43,20 @@ func (self *Daemon) Run(args []string) error {
 		return err
 	}
 
-	Log(cmd.Process.Pid)
-
-	in := bufio.NewScanner(io.MultiReader(stdout, stderr))
-	for in.Scan() {
-		Log(in.Text())
-	}
-
 	if err := cmd.Wait(); err != nil {
 		return err
+	}
+
+	// 	in := bufio.NewScanner(io.MultiReader(stdout, stderr))
+
+	in_out := bufio.NewScanner(stdout)
+	for in_out.Scan() {
+		Log(in_out.Text())
+	}
+
+	in_err := bufio.NewScanner(stderr)
+	for in_err.Scan() {
+		Log(Red(in_err.Text()))
 	}
 
 	return nil
