@@ -15,20 +15,20 @@ func (self *Daemon) stdHandler(p io.ReadCloser) {
 	}
 }
 
-func (self *Daemon) Run(args []string, ch chan<- error) {
+func (self *Daemon) Run(args []string) {
 	cmd := exec.Command(args[0], args[1:]...)
 
 	sysProcAttr := new(syscall.SysProcAttr)
 	if self.owner != nil {
 		uid, err := strconv.Atoi(self.owner.Uid)
 		if err != nil {
-			ch <- err
+			self.Status <- err
 			return
 		}
 
 		gid, err := strconv.Atoi(self.owner.Gid)
 		if err != nil {
-			ch <- err
+			self.Status <- err
 			return
 		}
 
@@ -43,23 +43,23 @@ func (self *Daemon) Run(args []string, ch chan<- error) {
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		ch <- err
+		self.Status <- err
 		return
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		ch <- err
+		self.Status <- err
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		ch <- err
+		self.Status <- err
 		return
 	}
 
 	go self.stdHandler(stdout)
 	go self.stdHandler(stderr)
 
-	ch <- cmd.Wait()
+	self.Status <- cmd.Wait()
 }

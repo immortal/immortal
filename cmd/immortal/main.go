@@ -74,15 +74,16 @@ func main() {
 
 	D.Fork()
 
-	status := make(chan error, 1)
+	D.Run(flag.Args())
 
-	D.Run(flag.Args(), status)
 	for {
 		select {
-		case err := <-status:
-			ir.Log(ir.Red(err.Error()))
+		case err := <-D.Status:
+			if err != nil {
+				ir.Log(ir.Red(err.Error()))
+			}
 			time.Sleep(1 * time.Second)
-			D.Run(flag.Args(), status)
+			D.Run(flag.Args())
 		}
 	}
 }
