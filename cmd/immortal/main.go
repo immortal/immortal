@@ -79,4 +79,6 @@ func main() {
 		os.Exit(1)
 	}
 
+	// run forever until ctrl+c or kill signal
+	D.Block()
 }
