@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"os"
+	"os/signal"
 )
 
 func (self *Daemon) Block() {
