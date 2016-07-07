@@ -6,6 +6,7 @@ import (
 	ir "github.com/immortal/immortal"
 	"os"
 	"os/user"
+	"time"
 )
 
 var version, githash string
@@ -73,12 +74,18 @@ func main() {
 
 	D.Fork()
 
-	err = D.Run(flag.Args())
-	if err != nil {
-		ir.Log(err)
-		os.Exit(1)
-	}
+	status := make(chan error, 1)
 
-	// run forever until ctrl+c or kill signal
-	D.Block()
+	D.Run(flag.Args(), status)
+	for {
+		select {
+		case err := <-status:
+			ir.Log(ir.Red(err.Error()))
+			time.Sleep(1 * time.Second)
+			D.Run(flag.Args(), status)
+		}
+	}
 }
+
+// run forever until ctrl+c or kill signal
+//	D.Block()

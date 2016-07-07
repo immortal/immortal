@@ -2,25 +2,34 @@ package immortal
 
 import (
 	"bufio"
-	"bytes"
+	"io"
 	"os/exec"
 	"strconv"
 	"syscall"
 )
 
-func (self *Daemon) Run(args []string) error {
+func (self *Daemon) stdHandler(p io.ReadCloser) {
+	in := bufio.NewScanner(p)
+	for in.Scan() {
+		Log(in.Text())
+	}
+}
+
+func (self *Daemon) Run(args []string, ch chan<- error) {
 	cmd := exec.Command(args[0], args[1:]...)
 
 	sysProcAttr := new(syscall.SysProcAttr)
 	if self.owner != nil {
 		uid, err := strconv.Atoi(self.owner.Uid)
 		if err != nil {
-			return err
+			ch <- err
+			return
 		}
 
 		gid, err := strconv.Atoi(self.owner.Gid)
 		if err != nil {
-			return err
+			ch <- err
+			return
 		}
 
 		//	https://golang.org/pkg/syscall/#SysProcAttr
@@ -32,32 +41,25 @@ func (self *Daemon) Run(args []string) error {
 
 	cmd.SysProcAttr = sysProcAttr
 
-	//	var stdout bytes.Buffer
-	stdout := new(bytes.Buffer)
-	stderr := new(bytes.Buffer)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		ch <- err
+		return
+	}
 
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		ch <- err
+		return
+	}
 
 	if err := cmd.Start(); err != nil {
-		return err
+		ch <- err
+		return
 	}
 
-	if err := cmd.Wait(); err != nil {
-		return err
-	}
+	go self.stdHandler(stdout)
+	go self.stdHandler(stderr)
 
-	// 	in := bufio.NewScanner(io.MultiReader(stdout, stderr))
-
-	in_out := bufio.NewScanner(stdout)
-	for in_out.Scan() {
-		Log(in_out.Text())
-	}
-
-	in_err := bufio.NewScanner(stderr)
-	for in_err.Scan() {
-		Log(Red(in_err.Text()))
-	}
-
-	return nil
+	ch <- cmd.Wait()
 }
