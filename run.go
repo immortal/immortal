@@ -61,5 +61,6 @@ func (self *Daemon) Run(args []string) {
 	go self.stdHandler(stdout)
 	go self.stdHandler(stderr)
 
+	self.Pid <- cmd.Process.Pid
 	self.Status <- cmd.Wait()
 }
