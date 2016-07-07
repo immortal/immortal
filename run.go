@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os/exec"
 	"strconv"
@@ -62,5 +63,7 @@ func (self *Daemon) Run(args []string) {
 	go self.stdHandler(stderr)
 
 	self.Pid <- cmd.Process.Pid
+
+	Log(fmt.Sprintf("pid: %d", cmd.Process.Pid))
 	self.Status <- cmd.Wait()
 }

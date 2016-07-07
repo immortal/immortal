@@ -78,13 +78,13 @@ func main() {
 
 	for {
 		select {
+		case pid := <-D.Pid:
+			ir.Log(ir.Green(fmt.Sprintf("pid %v:", pid)))
 		case err := <-D.Status:
 			if err != nil {
 				ir.Log(ir.Red(err.Error()))
 			}
 			time.Sleep(1 * time.Second)
-		case pid := <-D.Pid:
-			ir.Log(ir.Green(fmt.Sprintf("pid %v:", pid)))
 		default:
 			D.Run(flag.Args())
 		}
