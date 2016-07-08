@@ -1,20 +1,28 @@
 package immortal
 
 import (
+	"fmt"
 	"syscall"
 )
 
-func (self *Daemon) Monitor(pid int) error {
+func (self *Daemon) Monitor() {
 	kq, err := syscall.Kqueue()
 	if err != nil {
-		return err
+		self.monitor <- err
+		return
+	}
+
+	fd, err := syscall.Open(self.Pidfile, syscall.O_RDONLY, 0)
+	if err != nil {
+		self.monitor <- err
+		return
 	}
 
 	ev1 := syscall.Kevent_t{
-		Ident:  uint64(pid),
-		Filter: syscall.EVFILT_PROC,
+		Ident:  uint64(fd),
+		Filter: syscall.EVFILT_VNODE,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
-		Fflags: syscall.NOTE_FORK | syscall.NOTE_EXEC | syscall.NOTE_EXIT,
+		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_EXTEND | syscall.NOTE_ATTRIB | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
 		Data:   0,
 		Udata:  nil,
 	}
@@ -23,20 +31,12 @@ func (self *Daemon) Monitor(pid int) error {
 		events := make([]syscall.Kevent_t, 1)
 		n, err := syscall.Kevent(kq, []syscall.Kevent_t{ev1}, events, nil)
 		if err != nil {
-			return err
+			self.monitor <- err
+			return
 		}
-		if n > 0 {
-			for i := 0; i < n; i++ {
-				if events[i].Fflags == syscall.NOTE_FORK {
-					self.monitor <- "FORK"
-				} else if events[i].Fflags == syscall.NOTE_EXEC {
-					self.monitor <- "EXEC"
-				} else {
-					self.monitor <- "EXIT"
-				}
-			}
-			break
+		for i := 0; i < n; i++ {
+			self.monitor <- fmt.Errorf("%s", events[i].Fflags)
+			return
 		}
 	}
-	return nil
 }

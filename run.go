@@ -65,6 +65,10 @@ func (self *Daemon) Run() {
 	go self.stdHandler(stdout, false)
 	go self.stdHandler(stderr, true)
 
-	self.pid <- cmd.Process.Pid
+	self.pid = cmd.Process.Pid
+
+	if self.Pidfile != "" {
+		go self.Monitor()
+	}
 	self.status <- cmd.Wait()
 }
