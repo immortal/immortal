@@ -2,38 +2,37 @@ package immortal
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"os/exec"
 	"strconv"
 	"syscall"
 )
 
-func (self *Daemon) writePid(p int) {
-	Log(Red(fmt.Sprintf("pid: %d", p)))
-}
-
-func (self *Daemon) stdHandler(p io.ReadCloser) {
+func (self *Daemon) stdHandler(p io.ReadCloser, e bool) {
 	in := bufio.NewScanner(p)
 	for in.Scan() {
-		Log(in.Text())
+		if e {
+			Log(Red(in.Text()))
+		} else {
+			Log(in.Text())
+		}
 	}
 }
 
-func (self *Daemon) Run(args []string) {
-	cmd := exec.Command(args[0], args[1:]...)
+func (self *Daemon) Run() {
+	cmd := exec.Command(self.command[0], self.command[1:]...)
 
 	sysProcAttr := new(syscall.SysProcAttr)
 	if self.owner != nil {
 		uid, err := strconv.Atoi(self.owner.Uid)
 		if err != nil {
-			self.Status <- err
+			self.status <- err
 			return
 		}
 
 		gid, err := strconv.Atoi(self.owner.Gid)
 		if err != nil {
-			self.Status <- err
+			self.status <- err
 			return
 		}
 
@@ -48,27 +47,24 @@ func (self *Daemon) Run(args []string) {
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		self.Status <- err
+		self.status <- err
 		return
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		self.Status <- err
+		self.status <- err
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		self.Status <- err
+		self.status <- err
 		return
 	}
 
-	go self.stdHandler(stdout)
-	go self.stdHandler(stderr)
+	go self.stdHandler(stdout, false)
+	go self.stdHandler(stderr, true)
 
-	//	go self.writePid(cmd.Process.Pid)
 	self.Pid <- cmd.Process.Pid
-
-	self.Status <- cmd.Wait()
-	return
+	self.status <- cmd.Wait()
 }

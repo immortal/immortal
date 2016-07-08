@@ -6,7 +6,6 @@ import (
 	ir "github.com/immortal/immortal"
 	"os"
 	"os/user"
-	"time"
 )
 
 var version, githash string
@@ -66,31 +65,12 @@ func main() {
 		}
 	}
 
-	D, err = ir.New(usr, c, p, l)
+	D, err = ir.New(usr, c, p, l, flag.Args())
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
 	D.Fork()
-
-	D.Run(flag.Args())
-
-	for {
-
-		select {
-		case pid := <-D.Pid:
-			ir.Log(ir.Green(fmt.Sprintf("pid %v:", pid)))
-		case err := <-D.Status:
-			if err != nil {
-				ir.Log(ir.Red(err.Error()))
-			}
-			time.Sleep(1 * time.Second)
-		default:
-			D.Run(flag.Args())
-		}
-	}
+	D.Supervice()
 }
-
-// run forever until ctrl+c or kill signal
-//	D.Block()

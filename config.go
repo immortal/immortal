@@ -8,17 +8,19 @@ import (
 
 type Daemon struct {
 	owner   *user.User
+	Command string
+	command []string
 	Pidfile string
 	Log     string
 	Env     map[string]string
 	Cmd     string
 	Cwd     string
 	signals map[string]string
-	Status  chan error
+	status  chan error
 	Pid     chan int
 }
 
-func New(u *user.User, c, p, l *string) (*Daemon, error) {
+func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 	if *c != "" {
 		yml_file, err := ioutil.ReadFile(*c)
 		if err != nil {
@@ -38,7 +40,8 @@ func New(u *user.User, c, p, l *string) (*Daemon, error) {
 		owner:   u,
 		Pidfile: *p,
 		Log:     *l,
-		Status:  make(chan error, 1),
+		command: cmd,
+		status:  make(chan error, 1),
 		Pid:     make(chan int, 1),
 	}, nil
 }
