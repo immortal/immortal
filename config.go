@@ -18,7 +18,7 @@ type Daemon struct {
 	signals map[string]string
 	status  chan error
 	monitor chan string
-	pid     int
+	pid     chan int
 }
 
 func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
@@ -44,5 +44,6 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 		command: cmd,
 		status:  make(chan error, 1),
 		monitor: make(chan string, 1),
+		pid:     make(chan int, 1),
 	}, nil
 }
