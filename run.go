@@ -26,13 +26,13 @@ func (self *Daemon) Run() {
 	if self.owner != nil {
 		uid, err := strconv.Atoi(self.owner.Uid)
 		if err != nil {
-			self.status <- err
+			self.err <- err
 			return
 		}
 
 		gid, err := strconv.Atoi(self.owner.Gid)
 		if err != nil {
-			self.status <- err
+			self.err <- err
 			return
 		}
 
@@ -47,18 +47,18 @@ func (self *Daemon) Run() {
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		self.status <- err
+		self.err <- err
 		return
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		self.status <- err
+		self.err <- err
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		self.status <- err
+		self.err <- err
 		return
 	}
 
@@ -70,5 +70,6 @@ func (self *Daemon) Run() {
 	if self.Pidfile != "" {
 		go self.Monitor()
 	}
+
 	self.status <- cmd.Wait()
 }

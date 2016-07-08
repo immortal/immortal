@@ -8,16 +8,17 @@ import (
 
 type Daemon struct {
 	owner   *user.User
+	User    string
 	Command string
 	command []string
 	Pidfile string
 	Log     string
 	Env     map[string]string
-	Cmd     string
 	Cwd     string
 	signals map[string]string
+	err     chan error
+	monitor chan struct{}
 	status  chan error
-	monitor chan error
 	pid     int
 }
 
@@ -42,7 +43,8 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 		Pidfile: *p,
 		Log:     *l,
 		command: cmd,
+		err:     make(chan error, 1),
 		status:  make(chan error, 1),
-		monitor: make(chan error, 1),
+		monitor: make(chan struct{}),
 	}, nil
 }
