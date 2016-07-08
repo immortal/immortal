@@ -1,25 +1,20 @@
 package immortal
 
 import (
-	"fmt"
-	"log"
-	"os"
-	"strconv"
 	"syscall"
 )
 
-func (self *Daemon) monitorPid() {
+func (self *Daemon) Monitor(pid int) error {
 	kq, err := syscall.Kqueue()
 	if err != nil {
-		self.monitor <- err
-		return
+		return err
 	}
 
 	ev1 := syscall.Kevent_t{
-		Ident:  uint64(process.Pid),
+		Ident:  uint64(pid),
 		Filter: syscall.EVFILT_PROC,
-		Flags:  syscall.EV_ADD,
-		Fflags: syscall.NOTE_EXIT,
+		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
+		Fflags: syscall.NOTE_FORK | syscall.NOTE_EXEC | syscall.NOTE_EXIT,
 		Data:   0,
 		Udata:  nil,
 	}
@@ -28,14 +23,20 @@ func (self *Daemon) monitorPid() {
 		events := make([]syscall.Kevent_t, 1)
 		n, err := syscall.Kevent(kq, []syscall.Kevent_t{ev1}, events, nil)
 		if err != nil {
-			self.monitor <- err
-			return
-		}
-		for i := 0; i < n; i++ {
-			log.Printf("Event [%d] -> %+v data: %#v", i, events[i], events[i].Data)
+			return err
 		}
 		if n > 0 {
+			for i := 0; i < n; i++ {
+				if events[i].Fflags == syscall.NOTE_FORK {
+					self.monitor <- "FORK"
+				} else if events[i].Fflags == syscall.NOTE_EXEC {
+					self.monitor <- "EXEC"
+				} else {
+					self.monitor <- "EXIT"
+				}
+			}
 			break
 		}
 	}
+	return nil
 }

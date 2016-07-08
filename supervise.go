@@ -9,7 +9,7 @@ func (self *Daemon) Supervice() {
 	go self.Run()
 	for {
 		select {
-		case pid := <-self.Pid:
+		case pid := <-self.pid:
 			Log(Yellow(fmt.Sprintf("pid: %d", pid)))
 		case err := <-self.status:
 			if err != nil {
