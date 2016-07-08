@@ -9,6 +9,10 @@ import (
 	"syscall"
 )
 
+func (self *Daemon) writePid(p int) {
+	Log(Red(fmt.Sprintf("pid: %d", p)))
+}
+
 func (self *Daemon) stdHandler(p io.ReadCloser) {
 	in := bufio.NewScanner(p)
 	for in.Scan() {
@@ -62,8 +66,9 @@ func (self *Daemon) Run(args []string) {
 	go self.stdHandler(stdout)
 	go self.stdHandler(stderr)
 
+	//	go self.writePid(cmd.Process.Pid)
 	self.Pid <- cmd.Process.Pid
 
-	Log(fmt.Sprintf("pid: %d", cmd.Process.Pid))
 	self.Status <- cmd.Wait()
+	return
 }

@@ -77,6 +77,7 @@ func main() {
 	D.Run(flag.Args())
 
 	for {
+
 		select {
 		case pid := <-D.Pid:
 			ir.Log(ir.Green(fmt.Sprintf("pid %v:", pid)))
