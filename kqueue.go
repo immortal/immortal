@@ -4,29 +4,22 @@ import (
 	"syscall"
 )
 
-func (self *Daemon) watchPidfile() {
+func (self *Daemon) watchPid() {
 	kq, err := syscall.Kqueue()
 	if err != nil {
 		self.err <- err
 		return
 	}
 
-	fd, err := syscall.Open(self.run.Pidfile, syscall.O_RDONLY, 0)
-	if err != nil {
-		self.err <- err
-		return
-	}
-
 	ev1 := syscall.Kevent_t{
-		Ident:  uint64(fd),
-		Filter: syscall.EVFILT_VNODE,
+		Ident:  uint64(self.pid),
+		Filter: syscall.EVFILT_PROC,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
-		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_EXTEND | syscall.NOTE_ATTRIB | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
+		Fflags: syscall.NOTE_EXIT | syscall.NOTE_FORK | syscall.NOTE_EXEC,
 		Data:   0,
 		Udata:  nil,
 	}
 
-	var e struct{}
 	for {
 		events := make([]syscall.Kevent_t, 1)
 		n, err := syscall.Kevent(kq, []syscall.Kevent_t{ev1}, events, nil)
@@ -35,7 +28,7 @@ func (self *Daemon) watchPidfile() {
 			return
 		}
 		for i := 0; i < n; i++ {
-			self.wPidfile <- e
+			self.wPid <- struct{}{}
 			return
 		}
 	}

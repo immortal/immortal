@@ -67,9 +67,5 @@ func (self *Daemon) Run() {
 
 	self.pid = cmd.Process.Pid
 
-	if self.run.Pidfile != "" {
-		go self.watchPidfile()
-	}
-
 	self.status <- cmd.Wait()
 }

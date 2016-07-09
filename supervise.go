@@ -8,40 +8,26 @@ import (
 	"time"
 )
 
+func (self *Daemon) readPidfile() (int, error) {
+	content, err := ioutil.ReadFile(self.run.Pidfile)
+	if err != nil {
+		return 0, err
+	}
+	lines := strings.Split(string(content), "\n")
+	pid, err := strconv.Atoi(lines[0])
+	if err != nil {
+		return 0, err
+	}
+	return pid, nil
+}
+
 func (self *Daemon) Supervice() {
 	go self.Run()
 
-	var monitor_pid bool
 	for {
 		select {
-		case <-self.wPidfile:
-			// give time to write
-			time.Sleep(1 * time.Second)
-
-			content, err := ioutil.ReadFile(self.run.Pidfile)
-			if err != nil {
-				Log(Yellow(fmt.Sprintf("monitor: %s", err.Error())))
-			}
-
-			lines := strings.Split(string(content), "\n")
-
-			pid, err := strconv.Atoi(lines[0])
-			if err != nil {
-				Log(Red(fmt.Sprintf("Bad process id found in %s, %s", self.run.Pidfile, err.Error())))
-			}
-
-			Log(Yellow(fmt.Sprintf("PID on file: %v Parent Pid: %d", pid, self.pid)))
-
-			// Monitor the new childs and stop restarting the old process
-			if pid != self.pid {
-				//				--------------------
-				//				--------------------
-				//				--------------------
-				//				--------------------
-				//				--------------------
-				monitor_pid = true
-			}
-			go self.watchPidfile()
+		case <-self.wPid:
+			Log(Yellow("-----------"))
 		case err := <-self.err:
 			if err != nil {
 				Log(Red(err.Error()))
@@ -50,8 +36,23 @@ func (self *Daemon) Supervice() {
 			if run != nil {
 				Log(Red(run.Error()))
 			}
-			if !monitor_pid {
-				time.Sleep(1 * time.Second)
+			time.Sleep(1 * time.Second)
+			// follow the new pid and stop running the command
+			// unless the new pid dies
+			if self.run.Pidfile != "" {
+				pid, err := self.readPidfile()
+				if err != nil {
+					Log(Red(fmt.Sprintf("Cannot read pidfile:%s,  %s", self.run.Pidfile, err.Error())))
+				}
+				// check if pid in file is valid
+				if pid > 1 && pid != self.pid {
+					// set pid to new pid in file
+					self.pid = pid
+					go self.watchPid()
+				} else {
+					go self.Run()
+				}
+			} else {
 				go self.Run()
 			}
 		}
