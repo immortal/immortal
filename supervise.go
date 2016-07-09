@@ -10,11 +10,15 @@ import (
 
 func (self *Daemon) Supervice() {
 	go self.Run()
+
+	var monitor_pid bool
 	for {
 		select {
 		case <-self.monitor:
-			content, err := ioutil.ReadFile(self.Pidfile)
+			// give time to write
+			time.Sleep(1 * time.Second)
 
+			content, err := ioutil.ReadFile(self.Pidfile)
 			if err != nil {
 				Log(Yellow(fmt.Sprintf("monitor: %s", err.Error())))
 			}
@@ -26,8 +30,12 @@ func (self *Daemon) Supervice() {
 				Log(Red(fmt.Sprintf("Bad process id found in %s, %s", self.Pidfile, err.Error())))
 			}
 
-			Log(Green(fmt.Sprintf("PID on file: %v Parent Pid: %d", pid, self.pid)))
-			time.Sleep(1 * time.Second)
+			Log(fmt.Sprintf("PID on file: %v Parent Pid: %d", pid, self.pid))
+
+			// Monitor the new childs and stop restarting the old process
+			if pid != self.pid {
+				monitor_pid = true
+			}
 			go self.Monitor()
 		case err := <-self.err:
 			if err != nil {
@@ -37,8 +45,10 @@ func (self *Daemon) Supervice() {
 			if wait != nil {
 				Log(Red(wait.Error()))
 			}
-			time.Sleep(1 * time.Second)
-			go self.Run()
+			if !monitor_pid {
+				time.Sleep(1 * time.Second)
+				go self.Run()
+			}
 		}
 	}
 }
