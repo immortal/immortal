@@ -4,14 +4,14 @@ import (
 	"syscall"
 )
 
-func (self *Daemon) Monitor() {
+func (self *Daemon) watchPidfile() {
 	kq, err := syscall.Kqueue()
 	if err != nil {
 		self.err <- err
 		return
 	}
 
-	fd, err := syscall.Open(self.Pidfile, syscall.O_RDONLY, 0)
+	fd, err := syscall.Open(self.run.Pidfile, syscall.O_RDONLY, 0)
 	if err != nil {
 		self.err <- err
 		return
@@ -35,7 +35,7 @@ func (self *Daemon) Monitor() {
 			return
 		}
 		for i := 0; i < n; i++ {
-			self.monitor <- e
+			self.wPidfile <- e
 			return
 		}
 	}

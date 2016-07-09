@@ -7,19 +7,24 @@ import (
 )
 
 type Daemon struct {
-	owner   *user.User
-	User    string
+	owner    *user.User
+	command  []string
+	pid      int
+	err      chan error
+	status   chan error
+	wPid     chan struct{}
+	wPidfile chan struct{}
+	run      Run
+}
+
+type Run struct {
 	Command string
-	command []string
-	Pidfile string
-	Log     string
-	Env     map[string]string
 	Cwd     string
-	signals map[string]string
-	err     chan error
-	monitor chan struct{}
-	status  chan error
-	pid     int
+	Env     map[string]string
+	Log     string
+	Pidfile string
+	Signals map[string]string
+	User    string
 }
 
 func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
@@ -39,12 +44,15 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 	}
 
 	return &Daemon{
-		owner:   u,
-		Pidfile: *p,
-		Log:     *l,
-		command: cmd,
-		err:     make(chan error, 1),
-		status:  make(chan error, 1),
-		monitor: make(chan struct{}),
+		owner: u,
+		run: Run{
+			Pidfile: *p,
+			Log:     *l,
+		},
+		command:  cmd,
+		err:      make(chan error, 1),
+		status:   make(chan error, 1),
+		wPid:     make(chan struct{}),
+		wPidfile: make(chan struct{}),
 	}, nil
 }

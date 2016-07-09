@@ -16,7 +16,7 @@ func (self *Daemon) Fork() {
 		os.Exit(0)
 	}
 
-	os.Chdir("/")
+	//	os.Chdir("/")
 	_ = syscall.Umask(0)
 	pid, err := syscall.Setsid()
 	if err != nil {
