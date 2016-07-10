@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// readPidfile read pid from file if error returns pid 0
 func (self *Daemon) readPidfile() (int, error) {
 	content, err := ioutil.ReadFile(self.run.Pidfile)
 	if err != nil {
@@ -26,17 +27,23 @@ func (self *Daemon) Supervice() {
 
 	for {
 		select {
-		case <-self.wPid:
-			Log(Yellow("-----------"))
 		case err := <-self.err:
 			if err != nil {
 				Log(Red(err.Error()))
 			}
-		case run := <-self.status:
-			if run != nil {
-				Log(Red(run.Error()))
+		case state := <-self.state:
+
+			if state != nil {
+				Log(Yellow(state.Error()))
+
+				if state.Error() == "EXIT" {
+					Log(Yellow(fmt.Sprintf("PID: %d Exited", self.pid)))
+				}
 			}
+
+			// settle down, give time for writing the PID and avoid consuming CPU
 			time.Sleep(1 * time.Second)
+
 			// follow the new pid and stop running the command
 			// unless the new pid dies
 			if self.run.Pidfile != "" {
@@ -48,6 +55,7 @@ func (self *Daemon) Supervice() {
 				if pid > 1 && pid != self.pid {
 					// set pid to new pid in file
 					self.pid = pid
+					Log(Yellow(fmt.Sprintf("Starting to watch pid %d in file: %s", self.pid, self.run.Pidfile)))
 					go self.watchPid()
 				} else {
 					go self.Run()

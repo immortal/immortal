@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"errors"
 	"syscall"
 )
 
@@ -15,7 +16,7 @@ func (self *Daemon) watchPid() {
 		Ident:  uint64(self.pid),
 		Filter: syscall.EVFILT_PROC,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
-		Fflags: syscall.NOTE_EXIT | syscall.NOTE_FORK | syscall.NOTE_EXEC,
+		Fflags: syscall.NOTE_EXIT,
 		Data:   0,
 		Udata:  nil,
 	}
@@ -28,7 +29,7 @@ func (self *Daemon) watchPid() {
 			return
 		}
 		for i := 0; i < n; i++ {
-			self.wPid <- struct{}{}
+			self.state <- errors.New("EXIT")
 			return
 		}
 	}

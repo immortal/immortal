@@ -67,5 +67,5 @@ func (self *Daemon) Run() {
 
 	self.pid = cmd.Process.Pid
 
-	self.status <- cmd.Wait()
+	self.state <- cmd.Wait()
 }

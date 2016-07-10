@@ -11,8 +11,7 @@ type Daemon struct {
 	command []string
 	pid     int
 	err     chan error
-	status  chan error
-	wPid    chan struct{}
+	state   chan error
 	run     Run
 }
 
@@ -50,7 +49,6 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 		},
 		command: cmd,
 		err:     make(chan error, 1),
-		status:  make(chan error, 1),
-		wPid:    make(chan struct{}),
+		state:   make(chan error, 1),
 	}, nil
 }
