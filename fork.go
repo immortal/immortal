@@ -23,5 +23,6 @@ func (self *Daemon) Fork() {
 		Log(fmt.Sprintf("Error: syscall.Setsid errno: %s", err))
 		os.Exit(1)
 	}
+
 	Log(fmt.Sprintf("%c   %d", Icon(logo), pid))
 }

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	ir "github.com/immortal/immortal"
+	"log"
 	"os"
 	"os/user"
 )
@@ -64,6 +65,16 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	// log
+	f, err := os.OpenFile("/tmp/immortal.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	defer f.Close()
+	log.SetOutput(f)
+	log.SetFlags(0)
 
 	D, err = ir.New(usr, c, p, l, flag.Args())
 	if err != nil {
