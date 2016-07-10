@@ -3,6 +3,7 @@ package immortal
 import (
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
+	"os"
 	"os/user"
 )
 
@@ -42,11 +43,17 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 		return &D, nil
 	}
 
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Daemon{
 		owner: u,
 		run: Run{
 			Pidfile: *p,
 			Log:     *l,
+			Cwd:     wd,
 		},
 		command: cmd,
 		err:     make(chan error, 1),
