@@ -5,6 +5,7 @@ import (
 	"io"
 	"os/exec"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -20,6 +21,8 @@ func (self *Daemon) stdHandler(p io.ReadCloser, e bool) {
 }
 
 func (self *Daemon) Run() {
+	atomic.AddInt64(&self.count, 1)
+
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
 	sysProcAttr := new(syscall.SysProcAttr)

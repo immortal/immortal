@@ -13,6 +13,7 @@ type Daemon struct {
 	err     chan error
 	state   chan error
 	run     Run
+	count   int64
 }
 
 type Run struct {
