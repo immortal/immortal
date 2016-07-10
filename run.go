@@ -26,6 +26,7 @@ func (self *Daemon) Run() {
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
 	sysProcAttr := new(syscall.SysProcAttr)
+	// set owner
 	if self.owner != nil {
 		uid, err := strconv.Atoi(self.owner.Uid)
 		if err != nil {
@@ -45,6 +46,9 @@ func (self *Daemon) Run() {
 			Gid: uint32(gid),
 		}
 	}
+
+	// Set process group ID to Pgid, or, if Pgid == 0, to new pid
+	sysProcAttr.Setpgid = true
 
 	cmd.SysProcAttr = sysProcAttr
 
