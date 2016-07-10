@@ -49,6 +49,7 @@ func (self *Daemon) Run() {
 
 	// Set process group ID to Pgid, or, if Pgid == 0, to new pid
 	sysProcAttr.Setpgid = true
+	sysProcAttr.Pgid = 0
 
 	cmd.SysProcAttr = sysProcAttr
 
