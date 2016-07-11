@@ -3,6 +3,7 @@ package immortal
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"syscall"
@@ -18,16 +19,24 @@ func (self *Daemon) FIFO() error {
 		return err
 	}
 
-	reader := bufio.NewReader(file)
+	r := bufio.NewReader(file)
+	buf := make([]byte, 0, 8)
 
 	go func() {
 		defer file.Close()
 		for {
-			text, err := reader.ReadString('\n')
-			if err != nil {
+			n, err := r.Read(buf[:cap(buf)])
+			buf = buf[:n]
+			if n == 0 {
+				if err == nil {
+					continue
+				}
+				if err == io.EOF {
+					continue
+				}
 				self.ctrl.err <- err
 			}
-			self.ctrl.fifo <- strings.TrimSpace(text)
+			self.ctrl.fifo <- strings.TrimSpace(string(buf))
 		}
 	}()
 
