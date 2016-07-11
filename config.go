@@ -11,11 +11,10 @@ type Daemon struct {
 	owner   *user.User
 	command []string
 	pid     int
-	err     chan error
-	state   chan error
 	run     Run
 	count   int64
 	sdir    string
+	ctrl    Ctrl
 }
 
 type Run struct {
@@ -26,6 +25,12 @@ type Run struct {
 	Pidfile string
 	Signals map[string]string
 	User    string
+}
+
+type Ctrl struct {
+	err   chan error
+	state chan error
+	fifo  chan string
 }
 
 func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
@@ -62,7 +67,10 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 			Log:     *l,
 		},
 		command: cmd,
-		err:     make(chan error, 1),
-		state:   make(chan error, 1),
+		ctrl: Ctrl{
+			err:   make(chan error, 1),
+			state: make(chan error, 1),
+			fifo:  make(chan string, 1),
+		},
 	}, nil
 }

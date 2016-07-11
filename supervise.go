@@ -27,12 +27,11 @@ func (self *Daemon) Supervice() {
 
 	for {
 		select {
-		case err := <-self.err:
+		case err := <-self.ctrl.err:
 			if err != nil {
 				Log(Red(err.Error()))
 			}
-		case state := <-self.state:
-
+		case state := <-self.ctrl.state:
 			if state != nil {
 				Log(Yellow(state.Error()))
 
@@ -63,6 +62,8 @@ func (self *Daemon) Supervice() {
 			} else {
 				go self.Run()
 			}
+		case fifo := <-self.ctrl.fifo:
+			Log(Yellow(fmt.Sprintf("fifo: %s", fifo)))
 		}
 	}
 }

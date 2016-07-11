@@ -8,7 +8,7 @@ import (
 func (self *Daemon) watchPid() {
 	kq, err := syscall.Kqueue()
 	if err != nil {
-		self.err <- err
+		self.ctrl.err <- err
 		return
 	}
 
@@ -25,11 +25,11 @@ func (self *Daemon) watchPid() {
 		events := make([]syscall.Kevent_t, 1)
 		n, err := syscall.Kevent(kq, []syscall.Kevent_t{ev1}, events, nil)
 		if err != nil {
-			self.err <- err
+			self.ctrl.err <- err
 			return
 		}
 		for i := 0; i < n; i++ {
-			self.state <- errors.New("EXIT")
+			self.ctrl.state <- errors.New("EXIT")
 			return
 		}
 	}

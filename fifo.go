@@ -23,7 +23,8 @@ func (self *Daemon) FIFO() error {
 		defer file.Close()
 		for {
 			text, err := reader.ReadString('\n')
-			Log(Green(fmt.Sprintf("%v - %v", text, err)))
+			Log(Green(fmt.Sprintf("%v - %s", text, err)))
+			self.ctrl.fifo <- string(text)
 		}
 	}()
 
