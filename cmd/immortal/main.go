@@ -83,5 +83,6 @@ func main() {
 	}
 
 	D.Fork()
+	D.FIFO()
 	D.Supervice()
 }
