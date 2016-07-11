@@ -83,6 +83,10 @@ func main() {
 	}
 
 	D.Fork()
-	D.FIFO()
+	err = D.FIFO()
+	if err != nil {
+		ir.Log(err.Error())
+		os.Exit(1)
+	}
 	D.Supervice()
 }
