@@ -64,6 +64,7 @@ func (self *Daemon) Supervice() {
 			}
 		case fifo := <-self.ctrl.fifo:
 			Log(Yellow(fmt.Sprintf("fifo: %s", fifo)))
+			fmt.Fprintf(self.ctrl.status, "pong: %s\n", fifo)
 		}
 	}
 }

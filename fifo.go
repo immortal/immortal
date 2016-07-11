@@ -10,20 +10,30 @@ import (
 )
 
 func (self *Daemon) FIFO() error {
-	// create status pipe
-	status_fifo := fmt.Sprintf("%s/status", self.sdir)
-	syscall.Mknod(status_fifo, syscall.S_IFIFO|0666, 0)
+	// create control pipe
+	fifo := fmt.Sprintf("%s/control", self.sdir)
+	syscall.Mknod(fifo, syscall.S_IFIFO|0666, 0)
 
-	file, err := os.OpenFile(self.sdir+"/status", os.O_RDWR, os.ModeNamedPipe)
+	ctrl_fifo, err := os.OpenFile(self.sdir+"/control", os.O_RDWR, os.ModeNamedPipe)
 	if err != nil {
 		return err
 	}
 
-	r := bufio.NewReader(file)
+	// create status pipe
+	fifo = fmt.Sprintf("%s/status", self.sdir)
+	syscall.Mknod(fifo, syscall.S_IFIFO|0666, 0)
+
+	status_fifo, err := os.OpenFile(self.sdir+"/status", os.O_RDWR, os.ModeNamedPipe)
+	if err != nil {
+		return err
+	}
+	self.ctrl.status = status_fifo
+
+	r := bufio.NewReader(ctrl_fifo)
 	buf := make([]byte, 0, 8)
 
 	go func() {
-		defer file.Close()
+		defer ctrl_fifo.Close()
 		for {
 			n, err := r.Read(buf[:cap(buf)])
 			buf = buf[:n]

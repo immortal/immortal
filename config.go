@@ -28,9 +28,10 @@ type Run struct {
 }
 
 type Ctrl struct {
-	err   chan error
-	state chan error
-	fifo  chan string
+	err    chan error
+	state  chan error
+	fifo   chan string
+	status *os.File
 }
 
 func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
