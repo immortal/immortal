@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 )
 
@@ -23,8 +24,10 @@ func (self *Daemon) FIFO() error {
 		defer file.Close()
 		for {
 			text, err := reader.ReadString('\n')
-			Log(Green(fmt.Sprintf("%v - %s", text, err)))
-			self.ctrl.fifo <- string(text)
+			if err != nil {
+				self.ctrl.err <- err
+			}
+			self.ctrl.fifo <- strings.TrimSpace(text)
 		}
 	}()
 
