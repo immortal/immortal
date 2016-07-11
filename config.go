@@ -15,6 +15,7 @@ type Daemon struct {
 	state   chan error
 	run     Run
 	count   int64
+	sdir    string
 }
 
 type Run struct {
@@ -47,13 +48,18 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := os.Mkdir(wd+"/supervise", 0700); err != nil {
+		if os.IsNotExist(err) {
+			return nil, err
+		}
+	}
 
 	return &Daemon{
 		owner: u,
+		sdir:  wd + "/supervise",
 		run: Run{
 			Pidfile: *p,
 			Log:     *l,
-			Cwd:     wd,
 		},
 		command: cmd,
 		err:     make(chan error, 1),

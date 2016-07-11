@@ -8,19 +8,11 @@ import (
 )
 
 func (self *Daemon) FIFO() error {
-	s_dir := fmt.Sprintf("%s/supervise", self.run.Cwd)
-	err := os.Mkdir(s_dir, 0700)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return err
-		}
-	}
-
 	// create status pipe
-	status_fifo := fmt.Sprintf("%s/status", s_dir)
+	status_fifo := fmt.Sprintf("%s/status", self.sdir)
 	syscall.Mknod(status_fifo, syscall.S_IFIFO|0666, 0)
 
-	file, err := os.OpenFile(s_dir+"/status", os.O_RDWR, os.ModeNamedPipe)
+	file, err := os.OpenFile(self.sdir+"/status", os.O_RDWR, os.ModeNamedPipe)
 	if err != nil {
 		return err
 	}
