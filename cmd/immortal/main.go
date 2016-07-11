@@ -84,7 +84,7 @@ func main() {
 
 	// only one instance
 	if err := D.Lock(); err != nil {
-		fmt.Println(err)
+		fmt.Println("Another instance of immortal is running")
 		os.Exit(1)
 	}
 
