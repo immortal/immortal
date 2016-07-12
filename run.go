@@ -53,21 +53,16 @@ func (self *Daemon) Run() {
 
 	cmd.SysProcAttr = sysProcAttr
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		self.ctrl.err <- err
-		return
-	}
+	//r_out, w_out := io.Pipe()
+	//r_err, w_err := io.Pipe()
+	//cmd.Stdout = w_out
+	//cmd.Stderr = w_err
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		self.ctrl.err <- err
-		return
-	}
+	//go self.stdHandler(r_out, false)
+	//go self.stdHandler(r_err, true)
 
-	go self.stdHandler(stdout, false)
-	go self.stdHandler(stderr, true)
-
+	//	defer w_out.Close()
+	//	defer w_err.Close()
 	if err := cmd.Start(); err != nil {
 		self.ctrl.err <- err
 		return
