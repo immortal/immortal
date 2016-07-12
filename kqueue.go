@@ -1,14 +1,17 @@
+// +build freebsd netbsd openbsd dragonfly darwin
+
 package immortal
 
 import (
 	"errors"
+	"os"
 	"syscall"
 )
 
 func (self *Daemon) watchPid() {
 	kq, err := syscall.Kqueue()
 	if err != nil {
-		self.ctrl.err <- err
+		self.ctrl.err <- os.NewSyscallError("kqueue", err)
 		return
 	}
 
@@ -25,10 +28,11 @@ func (self *Daemon) watchPid() {
 		events := make([]syscall.Kevent_t, 1)
 		n, err := syscall.Kevent(kq, []syscall.Kevent_t{ev1}, events, nil)
 		if err != nil {
-			self.ctrl.err <- err
+			self.ctrl.err <- os.NewSyscallError("kevent", err)
 			return
 		}
 		for i := 0; i < n; i++ {
+			syscall.Close(kq)
 			self.ctrl.state <- errors.New("EXIT")
 			return
 		}

@@ -3,7 +3,7 @@
 VERSION=0.1.0
 GO ?= go
 BIN_NAME=immortal
-GO_XC = ${GOPATH}/bin/goxc -os="freebsd openbsd netbsd darwin linux"
+GO_XC = ${GOPATH}/bin/goxc -os="freebsd netbsd openbsd dragonfly darwin linux"
 GOXC_FILE = .goxc.json
 GOXC_FILE_LOCAL = .goxc.local.json
 GITHASH=$(shell git rev-parse HEAD)
