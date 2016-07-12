@@ -65,13 +65,13 @@ func (self *Daemon) Run() {
 		return
 	}
 
+	go self.stdHandler(stdout, false)
+	go self.stdHandler(stderr, true)
+
 	if err := cmd.Start(); err != nil {
 		self.ctrl.err <- err
 		return
 	}
-
-	go self.stdHandler(stdout, false)
-	go self.stdHandler(stderr, true)
 
 	self.pid = cmd.Process.Pid
 
