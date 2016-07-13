@@ -3,6 +3,7 @@ package immortal
 import (
 	"bufio"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync/atomic"
@@ -53,6 +54,13 @@ func (self *Daemon) Run() {
 	sysProcAttr.Pgid = 0
 
 	cmd.SysProcAttr = sysProcAttr
+
+	file, err := os.Create("/tmp/tmp.log")
+	if err != nil {
+		self.ctrl.err <- err
+	}
+	cmd.Stdout = file
+	cmd.Stderr = file
 
 	if err := cmd.Start(); err != nil {
 		self.ctrl.err <- err

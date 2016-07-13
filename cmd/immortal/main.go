@@ -89,6 +89,7 @@ func main() {
 	}
 
 	D.Fork()
+
 	err = D.FIFO()
 	if err != nil {
 		ir.Log(err.Error())
