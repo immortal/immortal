@@ -2,8 +2,9 @@ package immortal
 
 import (
 	"bufio"
+	"fmt"
 	"io"
-	"os"
+	//	"os"
 	"os/exec"
 	"strconv"
 	"sync/atomic"
@@ -23,6 +24,7 @@ func (self *Daemon) stdHandler(p io.ReadCloser, e bool) {
 
 func (self *Daemon) Run() {
 	atomic.AddInt64(&self.count, 1)
+	Log(Green(fmt.Sprintf("count: %v", self.count)))
 
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
@@ -55,12 +57,22 @@ func (self *Daemon) Run() {
 
 	cmd.SysProcAttr = sysProcAttr
 
-	file, err := os.Create("/tmp/tmp.log")
+	//file, err := os.Create("/tmp/tmp.log")
+	//if err != nil {
+	//self.ctrl.err <- err
+	//}
+	//defer file.Close()
+	//cmd.Stdout = file
+	//cmd.Stderr = file
+
+	_, err := cmd.StdoutPipe()
 	if err != nil {
-		self.ctrl.err <- err
+		return
 	}
-	cmd.Stdout = file
-	cmd.Stderr = file
+	_, err = cmd.StderrPipe()
+	if err != nil {
+		return
+	}
 
 	if err := cmd.Start(); err != nil {
 		self.ctrl.err <- err
