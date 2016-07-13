@@ -26,6 +26,7 @@ func (self *Daemon) Run() {
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
 	sysProcAttr := new(syscall.SysProcAttr)
+
 	// set owner
 	if self.owner != nil {
 		uid, err := strconv.Atoi(self.owner.Uid)
