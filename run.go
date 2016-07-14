@@ -11,18 +11,15 @@ import (
 	"syscall"
 )
 
-func (self *Daemon) stdHandler(p io.ReadCloser, e bool) {
+func (self *Daemon) stdHandler(p io.ReadCloser) {
 	in := bufio.NewScanner(p)
 	for in.Scan() {
-		if e {
-			Log(Red(in.Text()))
-		} else {
-			Log(in.Text())
-		}
+		Log(in.Text())
 	}
+	p.Close()
 }
 
-func (self *Daemon) Run() {
+func (self *Daemon) Run(ch chan<- error) error {
 	atomic.AddInt64(&self.count, 1)
 	Log(Green(fmt.Sprintf("count: %v", self.count)))
 
@@ -34,14 +31,12 @@ func (self *Daemon) Run() {
 	if self.owner != nil {
 		uid, err := strconv.Atoi(self.owner.Uid)
 		if err != nil {
-			self.ctrl.err <- err
-			return
+			return err
 		}
 
 		gid, err := strconv.Atoi(self.owner.Gid)
 		if err != nil {
-			self.ctrl.err <- err
-			return
+			return err
 		}
 
 		//	https://golang.org/pkg/syscall/#SysProcAttr
@@ -57,33 +52,22 @@ func (self *Daemon) Run() {
 
 	cmd.SysProcAttr = sysProcAttr
 
-	//stdout, err := cmd.StdoutPipe()
-	//if err != nil {
-	//self.ctrl.err <- err
-	//return
-	//}
-
-	//stderr, err := cmd.StderrPipe()
-	//if err != nil {
-	//self.ctrl.err <- err
-	//return
-	//}
-
 	r, w := io.Pipe()
 	cmd.Stdout = w
 	cmd.Stderr = w
-	// go self.stdHandler(stdout, false)
-	go self.stdHandler(r, true)
+
+	go self.stdHandler(r)
 
 	go func() {
-		defer w.Close()
+		defer w_o.Close()
+		defer w_e.Close()
+
 		if err := cmd.Start(); err != nil {
-			self.ctrl.err <- err
-			return
+			return err
 		}
 
 		self.pid = cmd.Process.Pid
 
-		self.ctrl.state <- cmd.Wait()
+		ch <- cmd.Wait()
 	}()
 }

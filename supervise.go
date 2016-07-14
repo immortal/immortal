@@ -23,7 +23,7 @@ func (self *Daemon) readPidfile() (int, error) {
 }
 
 func (self *Daemon) Supervice() {
-	self.Run()
+	self.Run(self.ctrl.state)
 
 	for {
 		select {
