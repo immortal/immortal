@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	//	"os"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync/atomic"
@@ -57,22 +57,22 @@ func (self *Daemon) Run() {
 
 	cmd.SysProcAttr = sysProcAttr
 
-	//file, err := os.Create("/tmp/tmp.log")
-	//if err != nil {
-	//self.ctrl.err <- err
-	//}
-	//defer file.Close()
-	//cmd.Stdout = file
-	//cmd.Stderr = file
+	file, err := os.Create("/tmp/tmp.log")
+	if err != nil {
+		self.ctrl.err <- err
+	}
+	defer file.Close()
+	cmd.Stdout = file
+	cmd.Stderr = file
 
-	_, err := cmd.StdoutPipe()
-	if err != nil {
-		return
-	}
-	_, err = cmd.StderrPipe()
-	if err != nil {
-		return
-	}
+	//_, err := cmd.StdoutPipe()
+	//if err != nil {
+	//return
+	//}
+	//_, err = cmd.StderrPipe()
+	//if err != nil {
+	//return
+	//}
 
 	if err := cmd.Start(); err != nil {
 		self.ctrl.err <- err

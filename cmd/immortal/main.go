@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/user"
-	"syscall"
 )
 
 var version, githash string
@@ -22,6 +21,7 @@ func main() {
 		err error
 		usr *user.User
 		D   *ir.Daemon
+		pid int
 	)
 
 	flag.Usage = func() {
@@ -86,27 +86,27 @@ func main() {
 	// only one instance
 	if err = D.Lock(); err != nil {
 		fmt.Println("Another instance of immortal is running")
+		// need to log somewhere
+		// log.Println("Another instance of immortal is running", wd)
+		//
 		os.Exit(1)
 	}
 
-	if os.Getppid() > 1 {
-		if err = D.Fork(); err != nil {
-			fmt.Println("check path: ", err.Error())
-			os.Exit(1)
-		} else {
+	if pid, err = D.Fork(); err != nil {
+		fmt.Println("check path: ", err.Error())
+		os.Exit(1)
+	} else {
+		if pid > 0 {
+			fmt.Printf("%c   %d", ir.Icon("2B55"), pid)
 			os.Exit(0)
 		}
 	}
-
-	_ = syscall.Umask(0)
-	pid, err := syscall.Setsid()
-
-	fmt.Printf("%c   %d %d", ir.Icon("2B55"), os.Getpid(), pid)
 
 	err = D.FIFO()
 	if err != nil {
 		ir.Log(err.Error())
 		os.Exit(1)
 	}
+
 	D.Supervice()
 }

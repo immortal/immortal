@@ -3,6 +3,7 @@ cwd: /tmp
 env:
     DEBUG: 1
     ENVIROMENT: production
+log: /var/log/app.log
 pid: /path/to/unicorn.pid
 user: www
 # SIGKILL and SIGSTOP cannot be blocked.
