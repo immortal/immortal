@@ -23,7 +23,7 @@ func (self *Daemon) readPidfile() (int, error) {
 }
 
 func (self *Daemon) Supervice() {
-	go self.Run()
+	self.Run()
 
 	for {
 		select {
@@ -55,12 +55,12 @@ func (self *Daemon) Supervice() {
 					// set pid to new pid in file
 					self.pid = pid
 					Log(Yellow(fmt.Sprintf("Starting to watch pid %d in file: %s", self.pid, self.run.Pidfile)))
-					go self.watchPid()
+					//	go self.watchPid()
 				} else {
-					go self.Run()
+					//go self.Run()
 				}
 			} else {
-				go self.Run()
+				//go self.Run()
 			}
 		case fifo := <-self.ctrl.fifo:
 			Log(Yellow(fmt.Sprintf("fifo: %s", fifo)))
