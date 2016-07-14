@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/user"
+	"syscall"
 )
 
 var version, githash string
@@ -83,12 +84,24 @@ func main() {
 	}
 
 	// only one instance
-	if err := D.Lock(); err != nil {
+	if err = D.Lock(); err != nil {
 		fmt.Println("Another instance of immortal is running")
 		os.Exit(1)
 	}
 
-	D.Fork()
+	if os.Getppid() > 1 {
+		if err = D.Fork(); err != nil {
+			fmt.Println("check path: ", err.Error())
+			os.Exit(1)
+		} else {
+			os.Exit(0)
+		}
+	}
+
+	_ = syscall.Umask(0)
+	pid, err := syscall.Setsid()
+
+	fmt.Printf("%c   %d %d", ir.Icon("2B55"), os.Getpid(), pid)
 
 	err = D.FIFO()
 	if err != nil {

@@ -1,28 +1,25 @@
 package immortal
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
 )
 
-func (self *Daemon) Fork() {
-	if os.Getppid() > 1 {
-		args := os.Args[1:]
-		cmd := exec.Command(os.Args[0], args...)
-		cmd.Start()
-		fmt.Printf("%c   %d", Icon(logo), cmd.Process.Pid)
-		os.Exit(0)
-	}
+//		fmt.Printf("%c   %d", Icon(logo), cmd.Process.Pid)
+// Log(fmt.Sprintf("%c   %d", Icon(logo), pid))
+// _ = syscall.Umask(0)
+// pid, err := syscall.Setsid()
 
-	//	os.Chdir("/")
-	_ = syscall.Umask(0)
-	pid, err := syscall.Setsid()
-	if err != nil {
-		Log(fmt.Sprintf("Error: syscall.Setsid errno: %s", err))
-		os.Exit(1)
-	}
-
-	Log(fmt.Sprintf("%c   %d", Icon(logo), pid))
+func (self *Daemon) Fork() error {
+	args := os.Args[1:]
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Dir = "/"
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.ExtraFiles = nil
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: false, Setpgid: true}
+	return cmd.Start()
 }
