@@ -16,7 +16,6 @@ func (self *Daemon) stdHandler(p io.ReadCloser) {
 	in := bufio.NewScanner(p)
 	for in.Scan() {
 		self.Log(in.Text())
-		//log.Print(in.Text())
 	}
 	p.Close()
 }
