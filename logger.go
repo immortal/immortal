@@ -1,12 +1,10 @@
 package immortal
 
 import (
-	"log"
 	"time"
 )
 
-//func Log(l *log.Logger, msg string) {
-func Log(msg string) {
-	log.SetPrefix(time.Now().UTC().Format(time.RFC3339Nano) + " ")
-	log.Print(msg)
+func (self *Daemon) Log(msg string) {
+	self.logger.SetPrefix(time.Now().UTC().Format(time.RFC3339Nano) + " ")
+	self.logger.Print(msg)
 }

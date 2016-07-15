@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log"
 	//	"os"
 	"os/exec"
 	"strconv"
@@ -14,14 +15,15 @@ import (
 func (self *Daemon) stdHandler(p io.ReadCloser) {
 	in := bufio.NewScanner(p)
 	for in.Scan() {
-		Log(in.Text())
+		self.Log(in.Text())
+		//log.Print(in.Text())
 	}
 	p.Close()
 }
 
 func (self *Daemon) Run(ch chan<- error) {
 	atomic.AddInt64(&self.count, 1)
-	Log(Green(fmt.Sprintf("count: %v", self.count)))
+	log.Print(Green(fmt.Sprintf("count: %v", self.count)))
 
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 

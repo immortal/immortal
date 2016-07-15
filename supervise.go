@@ -10,7 +10,7 @@ import (
 
 // readPidfile read pid from file if error returns pid 0
 func (self *Daemon) readPidfile() (int, error) {
-	content, err := ioutil.ReadFile(self.run.Pidfile)
+	content, err := ioutil.ReadFile(self.run.FollowPid)
 	if err != nil {
 		return 0, err
 	}
@@ -31,10 +31,10 @@ func (self *Daemon) Supervice() {
 			return
 		case state := <-self.ctrl.state:
 			if state != nil {
-				Log(Yellow(state.Error()))
+				self.Log(Yellow(state.Error()))
 
 				if state.Error() == "EXIT" {
-					Log(Yellow(fmt.Sprintf("PID: %d Exited", self.pid)))
+					self.Log(Yellow(fmt.Sprintf("PID: %d Exited", self.pid)))
 				}
 			}
 
@@ -43,16 +43,16 @@ func (self *Daemon) Supervice() {
 
 			// follow the new pid and stop running the command
 			// unless the new pid dies
-			if self.run.Pidfile != "" {
+			if self.run.FollowPid != "" {
 				pid, err := self.readPidfile()
 				if err != nil {
-					Log(Red(fmt.Sprintf("Cannot read pidfile:%s,  %s", self.run.Pidfile, err.Error())))
+					self.Log(Red(fmt.Sprintf("Cannot read pidfile:%s,  %s", self.run.FollowPid, err.Error())))
 				}
 				// check if pid in file is valid
 				if pid > 1 && pid != self.pid {
 					// set pid to new pid in file
 					self.pid = pid
-					Log(Yellow(fmt.Sprintf("Starting to watch pid %d in file: %s", self.pid, self.run.Pidfile)))
+					self.Log(Yellow(fmt.Sprintf("Starting to watch pid %d in file: %s", self.pid, self.run.FollowPid)))
 					//	go self.watchPid()
 				} else {
 					//go self.Run()
@@ -61,7 +61,7 @@ func (self *Daemon) Supervice() {
 				//go self.Run()
 			}
 		case fifo := <-self.ctrl.fifo:
-			Log(Yellow(fmt.Sprintf("fifo: %s", fifo)))
+			self.Log(Yellow(fmt.Sprintf("fifo: %s", fifo)))
 			fmt.Fprintf(self.ctrl.status, "pong: %s\n", fifo)
 		}
 	}
