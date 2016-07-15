@@ -10,7 +10,7 @@ import (
 func (self *Daemon) watchPid(ch chan<- Return) {
 	kq, err := syscall.Kqueue()
 	if err != nil {
-		ch <- Return{err: os.NewSyscallError("kqueue", err), msg: ""}
+		ch <- Return{os.NewSyscallError("kqueue", err), ""}
 		return
 	}
 
@@ -27,13 +27,12 @@ func (self *Daemon) watchPid(ch chan<- Return) {
 		events := make([]syscall.Kevent_t, 1)
 		n, err := syscall.Kevent(kq, []syscall.Kevent_t{ev1}, events, nil)
 		if err != nil {
-			ch <- Return{err: os.NewSyscallError("kqueue", err), msg: ""}
+			ch <- Return{os.NewSyscallError("kqueue", err), ""}
 			return
 		}
 		for i := 0; i < n; i++ {
 			syscall.Close(kq)
-			//self.ctrl.state <- errors.New("EXIT")
-			ch <- Return{err: nil, msg: "EXIT"}
+			ch <- Return{nil, "EXIT"}
 			return
 		}
 	}

@@ -97,7 +97,5 @@ func main() {
 		}
 	}
 
-	D.FIFO()
-
 	D.Supervice()
 }
