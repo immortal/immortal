@@ -27,10 +27,8 @@ func (self *Daemon) Supervice() {
 
 	for {
 		select {
-		case err := <-self.ctrl.err:
-			if err != nil {
-				Log(Red(err.Error()))
-			}
+		case <-self.ctrl.quit:
+			return
 		case state := <-self.ctrl.state:
 			if state != nil {
 				Log(Yellow(state.Error()))

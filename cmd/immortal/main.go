@@ -5,6 +5,7 @@ import (
 	"fmt"
 	ir "github.com/immortal/immortal"
 	"log"
+	"log/syslog"
 	"os"
 	"os/user"
 )
@@ -68,14 +69,10 @@ func main() {
 	}
 
 	// log
-	f, err := os.OpenFile("/tmp/immortal.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
+	logwriter, err := syslog.New(syslog.LOG_NOTICE, "immortal")
+	if err == nil {
+		log.SetOutput(logwriter)
 	}
-	defer f.Close()
-	log.SetOutput(f)
-	log.SetFlags(0)
 
 	D, err = ir.New(usr, c, p, l, flag.Args())
 	if err != nil {
@@ -98,15 +95,16 @@ func main() {
 	} else {
 		if pid > 0 {
 			fmt.Printf("%c   %d", ir.Icon("2B55"), pid)
+			log.Printf("%c   %d", ir.Icon("2B55"), pid)
 			os.Exit(0)
 		}
 	}
 
-	err = D.FIFO()
-	if err != nil {
-		ir.Log(err.Error())
-		os.Exit(1)
-	}
+	//err = D.FIFO()
+	//if err != nil {
+	//ir.Log(err.Error())
+	//os.Exit(1)
+	//}
 
 	D.Supervice()
 }

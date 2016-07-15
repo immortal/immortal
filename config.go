@@ -29,8 +29,14 @@ type Run struct {
 
 type Ctrl struct {
 	state  chan error
-	fifo   chan string
+	fifo   chan Return
+	quit   chan struct{}
 	status *os.File
+}
+
+type Return struct {
+	err error
+	msg string
 }
 
 func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
@@ -69,7 +75,8 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 		command: cmd,
 		ctrl: Ctrl{
 			state: make(chan error),
-			fifo:  make(chan string),
+			fifo:  make(chan Return),
+			quit:  make(chan struct{}),
 		},
 	}, nil
 }

@@ -19,7 +19,7 @@ func (self *Daemon) stdHandler(p io.ReadCloser) {
 	p.Close()
 }
 
-func (self *Daemon) Run(ch chan<- error) error {
+func (self *Daemon) Run(ch chan<- error) {
 	atomic.AddInt64(&self.count, 1)
 	Log(Green(fmt.Sprintf("count: %v", self.count)))
 
@@ -31,12 +31,12 @@ func (self *Daemon) Run(ch chan<- error) error {
 	if self.owner != nil {
 		uid, err := strconv.Atoi(self.owner.Uid)
 		if err != nil {
-			return err
+			ch <- err
 		}
 
 		gid, err := strconv.Atoi(self.owner.Gid)
 		if err != nil {
-			return err
+			ch <- err
 		}
 
 		//	https://golang.org/pkg/syscall/#SysProcAttr
@@ -59,11 +59,10 @@ func (self *Daemon) Run(ch chan<- error) error {
 	go self.stdHandler(r)
 
 	go func() {
-		defer w_o.Close()
-		defer w_e.Close()
+		defer w.Close()
 
 		if err := cmd.Start(); err != nil {
-			return err
+			ch <- err
 		}
 
 		self.pid = cmd.Process.Pid

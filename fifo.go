@@ -9,14 +9,15 @@ import (
 	"syscall"
 )
 
-func (self *Daemon) FIFO() error {
+func (self *Daemon) FIFO(ch chan<- Return) {
 	// create control pipe
 	fifo := fmt.Sprintf("%s/control", self.sdir)
 	syscall.Mknod(fifo, syscall.S_IFIFO|0666, 0)
 
 	ctrl_fifo, err := os.OpenFile(self.sdir+"/control", os.O_RDWR, os.ModeNamedPipe)
 	if err != nil {
-		return err
+		ch <- Return{err: err, msg: ""}
+		return
 	}
 
 	// create status pipe
@@ -25,7 +26,8 @@ func (self *Daemon) FIFO() error {
 
 	status_fifo, err := os.OpenFile(self.sdir+"/status", os.O_RDWR, os.ModeNamedPipe)
 	if err != nil {
-		return err
+		ch <- Return{err: err, msg: ""}
+		return
 	}
 	self.ctrl.status = status_fifo
 
@@ -44,11 +46,9 @@ func (self *Daemon) FIFO() error {
 				if err == io.EOF {
 					continue
 				}
-				self.ctrl.err <- err
+				ch <- Return{err: err, msg: ""}
 			}
-			self.ctrl.fifo <- strings.TrimSpace(string(buf))
+			ch <- Return{err: nil, msg: strings.TrimSpace(string(buf))}
 		}
 	}()
-
-	return nil
 }
