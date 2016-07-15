@@ -97,11 +97,7 @@ func main() {
 		}
 	}
 
-	//err = D.FIFO()
-	//if err != nil {
-	//ir.Log(err.Error())
-	//os.Exit(1)
-	//}
+	D.FIFO()
 
 	D.Supervice()
 }
