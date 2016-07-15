@@ -58,13 +58,6 @@ func main() {
 		}
 	}
 
-	if *logger != "" {
-		if _, err = is_exec(*logger); err != nil {
-			fmt.Printf("logger error: %s, use -h for more info.\n\n", err)
-			os.Exit(1)
-		}
-	}
-
 	if *u != "" {
 		usr, err = user.Lookup(*u)
 		if err != nil {
