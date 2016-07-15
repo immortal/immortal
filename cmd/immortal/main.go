@@ -69,7 +69,7 @@ func main() {
 	}
 
 	// log
-	logwriter, err := syslog.New(syslog.LOG_NOTICE, "immortal")
+	logwriter, err := syslog.New(syslog.LOG_NOTICE|syslog.LOG_DAEMON, "immortal")
 	if err == nil {
 		log.SetOutput(logwriter)
 	}
@@ -82,10 +82,7 @@ func main() {
 
 	// only one instance
 	if err = D.Lock(); err != nil {
-		fmt.Println("Another instance of immortal is running")
-		// need to log somewhere
-		// log.Println("Another instance of immortal is running", wd)
-		//
+		log.Println("Another instance of immortal is running")
 		os.Exit(1)
 	}
 
@@ -94,8 +91,8 @@ func main() {
 		os.Exit(1)
 	} else {
 		if pid > 0 {
-			fmt.Printf("%c   %d", ir.Icon("2B55"), pid)
-			log.Printf("%c   %d", ir.Icon("2B55"), pid)
+			fmt.Printf("%c  %d", ir.Icon("2B55"), pid)
+			log.Printf("%c  %d", ir.Icon("2B55"), pid)
 			os.Exit(0)
 		}
 	}

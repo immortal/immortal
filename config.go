@@ -59,7 +59,7 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Mkdir(wd+"supervise", 0700); err != nil {
+	if err := os.Mkdir(wd+"/supervise", 0700); err != nil {
 		if os.IsNotExist(err) {
 			return nil, err
 		}
@@ -67,7 +67,7 @@ func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
 
 	return &Daemon{
 		owner: u,
-		sdir:  wd + "supervise",
+		sdir:  wd + "/supervise",
 		run: Run{
 			Pidfile: *p,
 			Log:     *l,
