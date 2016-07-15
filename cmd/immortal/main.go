@@ -14,15 +14,17 @@ var version, githash string
 
 func main() {
 	var (
-		p   = flag.String("p", "", "PID file")
-		l   = flag.String("l", "", "Log path")
-		u   = flag.String("u", "", "Execute command on behalf user")
-		v   = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
-		c   = flag.String("c", "", "run.yml configuration file")
-		err error
-		usr *user.User
-		D   *ir.Daemon
-		pid int
+		c      = flag.String("c", "", "run.yml configuration file")
+		l      = flag.String("l", "", "Log file path")
+		logger = flag.String("logger", "", "External logger to use")
+		p      = flag.String("p", "", "PID file")
+		u      = flag.String("u", "", "Execute command on behalf user")
+		ctrl   = flag.Bool("ctrl", false, fmt.Sprintf("Print version: %s", version))
+		v      = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
+		err    error
+		usr    *user.User
+		D      *ir.Daemon
+		pid    int
 	)
 
 	flag.Usage = func() {
@@ -45,13 +47,20 @@ func main() {
 
 	// if no args exit
 	if len(flag.Args()) < 1 {
-		fmt.Fprintf(os.Stderr, "Missing command (\"%s -h\") for help", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Missing command, use (\"%s -h\") for help", os.Args[0])
 		os.Exit(1)
 	}
 
 	if *c != "" {
-		if _, err = os.Stat(*c); os.IsNotExist(err) {
+		if !exists(*c) {
 			fmt.Printf("Cannot read file: %s, use -h for more info.\n\n", *c)
+			os.Exit(1)
+		}
+	}
+
+	if *logger != "" {
+		if _, err = is_exec(*logger); err != nil {
+			fmt.Printf("logger error: %s, use -h for more info.\n\n", err)
 			os.Exit(1)
 		}
 	}
@@ -74,7 +83,7 @@ func main() {
 		log.SetOutput(logwriter)
 	}
 
-	D, err = ir.New(usr, c, p, l, flag.Args())
+	D, err = ir.New(usr, c, p, l, logger, flag.Args(), ctrl)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

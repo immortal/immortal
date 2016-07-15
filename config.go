@@ -39,7 +39,7 @@ type Return struct {
 	msg string
 }
 
-func New(u *user.User, c, p, l *string, cmd []string) (*Daemon, error) {
+func New(u *user.User, c, p, l, logger *string, cmd []string, ctrl *bool) (*Daemon, error) {
 	if *c != "" {
 		yml_file, err := ioutil.ReadFile(*c)
 		if err != nil {
