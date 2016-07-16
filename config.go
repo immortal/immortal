@@ -2,9 +2,11 @@ package immortal
 
 import (
 	"gopkg.in/yaml.v2"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 )
@@ -113,7 +115,14 @@ func (self *Daemon) Init() {
 			log.Printf("Failed to open log file %q: %s\n", self.run.Logfile, err)
 			return
 		}
-		//		multi := io.MultiWriter(file, os.Stdout)
-		self.logger = log.New(file, "", 0)
+		logger := exec.Command("logger", "-t", "immortal-multiwriter")
+		w, _ := logger.StdinPipe()
+		go func() {
+			defer w.Close()
+			logger.Start()
+			logger.Wait()
+		}()
+		multi := io.MultiWriter(file, w)
+		self.logger = log.New(multi, "", 0)
 	}
 }
