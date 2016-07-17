@@ -38,10 +38,10 @@ func (self *Daemon) Supervice() {
 					self.Log(Yellow(fmt.Sprintf("Starting to watch pid %d in file: %s", self.pid, self.run.FollowPid)))
 					//	go self.watchPid()
 				} else {
-					//go self.Run()
+					self.Run(self.ctrl.state)
 				}
 			} else {
-				//go self.Run()
+				self.Run(self.ctrl.state)
 			}
 		case fifo := <-self.ctrl.fifo:
 			self.Log(Yellow(fmt.Sprintf("fifo: %s", fifo)))
