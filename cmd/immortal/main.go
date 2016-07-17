@@ -117,7 +117,7 @@ func main() {
 
 	log.Printf("%c  %d", ir.Icon("2B55"), os.Getpid())
 
-	D.Init()
+	D.Logger()
 
 	D.Supervice()
 }

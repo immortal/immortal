@@ -9,17 +9,19 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 type Daemon struct {
-	owner   *user.User
 	command []string
-	pid     int
-	run     Run
 	count   int64
+	owner   *user.User
+	pid     int
 	sdir    string
 	ctrl    Ctrl
 	logger  *log.Logger
+	run     Run
 }
 
 type Run struct {
@@ -37,9 +39,9 @@ type Run struct {
 }
 
 type Ctrl struct {
-	state  chan error
 	fifo   chan Return
 	quit   chan struct{}
+	state  chan error
 	status *os.File
 }
 
@@ -101,61 +103,69 @@ func New(u *user.User, c, d, f, l, logger, P, p *string, cmd []string, ctrl *boo
 			Ctrl:      *ctrl,
 		},
 		ctrl: Ctrl{
-			state: make(chan error),
 			fifo:  make(chan Return),
 			quit:  make(chan struct{}),
+			state: make(chan error),
 		},
 	}, nil
 }
 
-type TestLogger struct {
-	Writer chan io.WriteCloser
-	Err    chan error
-}
+func (self *Daemon) Logger() {
+	var (
+		ch    chan error
+		err   error
+		file  *os.File
+		multi io.Writer
+		w     io.WriteCloser
+	)
 
-func (self *Daemon) Init() {
+	ch = make(chan error)
+
 	if self.run.Logfile != "" {
-		file, err := os.OpenFile(self.run.Logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		file, err = os.OpenFile(self.run.Logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
 			log.Printf("Failed to open log file %q: %s\n", self.run.Logfile, err)
 			return
 		}
+	}
 
-		ch := TestLogger{
-			Writer: make(chan io.WriteCloser, 2),
-			Err:    make(chan error),
+	runLogger := func() {
+		command := strings.Fields(self.run.Logger)
+		cmd := exec.Command(command[0], command[1:]...)
+		w, err = cmd.StdinPipe()
+		if err != nil {
+			log.Printf("logger PIPE error: %s", err)
+			ch <- err
+			return
 		}
-
-		logger := exec.Command("logger", "-t", "immortal-multiwriter")
-
-		w, _ := logger.StdinPipe()
-		ch.Writer <- w
-
 		go func() {
-			defer w.Close()
-			logger.Start()
-			ch.Err <- logger.Wait()
+			if err := cmd.Start(); err != nil {
+				ch <- err
+			}
+			ch <- cmd.Wait()
 		}()
+	}
+
+	if self.run.Logger != "" {
+		runLogger()
+
 		go func() {
 			for {
 				select {
-				case err := <-ch.Err:
-					println("logger exited", err)
-					logger := exec.Command("logger", "-t", "immortal-multiwriter")
-					w, _ := logger.StdinPipe()
-					ch.Writer <- w
-					multi := io.MultiWriter(file, <-ch.Writer)
+				case err = <-ch:
+					log.Print("logger exited ", err.Error())
+					time.Sleep(time.Second)
+					runLogger()
+					multi = io.MultiWriter(file, w)
 					self.logger = log.New(multi, "", 0)
-
-					go func() {
-						defer w.Close()
-						logger.Start()
-						ch.Err <- logger.Wait()
-					}()
 				}
 			}
 		}()
-		multi := io.MultiWriter(file, <-ch.Writer)
-		self.logger = log.New(multi, "", 0)
+		multi = io.MultiWriter(file, w)
+	} else {
+		multi = io.MultiWriter(file)
 	}
+
+	// create the logger
+	self.logger = log.New(multi, "", 0)
 }
