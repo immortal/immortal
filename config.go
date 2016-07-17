@@ -112,6 +112,10 @@ func New(u *user.User, c, d, f, l, logger, P, p *string, cmd []string, ctrl *boo
 	}, nil
 }
 
+func (self *Daemon) Log(msg string) {
+	self.logger.Print(msg)
+}
+
 func (self *Daemon) Logger() {
 	var (
 		ch    chan error

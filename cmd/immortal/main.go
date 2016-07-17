@@ -25,9 +25,9 @@ func main() {
 		ctrl   = flag.Bool("ctrl", false, "Create supervise directory")
 		v      = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
 		err    error
+		pid    int
 		usr    *user.User
 		D      *ir.Daemon
-		pid    int
 	)
 
 	flag.Usage = func() {
@@ -82,7 +82,6 @@ func main() {
 
 	// log
 	logwriter, err := syslog.New(syslog.LOG_NOTICE|syslog.LOG_DAEMON, "immortal")
-	//l3, err := syslog.Dial("udp", "localhost", syslog.LOG_ERR, "immortal")
 	if err == nil {
 		log.SetOutput(logwriter)
 		log.SetFlags(0)
@@ -118,6 +117,5 @@ func main() {
 	log.Printf("%c  %d", ir.Icon("2B55"), os.Getpid())
 
 	D.Logger()
-
 	D.Supervice()
 }
