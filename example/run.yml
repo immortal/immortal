@@ -3,8 +3,13 @@ cwd: /tmp
 env:
     DEBUG: 1
     ENVIROMENT: production
-log: /var/log/app.log
-pid: /path/to/unicorn.pid
+followpid: /path/to/unicorn.pid
+log:
+    file: /var/log/app.log
+    age: 86400 # seconds
+    num: 7     # int
+    size: 1    # MegaBytes
+logger: logger -t unicorn
 user: www
 # SIGKILL and SIGSTOP cannot be blocked.
 if_signal:
