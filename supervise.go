@@ -27,10 +27,10 @@ func (self *Daemon) Supervice() {
 			return
 		case state := <-self.ctrl.state:
 			if state != nil {
-				self.Log(Yellow(state.Error()))
-
 				if state.Error() == "EXIT" {
 					self.Log(Yellow(fmt.Sprintf("PID: %d Exited", self.pid)))
+				} else {
+					self.Log(Yellow(state.Error()))
 				}
 			}
 
@@ -49,7 +49,7 @@ func (self *Daemon) Supervice() {
 					if pid > 1 && pid != self.pid && self.isUP(pid) {
 						// set pid to new pid in file
 						self.pid = pid
-						self.Log(Yellow(fmt.Sprintf("Starting to watch pid %d on file: %s", self.pid, self.run.FollowPid)))
+						self.Log(Yellow(fmt.Sprintf("Watching pid %d on file: %s", self.pid, self.run.FollowPid)))
 						go self.watchPid(self.ctrl.state)
 					}
 				}
