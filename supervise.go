@@ -43,15 +43,15 @@ func (self *Daemon) Supervice() {
 				pid, err := self.readPidfile()
 				if err != nil {
 					self.Log(Red(fmt.Sprintf("Cannot read pidfile:%s,  %s", self.run.FollowPid, err.Error())))
-				}
-				// check if pid in file is valid
-				if pid > 1 && pid != self.pid && self.isUP(pid) {
-					// set pid to new pid in file
-					self.pid = pid
-					self.Log(Yellow(fmt.Sprintf("Starting to watch pid %d in file: %s", self.pid, self.run.FollowPid)))
-					go self.watchPid(self.ctrl.state)
-				} else {
 					self.Run(self.ctrl.state)
+				} else {
+					// check if pid in file is valid
+					if pid > 1 && pid != self.pid && self.isUP(pid) {
+						// set pid to new pid in file
+						self.pid = pid
+						self.Log(Yellow(fmt.Sprintf("Starting to watch pid %d on file: %s", self.pid, self.run.FollowPid)))
+						go self.watchPid(self.ctrl.state)
+					}
 				}
 			} else {
 				self.Run(self.ctrl.state)
