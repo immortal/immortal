@@ -2,8 +2,21 @@ package immortal
 
 import (
 	"fmt"
+	"os"
+	"syscall"
 	"time"
 )
+
+func (self *Daemon) isUP(pid int) bool {
+	process, err := os.FindProcess(int(pid))
+	if err != nil {
+		return false
+	}
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	return true
+}
 
 func (self *Daemon) Supervice() {
 	self.Run(self.ctrl.state)
@@ -32,11 +45,11 @@ func (self *Daemon) Supervice() {
 					self.Log(Red(fmt.Sprintf("Cannot read pidfile:%s,  %s", self.run.FollowPid, err.Error())))
 				}
 				// check if pid in file is valid
-				if pid > 1 && pid != self.pid {
+				if pid > 1 && pid != self.pid && self.isUP(pid) {
 					// set pid to new pid in file
 					self.pid = pid
 					self.Log(Yellow(fmt.Sprintf("Starting to watch pid %d in file: %s", self.pid, self.run.FollowPid)))
-					//	go self.watchPid()
+					go self.watchPid(self.ctrl.state)
 				} else {
 					self.Run(self.ctrl.state)
 				}

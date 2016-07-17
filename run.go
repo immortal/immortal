@@ -67,6 +67,11 @@ func (self *Daemon) Run(ch chan<- error) {
 
 		self.pid = cmd.Process.Pid
 
+		// follow pid
+		if self.run.FollowPid != "" {
+			go self.watchPid(self.ctrl.state)
+		}
+
 		ch <- cmd.Wait()
 	}()
 }

@@ -3,14 +3,15 @@
 package immortal
 
 import (
+	"fmt"
 	"os"
 	"syscall"
 )
 
-func (self *Daemon) watchPid(ch chan<- Return) {
+func (self *Daemon) watchPid(ch chan<- error) {
 	kq, err := syscall.Kqueue()
 	if err != nil {
-		ch <- Return{os.NewSyscallError("kqueue", err), ""}
+		ch <- os.NewSyscallError("kqueue", err)
 		return
 	}
 
@@ -27,12 +28,12 @@ func (self *Daemon) watchPid(ch chan<- Return) {
 		events := make([]syscall.Kevent_t, 1)
 		n, err := syscall.Kevent(kq, []syscall.Kevent_t{ev1}, events, nil)
 		if err != nil {
-			ch <- Return{os.NewSyscallError("kqueue", err), ""}
+			ch <- os.NewSyscallError("kqueue", err)
 			return
 		}
 		for i := 0; i < n; i++ {
 			syscall.Close(kq)
-			ch <- Return{nil, "EXIT"}
+			ch <- fmt.Errorf("EXIT")
 			return
 		}
 	}
