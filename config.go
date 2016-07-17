@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"github.com/immortal/logrotate"
 	"gopkg.in/yaml.v2"
 	"io"
 	"io/ioutil"
@@ -114,15 +115,16 @@ func (self *Daemon) Logger() {
 	var (
 		ch    chan error
 		err   error
-		file  *os.File
 		multi io.Writer
+		file  io.WriteCloser
 		w     io.WriteCloser
 	)
 
 	ch = make(chan error)
 
 	if self.run.Logfile != "" {
-		file, err = os.OpenFile(self.run.Logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		//file, err = os.OpenFile(self.run.Logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		file, err = logrotate.New(self.run.Logfile)
 		if err != nil {
 			log.Printf("Failed to open log file %q: %s\n", self.run.Logfile, err)
 			return
@@ -154,7 +156,7 @@ func (self *Daemon) Logger() {
 				select {
 				case err = <-ch:
 					log.Print("logger exited ", err.Error())
-					time.Sleep(time.Second)
+					time.Sleep(3 * time.Second)
 					runLogger()
 					multi = io.MultiWriter(file, w)
 					self.logger = log.New(multi, "", 0)
