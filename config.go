@@ -118,17 +118,15 @@ func (self *Daemon) Log(msg string) {
 
 func (self *Daemon) Logger() {
 	var (
-		ch    chan error
-		err   error
-		multi io.Writer
-		file  io.WriteCloser
-		w     io.WriteCloser
+		ch      chan error
+		err     error
+		multi   io.Writer
+		file, w io.WriteCloser
 	)
 
 	ch = make(chan error)
 
 	if self.run.Logfile != "" {
-		//file, err = os.OpenFile(self.run.Logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		file, err = logrotate.New(self.run.Logfile)
 		if err != nil {
 			log.Printf("Failed to open log file %q: %s\n", self.run.Logfile, err)
