@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"github.com/immortal/logrotate"
+	"github.com/immortal/multiwriter"
 	"gopkg.in/yaml.v2"
 	"io"
 	"io/ioutil"
@@ -156,16 +157,16 @@ func (self *Daemon) Logger() {
 				select {
 				case err = <-ch:
 					log.Print("logger exited ", err.Error())
-					time.Sleep(3 * time.Second)
+					time.Sleep(time.Second)
 					runLogger()
-					multi = io.MultiWriter(file, w)
+					multi = multiwriter.New(file, w)
 					self.logger = log.New(multi, "", 0)
 				}
 			}
 		}()
-		multi = io.MultiWriter(file, w)
+		multi = multiwriter.New(file, w)
 	} else {
-		multi = io.MultiWriter(file)
+		multi = multiwriter.New(file)
 	}
 
 	// create the logger
