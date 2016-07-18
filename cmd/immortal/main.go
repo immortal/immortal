@@ -71,20 +71,20 @@ func main() {
 
 	// if no args exit
 	if len(flag.Args()) < 1 {
-		fmt.Fprintf(os.Stderr, "Missing command, use (\"%s -h\") for help.\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Missing command, use (\"%s -h\") for help.\n", os.Args[0])
 		os.Exit(1)
 	}
 
 	if *c != "" {
 		if !exists(*c) {
-			fmt.Printf("Cannot read file: %s, use -h for more info.\n\n", *c)
+			fmt.Printf("Cannot read file: %s, use -h for more info.\n", *c)
 			os.Exit(1)
 		}
 	}
 
 	if *d != "" {
 		if !exists(*d) {
-			fmt.Printf("-d %s does not exist or has wrong permissions.\n\n", *d)
+			fmt.Printf("-d %s does not exist or has wrong permissions.\n", *d)
 			os.Exit(1)
 		}
 	}
@@ -93,9 +93,9 @@ func main() {
 		usr, err = user.Lookup(*u)
 		if err != nil {
 			if _, ok := err.(user.UnknownUserError); ok {
-				fmt.Printf("User %s does not exist.\n\n", *u)
+				fmt.Printf("User %s does not exist.\n", *u)
 			} else if err != nil {
-				fmt.Printf("Error looking up user: %s\n\n", *u)
+				fmt.Printf("Error looking up user: %s\n", *u)
 			}
 			os.Exit(1)
 		}
