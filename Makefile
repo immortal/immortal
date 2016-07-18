@@ -16,7 +16,7 @@ get:
 build: get
 #	${GO} get -u gopkg.in/yaml.v2;
 	${GO} build -ldflags "-X main.version=${VERSION} -X main.githash=${GITHASH}" -o ir-scandir cmd/ir-scandir/main.go;
-	${GO} build -ldflags "-X main.version=${VERSION} -X main.githash=${GITHASH}" -o ${BIN_NAME} cmd/immortal/*.go;
+	${GO} build -ldflags "-X main.version=${VERSION} -X main.githash=${GITHASH}" -o ${BIN_NAME} cmd/immortal/main.go;
 
 clean:
 	@rm -rf ir-* ${BIN_NAME} ${BIN_NAME}.debug *.out build debian
