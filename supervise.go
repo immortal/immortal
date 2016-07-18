@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (self *Daemon) isUP(pid int) bool {
+func (self *Daemon) isRunning(pid int) bool {
 	process, err := os.FindProcess(int(pid))
 	if err != nil {
 		return false
@@ -46,7 +46,7 @@ func (self *Daemon) Supervice() {
 					self.Run(self.ctrl.state)
 				} else {
 					// check if pid in file is valid
-					if pid > 1 && pid != self.pid && self.isUP(pid) {
+					if pid > 1 && pid != self.pid && self.isRunning(pid) {
 						// set pid to new pid in file
 						self.pid = pid
 						self.Log(Yellow(fmt.Sprintf("Watching pid %d on file: %s", self.pid, self.run.FollowPid)))
