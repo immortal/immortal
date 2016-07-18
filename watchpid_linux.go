@@ -1,32 +1,24 @@
-// +build linux
-
 package immortal
 
 import (
 	"fmt"
 	"os"
+	"syscall"
 	"time"
 )
 
 func (self *Daemon) watchPid(ch chan<- error) {
-	initialStat, err := os.Stat(self.run.FollowPid)
-	if err != nil {
-		ch <- err
-		return
-	}
-
 	for {
-		stat, err := os.Stat(self.run.FollowPid)
+		process, err := os.FindProcess(self.pid)
 		if err != nil {
 			ch <- err
 			return
 		}
 
-		if stat.Size() != initialStat.Size() || stat.ModTime() != initialStat.ModTime() {
+		err = process.Signal(syscall.Signal(0))
+		if err != nil {
 			ch <- fmt.Errorf("EXIT")
-			return
 		}
-
 		time.Sleep(time.Second)
 	}
 }
