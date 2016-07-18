@@ -1,4 +1,5 @@
-// +build freebsd netbsd openbsd dragonfly darwin
+// +build freebsd openbsd dragonfly darwin
+// +build amd64
 
 package immortal
 
