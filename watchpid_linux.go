@@ -1,3 +1,5 @@
+// +build linux
+
 package immortal
 
 import (
