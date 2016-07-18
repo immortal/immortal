@@ -71,7 +71,7 @@ func main() {
 
 	// if no args exit
 	if len(flag.Args()) < 1 {
-		fmt.Fprintf(os.Stderr, "Missing command, use (\"%s -h\") for help", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Missing command, use (\"%s -h\") for help.\n\n", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -93,9 +93,9 @@ func main() {
 		usr, err = user.Lookup(*u)
 		if err != nil {
 			if _, ok := err.(user.UnknownUserError); ok {
-				fmt.Printf("User %s does not exist.", *u)
+				fmt.Printf("User %s does not exist.\n\n", *u)
 			} else if err != nil {
-				fmt.Printf("Error looking up user: %s", *u)
+				fmt.Printf("Error looking up user: %s\n\n", *u)
 			}
 			os.Exit(1)
 		}
