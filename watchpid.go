@@ -1,4 +1,4 @@
-// +build freebsd openbsd dragonfly darwin
+// +build freebsd netbsd openbsd dragonfly darwin
 // +build amd64
 
 package immortal
@@ -22,7 +22,6 @@ func (self *Daemon) watchPid(ch chan<- error) {
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
 		Fflags: syscall.NOTE_EXIT,
 		Data:   0,
-		Udata:  nil,
 	}
 
 	for {
