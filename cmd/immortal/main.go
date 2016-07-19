@@ -130,7 +130,7 @@ func main() {
 		os.Exit(1)
 	} else {
 		if pid > 0 {
-			fmt.Printf("%c  %d", ir.Icon("2B55"), pid)
+			fmt.Printf("%c  %d\n", ir.Icon("2B55"), pid)
 			os.Exit(0)
 		}
 	}
