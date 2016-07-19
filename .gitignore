@@ -1,0 +1,9 @@
+ir-scandir
+!*ir-scandir/
+immortal
+!*immortal/
+coverage.out
+.goxc.local.json
+.goxc.json
+build
+supervise
