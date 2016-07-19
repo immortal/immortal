@@ -25,6 +25,7 @@ func (self *Daemon) Logger() {
 	ch = make(chan error)
 
 	if self.run.Logfile != "" {
+		self.log = true
 		file, err = logrotate.New(self.run.Logfile)
 		if err != nil {
 			log.Printf("Failed to open log file %q: %s\n", self.run.Logfile, err)
@@ -50,6 +51,7 @@ func (self *Daemon) Logger() {
 	}
 
 	if self.run.Logger != "" {
+		self.log = true
 		runLogger()
 
 		go func() {
@@ -70,5 +72,7 @@ func (self *Daemon) Logger() {
 	}
 
 	// create the logger
-	self.logger = log.New(multi, "", 0)
+	if self.log {
+		self.logger = log.New(multi, "", 0)
+	}
 }

@@ -12,12 +12,13 @@ import (
 type Daemon struct {
 	command []string
 	count   int64
+	ctrl    Ctrl
+	log     bool
+	logger  *log.Logger
 	owner   *user.User
 	pid     int
-	sdir    string
-	ctrl    Ctrl
-	logger  *log.Logger
 	run     Run
+	sdir    string
 }
 
 type Run struct {

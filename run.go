@@ -51,14 +51,25 @@ func (self *Daemon) Run(ch chan<- error) {
 
 	cmd.SysProcAttr = sysProcAttr
 
-	r, w := io.Pipe()
-	cmd.Stdout = w
-	cmd.Stderr = w
-
-	go self.stdHandler(r)
+	var (
+		r *io.PipeReader
+		w *io.PipeWriter
+	)
+	if self.log {
+		r, w = io.Pipe()
+		cmd.Stdout = w
+		cmd.Stderr = w
+		go self.stdHandler(r)
+	} else {
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+	}
 
 	go func() {
-		defer w.Close()
+		if self.log {
+			defer w.Close()
+		}
 
 		if err := cmd.Start(); err != nil {
 			ch <- err
