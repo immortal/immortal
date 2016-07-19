@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"syscall"
 	"time"
@@ -28,28 +29,28 @@ func (self *Daemon) Supervice() {
 		case state := <-self.ctrl.state:
 			if state != nil {
 				if state.Error() == "EXIT" {
-					self.Log(Yellow(fmt.Sprintf("PID: %d Exited", self.pid)))
+					log.Printf("PID: %d Exited", self.pid)
 				} else {
-					self.Log(Yellow(state.Error()))
+					log.Print(state.Error())
 				}
 			}
 
 			// settle down, give time for writing the PID and avoid consuming CPU
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Second)
 
 			// follow the new pid and stop running the command
 			// unless the new pid dies
 			if self.run.FollowPid != "" {
 				pid, err := self.readPidfile()
 				if err != nil {
-					self.Log(Red(fmt.Sprintf("Cannot read pidfile:%s,  %s", self.run.FollowPid, err.Error())))
+					log.Printf("Cannot read pidfile:%s,  %s", self.run.FollowPid, err.Error())
 					self.Run(self.ctrl.state)
 				} else {
 					// check if pid in file is valid
 					if pid > 1 && pid != self.pid && self.isRunning(pid) {
 						// set pid to new pid in file
 						self.pid = pid
-						self.Log(Yellow(fmt.Sprintf("Watching pid %d on file: %s", self.pid, self.run.FollowPid)))
+						log.Printf("Watching pid %d on file: %s", self.pid, self.run.FollowPid)
 						go self.watchPid(self.ctrl.state)
 					}
 				}
@@ -57,7 +58,7 @@ func (self *Daemon) Supervice() {
 				self.Run(self.ctrl.state)
 			}
 		case fifo := <-self.ctrl.fifo:
-			self.Log(Yellow(fmt.Sprintf("fifo: %s", fifo)))
+			log.Printf("fifo: %s", fifo)
 			fmt.Fprintf(self.ctrl.status, "pong: %s\n", fifo)
 		}
 	}

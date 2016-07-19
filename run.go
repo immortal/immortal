@@ -2,9 +2,8 @@ package immortal
 
 import (
 	"bufio"
-	"fmt"
 	"io"
-	"log"
+	//"log"
 	"os/exec"
 	"strconv"
 	"sync/atomic"
@@ -21,7 +20,7 @@ func (self *Daemon) stdHandler(p io.ReadCloser) {
 
 func (self *Daemon) Run(ch chan<- error) {
 	atomic.AddInt64(&self.count, 1)
-	log.Print(Green(fmt.Sprintf("count: %v", self.count)))
+	//	log.Printf("count: %v", self.count)
 
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
