@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"fmt"
 	"io/ioutil"
 	"strconv"
 	"strings"
@@ -18,4 +19,11 @@ func (self *Daemon) readPidfile() (int, error) {
 		return 0, err
 	}
 	return pid, nil
+}
+
+func (self *Daemon) writePid(file string, pid int) error {
+	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
+		return err
+	}
+	return nil
 }

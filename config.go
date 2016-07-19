@@ -12,12 +12,13 @@ import (
 type Daemon struct {
 	command []string
 	count   int64
+	ctrl    Ctrl
+	log     bool
+	logger  *log.Logger
 	owner   *user.User
 	pid     int
-	sdir    string
-	ctrl    Ctrl
-	logger  *log.Logger
 	run     Run
+	sdir    string
 }
 
 type Run struct {
@@ -57,7 +58,7 @@ type Return struct {
 //      p - child pidfile
 //    cmd - command to supervice
 //   ctrl - create supervise dir
-func New(u *user.User, c, d, f, l, logger, P, p *string, cmd []string, ctrl *bool) (*Daemon, error) {
+func New(u *user.User, c, d, f, l, logger, p, P *string, cmd []string, ctrl *bool) (*Daemon, error) {
 	if *c != "" {
 		yml_file, err := ioutil.ReadFile(*c)
 		if err != nil {

@@ -1,6 +1,6 @@
 .PHONY: all get test clean build cover compile goxc bintray
 
-VERSION=0.1.0
+VERSION=0.2.0
 GO ?= go
 BIN_NAME=immortal
 GO_XC = ${GOPATH}/bin/goxc -os="freebsd netbsd openbsd darwin linux"

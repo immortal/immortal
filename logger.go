@@ -18,18 +18,23 @@ func (self *Daemon) Logger() {
 	var (
 		ch      chan error
 		err     error
-		multi   io.Writer
 		file, w io.WriteCloser
 	)
 
 	ch = make(chan error)
 
+	// create a multiwriter
+	multi := multiwriter.New()
+	var m *multiwriter.MultiWriter = multi.(*multiwriter.MultiWriter)
+
 	if self.run.Logfile != "" {
+		self.log = true
 		file, err = logrotate.New(self.run.Logfile)
 		if err != nil {
 			log.Printf("Failed to open log file %q: %s\n", self.run.Logfile, err)
 			return
 		}
+		m.Append(file)
 	}
 
 	runLogger := func() {
@@ -50,6 +55,7 @@ func (self *Daemon) Logger() {
 	}
 
 	if self.run.Logger != "" {
+		self.log = true
 		runLogger()
 
 		go func() {
@@ -57,18 +63,19 @@ func (self *Daemon) Logger() {
 				select {
 				case err = <-ch:
 					log.Print("logger exited ", err.Error())
+					m.Remove(w)
 					time.Sleep(time.Second)
 					runLogger()
-					multi = multiwriter.New(file, w)
-					self.logger = log.New(multi, "", 0)
+					m.Append(w)
+					//self.logger = log.New(multi, "", 0)
 				}
 			}
 		}()
-		multi = multiwriter.New(file, w)
-	} else {
-		multi = multiwriter.New(file)
+		m.Append(w)
 	}
 
 	// create the logger
-	self.logger = log.New(multi, "", 0)
+	if self.log {
+		self.logger = log.New(multi, "", 0)
+	}
 }

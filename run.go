@@ -3,7 +3,8 @@ package immortal
 import (
 	"bufio"
 	"io"
-	//"log"
+	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync/atomic"
@@ -23,6 +24,10 @@ func (self *Daemon) Run(ch chan<- error) {
 	//	log.Printf("count: %v", self.count)
 
 	cmd := exec.Command(self.command[0], self.command[1:]...)
+
+	if self.run.Cwd != "" {
+		cmd.Dir = self.run.Cwd
+	}
 
 	sysProcAttr := new(syscall.SysProcAttr)
 
@@ -51,14 +56,25 @@ func (self *Daemon) Run(ch chan<- error) {
 
 	cmd.SysProcAttr = sysProcAttr
 
-	r, w := io.Pipe()
-	cmd.Stdout = w
-	cmd.Stderr = w
-
-	go self.stdHandler(r)
+	var (
+		r *io.PipeReader
+		w *io.PipeWriter
+	)
+	if self.log {
+		r, w = io.Pipe()
+		cmd.Stdout = w
+		cmd.Stderr = w
+		go self.stdHandler(r)
+	} else {
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+	}
 
 	go func() {
-		defer w.Close()
+		if self.log {
+			defer w.Close()
+		}
 
 		if err := cmd.Start(); err != nil {
 			ch <- err
@@ -69,6 +85,20 @@ func (self *Daemon) Run(ch chan<- error) {
 		// follow pid
 		if self.run.FollowPid != "" {
 			go self.watchPid(self.ctrl.state)
+		}
+
+		// write parent pid
+		if self.run.ParentPid != "" {
+			if err := self.writePid(self.run.ParentPid, os.Getpid()); err != nil {
+				log.Print(err)
+			}
+		}
+
+		// write child pid
+		if self.run.ChildPid != "" {
+			if err := self.writePid(self.run.ChildPid, self.pid); err != nil {
+				log.Print(err)
+			}
 		}
 
 		ch <- cmd.Wait()
