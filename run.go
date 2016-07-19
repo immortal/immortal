@@ -3,7 +3,8 @@ package immortal
 import (
 	"bufio"
 	"io"
-	//"log"
+	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync/atomic"
@@ -80,6 +81,20 @@ func (self *Daemon) Run(ch chan<- error) {
 		// follow pid
 		if self.run.FollowPid != "" {
 			go self.watchPid(self.ctrl.state)
+		}
+
+		// write parent pid
+		if self.run.ParentPid != "" {
+			if err := self.writePid(self.run.ParentPid, os.Getpid()); err != nil {
+				log.Print(err)
+			}
+		}
+
+		// write child pid
+		if self.run.ChildPid != "" {
+			if err := self.writePid(self.run.ChildPid, self.pid); err != nil {
+				log.Print(err)
+			}
 		}
 
 		ch <- cmd.Wait()
