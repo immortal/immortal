@@ -25,6 +25,10 @@ func (self *Daemon) Run(ch chan<- error) {
 
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
+	if self.run.Cwd != "" {
+		cmd.Dir = self.run.Cwd
+	}
+
 	sysProcAttr := new(syscall.SysProcAttr)
 
 	// set owner

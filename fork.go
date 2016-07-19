@@ -11,9 +11,6 @@ func (self *Daemon) Fork() (int, error) {
 		args := os.Args[1:]
 		cmd := exec.Command(os.Args[0], args...)
 		cmd.Env = append(cmd.Env, os.Environ()...)
-		if self.run.Cwd != "" {
-			cmd.Dir = self.run.Cwd
-		}
 		cmd.Stdin = nil
 		cmd.Stdout = nil
 		cmd.Stderr = nil
