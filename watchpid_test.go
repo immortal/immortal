@@ -18,20 +18,23 @@ func TestWatchPid0(t *testing.T) {
 }
 
 func TestWatchPidGetpid(t *testing.T) {
+	D := &Daemon{}
+	ch := make(chan error)
+
 	cmd := exec.Command("go", "version")
 	cmd.Start()
 	pid := cmd.Process.Pid
-	D := &Daemon{}
-	ch := make(chan error, 1)
-	D.watchPid(pid, ch)
-	err := cmd.Wait()
-	if err != nil {
-		t.Error(err)
-	}
-	err = <-ch
-	if err != nil {
-		if err.Error() != "EXIT" {
-			t.Error(err)
+	go func() {
+		D.watchPid(pid, ch)
+		ch <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-ch:
+		if err != nil {
+			if err.Error() != "EXIT" {
+				t.Error(err)
+			}
 		}
 	}
 }
