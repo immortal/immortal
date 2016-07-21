@@ -17,3 +17,10 @@ func TestIconOk(t *testing.T) {
 		t.Errorf("Expecting: 128545 got: %v", i)
 	}
 }
+
+func TestIconErr(t *testing.T) {
+	i := Icon(" ")
+	if i != 0 {
+		t.Errorf("Expecting: 0 got: %v", i)
+	}
+}
