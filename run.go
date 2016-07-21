@@ -84,7 +84,7 @@ func (self *Daemon) Run(ch chan<- error) {
 
 		// follow pid
 		if self.run.FollowPid != "" {
-			go self.watchPid(self.ctrl.state)
+			go self.watchPid(self.pid, self.ctrl.state)
 		}
 
 		// write parent pid

@@ -9,10 +9,7 @@ import (
 )
 
 func (self *Daemon) isRunning(pid int) bool {
-	process, err := os.FindProcess(int(pid))
-	if err != nil {
-		return false
-	}
+	process, _ := os.FindProcess(int(pid))
 	if err := process.Signal(syscall.Signal(0)); err != nil {
 		return false
 	}
@@ -51,7 +48,7 @@ func (self *Daemon) Supervice() {
 						// set pid to new pid in file
 						self.pid = pid
 						log.Printf("Watching pid %d on file: %s", self.pid, self.run.FollowPid)
-						go self.watchPid(self.ctrl.state)
+						go self.watchPid(pid, self.ctrl.state)
 					}
 				}
 			} else {
