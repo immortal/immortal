@@ -3,6 +3,7 @@ package immortal
 import (
 	"os/exec"
 	"testing"
+	"time"
 )
 
 func TestWatchPid0(t *testing.T) {
@@ -51,15 +52,16 @@ func TestWatchPidGetpidKill(t *testing.T) {
 		ch <- cmd.Wait()
 	}()
 
-	if err := cmd.Process.Kill(); err != nil {
-		t.Errorf("failed to kill: %s", err)
-	}
 	select {
 	case err := <-ch:
 		if err != nil {
 			if err.Error() != "EXIT" {
 				t.Error(err)
 			}
+		}
+	case <-time.After(1 * time.Millisecond):
+		if err := cmd.Process.Kill(); err != nil {
+			t.Errorf("failed to kill: %s", err)
 		}
 	}
 }
