@@ -50,6 +50,10 @@ func (self *Daemon) Supervice() {
 						log.Printf("Watching pid %d on file: %s", self.pid, self.run.FollowPid)
 						go self.watchPid(pid, self.ctrl.state)
 					}
+					//if state == nil {
+					//self.Run(self.ctrl.state)
+					//}
+					// fix this
 				}
 			} else {
 				self.Run(self.ctrl.state)
