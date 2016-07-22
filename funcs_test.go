@@ -38,7 +38,7 @@ func TestReadPidfileNonexistent(t *testing.T) {
 }
 
 func TestReadPidfileBadContent(t *testing.T) {
-	i, e := ReadPidfile("pidfile_test.go")
+	i, e := ReadPidfile("funcs.go")
 	if i != 0 {
 		t.Errorf("Expecting: 0 got: %v", i)
 	}
