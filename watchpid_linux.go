@@ -15,7 +15,7 @@ func (self *Daemon) watchPid(pid int, ch chan<- error) {
 	}
 
 	for {
-		if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); os.IsNotExist(err) {
+		if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err != nil {
 			ch <- fmt.Errorf("EXIT")
 			return
 		}

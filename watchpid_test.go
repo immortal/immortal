@@ -2,7 +2,6 @@ package immortal
 
 import (
 	"os/exec"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -21,7 +20,7 @@ func TestWatchPid0(t *testing.T) {
 
 func TestWatchPidGetpid(t *testing.T) {
 	D := &Daemon{}
-	ch := make(chan error)
+	ch := make(chan error, 1)
 
 	cmd := exec.Command("go", "version")
 	cmd.Start()
@@ -31,8 +30,6 @@ func TestWatchPidGetpid(t *testing.T) {
 		ch <- cmd.Wait()
 	}()
 	select {
-	case <-time.After(time.Millisecond):
-		syscall.Kill(pid, syscall.SIGTERM)
 	case err := <-ch:
 		if err != nil {
 			if err.Error() != "EXIT" {
