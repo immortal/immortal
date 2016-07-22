@@ -96,3 +96,25 @@ func TestWritePid(t *testing.T) {
 		t.Error(e)
 	}
 }
+
+func TestLockNonexistent(t *testing.T) {
+	err := Lock("/dev/null/nonexistent")
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}
+func TestLock(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "TestLock")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name()) // clean up
+	err = Lock(tmpfile.Name())
+	if err != nil {
+		t.Error(err)
+	}
+	err = Lock(tmpfile.Name())
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}
