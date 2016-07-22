@@ -123,6 +123,20 @@ func main() {
 			log.Println("Command already running")
 			os.Exit(1)
 		}
+		// create control pipe
+		ctrl_fifo, err := self.makeFIFO(fmt.Sprintf("%s/control", self.sdir))
+		if err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		// create status pipe
+		ctrl_status, err := self.makeFIFO(fmt.Sprintf("%s/status", self.sdir))
+		if err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		// read ir-control
+		D.readFIFO(ctrl_fifo)
 	}
 
 	// fork
