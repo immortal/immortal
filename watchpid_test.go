@@ -30,12 +30,10 @@ func TestWatchPidGetpid(t *testing.T) {
 		ch <- cmd.Wait()
 	}()
 
-	select {
-	case err := <-ch:
-		if err != nil {
-			if err.Error() != "EXIT" {
-				t.Error(err)
-			}
+	err := <-ch
+	if err != nil {
+		if err.Error() != "EXIT" {
+			t.Error(err)
 		}
 	}
 }
