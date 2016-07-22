@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -29,11 +30,14 @@ func TestWatchPidGetpid(t *testing.T) {
 		D.watchPid(pid, ch)
 		ch <- cmd.Wait()
 	}()
-
-	err := <-ch
-	if err != nil {
-		if err.Error() != "EXIT" {
-			t.Error(err)
+	select {
+	case <-time.After(time.Millisecond):
+		syscall.Kill(pid, syscall.SIGTERM)
+	case err := <-ch:
+		if err != nil {
+			if err.Error() != "EXIT" {
+				t.Error(err)
+			}
 		}
 	}
 }
