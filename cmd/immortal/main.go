@@ -117,31 +117,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// only one instance
-	if *ctrl {
-		if err = D.Lock(); err != nil {
-			log.Println("Command already running")
-			os.Exit(1)
-		}
-		// create control pipe
-		ctrl_fifo, err := self.makeFIFO(fmt.Sprintf("%s/control", self.sdir))
-		if err != nil {
-			log.Print(err)
-			os.Exit(1)
-		}
-		// create status pipe
-		ctrl_status, err := self.makeFIFO(fmt.Sprintf("%s/status", self.sdir))
-		if err != nil {
-			log.Print(err)
-			os.Exit(1)
-		}
-		// read ir-control
-		D.readFIFO(ctrl_fifo)
-	}
-
 	// fork
 	if os.Getppid() > 1 {
-		if pid, err = D.Fork(); err != nil {
+		if pid, err = ir.Fork(); err != nil {
 			log.Printf("Error while forking: %s", err)
 			os.Exit(1)
 		} else {
@@ -155,5 +133,8 @@ func main() {
 	log.Printf("%c  %d", ir.Logo(), os.Getpid())
 
 	D.Logger()
+	if *ctrl {
+		D.Control()
+	}
 	D.Supervice()
 }

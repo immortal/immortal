@@ -18,7 +18,6 @@ type Daemon struct {
 	owner   *user.User
 	pid     int
 	run     Run
-	sdir    string
 }
 
 type Run struct {
@@ -36,10 +35,11 @@ type Run struct {
 }
 
 type Ctrl struct {
-	fifo   chan Return
-	quit   chan struct{}
-	state  chan error
-	status *os.File
+	fifo         chan Return
+	quit         chan struct{}
+	state        chan error
+	control_fifo *os.File
+	status_fifo  *os.File
 }
 
 type Return struct {
@@ -74,22 +74,9 @@ func New(u *user.User, c, d, f, l, logger, p, P *string, cmd []string, ctrl *boo
 		return &D, nil
 	}
 
-	var sdir string
-	if *ctrl {
-		wd, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-		sdir = filepath.Join(wd, "supervise")
-		if err := os.MkdirAll(sdir, 0700); err != nil {
-			return nil, err
-		}
-	}
-
-	return &Daemon{
+	daemon := &Daemon{
 		owner:   u,
 		command: cmd,
-		sdir:    sdir,
 		run: Run{
 			Cwd:       *d,
 			FollowPid: *f,
@@ -104,5 +91,32 @@ func New(u *user.User, c, d, f, l, logger, p, P *string, cmd []string, ctrl *boo
 			quit:  make(chan struct{}),
 			state: make(chan error),
 		},
-	}, nil
+	}
+
+	if *ctrl {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		wd = filepath.Join(wd, "supervise")
+		if err := os.MkdirAll(wd, 0700); err != nil {
+			return nil, err
+		}
+		// create control pipe
+		daemon.ctrl.control_fifo, err = MakeFIFO(filepath.Join(wd, "control"))
+		if err != nil {
+			return nil, err
+		}
+		// create status pipe
+		daemon.ctrl.status_fifo, err = MakeFIFO(filepath.Join(wd, "status"))
+		if err != nil {
+			return nil, err
+		}
+		// create lock
+		if err = Lock(filepath.Join(wd, "lock")); err != nil {
+			return nil, err
+		}
+	}
+
+	return daemon, nil
 }

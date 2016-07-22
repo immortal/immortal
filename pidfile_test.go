@@ -7,12 +7,7 @@ import (
 )
 
 func TestReadPidfileNonexistent(t *testing.T) {
-	D := &Daemon{
-		run: Run{
-			FollowPid: "nonexistent",
-		},
-	}
-	i, e := D.readPidfile()
+	i, e := ReadPidfile("nonexistent")
 	if i != 0 {
 		t.Errorf("Expecting: 0 got: %v", i)
 	}
@@ -22,12 +17,7 @@ func TestReadPidfileNonexistent(t *testing.T) {
 }
 
 func TestReadPidfileBadContent(t *testing.T) {
-	D := &Daemon{
-		run: Run{
-			FollowPid: "pidfile_test.go",
-		},
-	}
-	i, e := D.readPidfile()
+	i, e := ReadPidfile("pidfile_test.go")
 	if i != 0 {
 		t.Errorf("Expecting: 0 got: %v", i)
 	}
@@ -51,12 +41,7 @@ func TestReadPidfile(t *testing.T) {
 	if err := tmpfile.Close(); err != nil {
 		t.Error(err)
 	}
-	D := &Daemon{
-		run: Run{
-			FollowPid: tmpfile.Name(),
-		},
-	}
-	i, e := D.readPidfile()
+	i, e := ReadPidfile(tmpfile.Name())
 	if i != 1234 {
 		t.Errorf("Expecting: 1234 got: %v", i)
 	}
@@ -66,8 +51,7 @@ func TestReadPidfile(t *testing.T) {
 }
 
 func TestWritePidNonexistent(t *testing.T) {
-	D := &Daemon{}
-	err := D.writePid("/dev/null/nonexistent", 1234)
+	err := WritePid("/dev/null/nonexistent", 1234)
 	if err == nil {
 		t.Error("Expecting an error")
 	}
@@ -79,16 +63,11 @@ func TestWritePid(t *testing.T) {
 		t.Error(err)
 	}
 	defer os.Remove(tmpfile.Name()) // clean up
-	D := &Daemon{
-		run: Run{
-			FollowPid: tmpfile.Name(),
-		},
-	}
-	err = D.writePid(tmpfile.Name(), 1234)
+	err = WritePid(tmpfile.Name(), 1234)
 	if err != nil {
 		t.Error(err)
 	}
-	i, e := D.readPidfile()
+	i, e := ReadPidfile(tmpfile.Name())
 	if i != 1234 {
 		t.Errorf("Expecting: 1234 got: %v", i)
 	}

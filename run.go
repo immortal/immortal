@@ -89,14 +89,14 @@ func (self *Daemon) Run(ch chan<- error) {
 
 		// write parent pid
 		if self.run.ParentPid != "" {
-			if err := self.writePid(self.run.ParentPid, os.Getpid()); err != nil {
+			if err := WritePid(self.run.ParentPid, os.Getpid()); err != nil {
 				log.Print(err)
 			}
 		}
 
 		// write child pid
 		if self.run.ChildPid != "" {
-			if err := self.writePid(self.run.ChildPid, self.pid); err != nil {
+			if err := WritePid(self.run.ChildPid, self.pid); err != nil {
 				log.Print(err)
 			}
 		}

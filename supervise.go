@@ -38,7 +38,7 @@ func (self *Daemon) Supervice() {
 			// follow the new pid and stop running the command
 			// unless the new pid dies
 			if self.run.FollowPid != "" {
-				pid, err := self.readPidfile()
+				pid, err := ReadPidfile(self.run.FollowPid)
 				if err != nil {
 					log.Printf("Cannot read pidfile:%s,  %s", self.run.FollowPid, err.Error())
 					self.Run(self.ctrl.state)
@@ -56,7 +56,7 @@ func (self *Daemon) Supervice() {
 			}
 		case fifo := <-self.ctrl.fifo:
 			log.Printf("fifo: %s", fifo)
-			fmt.Fprintf(self.ctrl.status, "pong: %s\n", fifo)
+			fmt.Fprintf(self.ctrl.status_fifo, "pong: %s\n", fifo)
 		}
 	}
 }
