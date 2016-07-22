@@ -26,9 +26,9 @@ func TestWatchPidGetpid(t *testing.T) {
 	cmd.Start()
 	pid := cmd.Process.Pid
 	go func() {
-		D.watchPid(pid, ch)
 		ch <- cmd.Wait()
 	}()
+	D.watchPid(pid, ch)
 	select {
 	case err := <-ch:
 		if err != nil {
