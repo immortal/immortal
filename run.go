@@ -20,8 +20,10 @@ func (self *Daemon) stdHandler(p io.ReadCloser) {
 }
 
 func (self *Daemon) Run(ch chan<- error) {
-	atomic.AddInt64(&self.count, 1)
-	//	log.Printf("count: %v", self.count)
+	if atomic.SwapUint32(&self.count, uint32(1)) != 0 {
+		log.Printf("PID: %d running", self.pid)
+		return
+	}
 
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
@@ -72,6 +74,8 @@ func (self *Daemon) Run(ch chan<- error) {
 	}
 
 	go func() {
+		defer atomic.StoreUint32(&self.count, 0)
+
 		if self.log {
 			defer w.Close()
 		}
@@ -84,19 +88,19 @@ func (self *Daemon) Run(ch chan<- error) {
 
 		// follow pid
 		if self.run.FollowPid != "" {
-			go self.watchPid(self.ctrl.state)
+			go self.watchPid(self.pid, self.ctrl.state)
 		}
 
 		// write parent pid
 		if self.run.ParentPid != "" {
-			if err := self.writePid(self.run.ParentPid, os.Getpid()); err != nil {
+			if err := WritePid(self.run.ParentPid, os.Getpid()); err != nil {
 				log.Print(err)
 			}
 		}
 
 		// write child pid
 		if self.run.ChildPid != "" {
-			if err := self.writePid(self.run.ChildPid, self.pid); err != nil {
+			if err := WritePid(self.run.ChildPid, self.pid); err != nil {
 				log.Print(err)
 			}
 		}

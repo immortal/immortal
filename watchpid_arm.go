@@ -9,7 +9,12 @@ import (
 	"syscall"
 )
 
-func (self *Daemon) watchPid(ch chan<- error) {
+func (self *Daemon) watchPid(pid int, ch chan<- error) {
+	if !self.isRunning(pid) {
+		ch <- fmt.Errorf("PID NOT FOUND")
+		return
+	}
+
 	kq, err := syscall.Kqueue()
 	if err != nil {
 		ch <- os.NewSyscallError("kqueue", err)
@@ -17,7 +22,7 @@ func (self *Daemon) watchPid(ch chan<- error) {
 	}
 
 	ev1 := syscall.Kevent_t{
-		Ident:  uint32(self.pid),
+		Ident:  uint32(pid),
 		Filter: syscall.EVFILT_PROC,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
 		Fflags: syscall.NOTE_EXIT,

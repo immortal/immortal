@@ -9,10 +9,7 @@ import (
 )
 
 func (self *Daemon) isRunning(pid int) bool {
-	process, err := os.FindProcess(int(pid))
-	if err != nil {
-		return false
-	}
+	process, _ := os.FindProcess(int(pid))
 	if err := process.Signal(syscall.Signal(0)); err != nil {
 		return false
 	}
@@ -41,7 +38,7 @@ func (self *Daemon) Supervice() {
 			// follow the new pid and stop running the command
 			// unless the new pid dies
 			if self.run.FollowPid != "" {
-				pid, err := self.readPidfile()
+				pid, err := ReadPidfile(self.run.FollowPid)
 				if err != nil {
 					log.Printf("Cannot read pidfile:%s,  %s", self.run.FollowPid, err.Error())
 					self.Run(self.ctrl.state)
@@ -51,7 +48,10 @@ func (self *Daemon) Supervice() {
 						// set pid to new pid in file
 						self.pid = pid
 						log.Printf("Watching pid %d on file: %s", self.pid, self.run.FollowPid)
-						go self.watchPid(self.ctrl.state)
+						go self.watchPid(pid, self.ctrl.state)
+					} else {
+						// if cmd exits or proccess is kill
+						self.Run(self.ctrl.state)
 					}
 				}
 			} else {
@@ -59,7 +59,7 @@ func (self *Daemon) Supervice() {
 			}
 		case fifo := <-self.ctrl.fifo:
 			log.Printf("fifo: %s", fifo)
-			fmt.Fprintf(self.ctrl.status, "pong: %s\n", fifo)
+			fmt.Fprintf(self.ctrl.status_fifo, "pong: %s\n", fifo)
 		}
 	}
 }

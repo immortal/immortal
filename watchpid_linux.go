@@ -8,9 +8,14 @@ import (
 	"time"
 )
 
-func (self *Daemon) watchPid(ch chan<- error) {
+func (self *Daemon) watchPid(pid int, ch chan<- error) {
+	if !self.isRunning(pid) {
+		ch <- fmt.Errorf("PID NOT FOUND")
+		return
+	}
+
 	for {
-		if _, err := os.Stat(fmt.Sprintf("/proc/%d", self.pid)); os.IsNotExist(err) {
+		if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err != nil {
 			ch <- fmt.Errorf("EXIT")
 			return
 		}

@@ -117,26 +117,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	// only one instance
-	if *ctrl {
-		if err = D.Lock(); err != nil {
-			log.Println("Command already running")
+	// fork
+	if os.Getppid() > 1 {
+		if pid, err = ir.Fork(); err != nil {
+			log.Printf("Error while forking: %s", err)
 			os.Exit(1)
-		}
-	}
-
-	if pid, err = D.Fork(); err != nil {
-		log.Printf("Error while forking: %s", err)
-		os.Exit(1)
-	} else {
-		if pid > 0 {
-			fmt.Printf("%c  %d\n", ir.Logo(), pid)
-			os.Exit(0)
+		} else {
+			if pid > 0 {
+				fmt.Printf("%c  %d\n", ir.Logo(), pid)
+				os.Exit(0)
+			}
 		}
 	}
 
 	log.Printf("%c  %d", ir.Logo(), os.Getpid())
 
 	D.Logger()
+	if *ctrl {
+		D.Control()
+	}
 	D.Supervice()
 }
