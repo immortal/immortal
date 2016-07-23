@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sync"
 )
 
 type Daemon struct {
+	sync.Mutex
 	command []string
-	count   int64
+	count   uint32
 	ctrl    Ctrl
 	log     bool
 	logger  *log.Logger
