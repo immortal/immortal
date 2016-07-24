@@ -58,7 +58,7 @@ type Return struct {
 // logger - command to pipe stdout/stderr
 //      P - parent pidfile
 //      p - child pidfile
-//    cmd - command to supervice
+//    cmd - command to supervise
 //   ctrl - create supervise dir
 func New(u *user.User, c, d, f, l, logger, p, P *string, cmd []string, ctrl *bool) (*Daemon, error) {
 	if *c != "" {

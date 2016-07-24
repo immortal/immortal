@@ -136,5 +136,5 @@ func main() {
 	if *ctrl {
 		D.Control()
 	}
-	D.Supervice()
+	D.Supervise()
 }

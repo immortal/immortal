@@ -16,7 +16,7 @@ func (self *Daemon) isRunning(pid int) bool {
 	return true
 }
 
-func (self *Daemon) Supervice() {
+func (self *Daemon) Supervise() {
 	self.Run(self.ctrl.state)
 
 	for {
