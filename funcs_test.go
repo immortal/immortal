@@ -121,13 +121,21 @@ func TestLock(t *testing.T) {
 	}
 }
 
+func TestMakeFIFOError(t *testing.T) {
+	_, err := MakeFIFO("/dev/null/pipe")
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}
+
 func TestMakeFIFO(t *testing.T) {
 	dir, err := ioutil.TempDir("", "TestMakeFIFO")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(dir)
-	f, err := MakeFIFO(filepath.Join(dir, "pipe"))
+	fifo := filepath.Join(dir, "pipe")
+	f, err := MakeFIFO(fifo)
 	if err != nil {
 		t.Error(err)
 	}
@@ -139,5 +147,10 @@ func TestMakeFIFO(t *testing.T) {
 	if fi.Mode()&os.ModeType != os.ModeNamedPipe {
 		f.Close()
 		t.Error("Expecting os.ModeNamePipe")
+	}
+	os.Chmod(fifo, 0000)
+	f, err = MakeFIFO(fifo)
+	if err == nil {
+		t.Error("Expecting error")
 	}
 }
