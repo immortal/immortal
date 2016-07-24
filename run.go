@@ -21,7 +21,7 @@ func (self *Daemon) stdHandler(p io.ReadCloser) {
 
 func (self *Daemon) Run(ch chan<- error) {
 	if atomic.SwapUint32(&self.count, uint32(1)) != 0 {
-		log.Printf("PID: %d running", self.pid)
+		log.Printf("PID: %d running", self.process.Pid)
 		return
 	}
 
@@ -84,11 +84,11 @@ func (self *Daemon) Run(ch chan<- error) {
 			ch <- err
 		}
 
-		self.pid = cmd.Process.Pid
+		self.process = cmd.Process
 
 		// follow pid
 		if self.run.FollowPid != "" {
-			go self.watchPid(self.pid, self.ctrl.state)
+			go self.watchPid(self.process.Pid, self.ctrl.state)
 		}
 
 		// write parent pid
@@ -100,7 +100,7 @@ func (self *Daemon) Run(ch chan<- error) {
 
 		// write child pid
 		if self.run.ChildPid != "" {
-			if err := WritePid(self.run.ChildPid, self.pid); err != nil {
+			if err := WritePid(self.run.ChildPid, self.process.Pid); err != nil {
 				log.Print(err)
 			}
 		}

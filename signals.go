@@ -3,78 +3,105 @@ package immortal
 import (
 	"fmt"
 	"log"
+	"syscall"
 )
 
 func (self *Daemon) handleSignals(signal string) {
 	fmt.Fprintf(self.ctrl.status_fifo, "pong: %s\n", signal)
 	switch signal {
-	// -u: Up. If the service is not running, start it. If the service stops, restart it.
+	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
 		log.Print("u")
 
-	// -d: Down. If the service is running, send it a TERM signal and then a CONT signal. After it stops, do not restart it.
+	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
 		log.Print("d")
 
-	// -o: Once. If the service is not running, start it. Do not restart it if it stops.
+	// o: Once. If the service is not running, start it. Do not restart it if it stops.
 	case "o", "once":
 		log.Print("o")
 
-	// -p: Pause. Send the service a STOP signal.
+	// p: Pause. Send the service a STOP signal.
 	case "p", "pause", "s", "stop":
-		log.Print("p, s")
+		if err := self.process.Signal(syscall.SIGSTOP); err != nil {
+			log.Print(err)
+		}
 
-	// -c: Continue. Send the service a CONT signal.
+	// c: Continue. Send the service a CONT signal.
 	case "c", "cont":
-		log.Print("c")
+		if err := self.process.Signal(syscall.SIGCONT); err != nil {
+			log.Print(err)
+		}
 
-	// -h: Hangup. Send the service a HUP signal.
+	// h: Hangup. Send the service a HUP signal.
 	case "h", "hup":
-		log.Print("h")
+		if err := self.process.Signal(syscall.SIGHUP); err != nil {
+			log.Print(err)
+		}
 
-	// -a: Alarm. Send the service an ALRM signal.
+	// a: Alarm. Send the service an ALRM signal.
 	case "a", "alrm":
-		log.Print("a")
+		if err := self.process.Signal(syscall.SIGALRM); err != nil {
+			log.Print(err)
+		}
 
-	// -i: Interrupt. Send the service an INT signal.
+	// i: Interrupt. Send the service an INT signal.
 	case "i", "int":
-		log.Print("i")
+		if err := self.process.Signal(syscall.SIGINT); err != nil {
+			log.Print(err)
+		}
 
-	// -q: QUIT. Send the service a QUIT signal.
+	// q: QUIT. Send the service a QUIT signal.
 	case "q", "quit":
-		log.Print("i")
+		if err := self.process.Signal(syscall.SIGQUIT); err != nil {
+			log.Print(err)
+		}
 
-	// -1: USR1. Send the service a USR1 signal.
+	// 1: USR1. Send the service a USR1 signal.
 	case "1", "usr1":
-		log.Print("1")
+		if err := self.process.Signal(syscall.SIGUSR1); err != nil {
+			log.Print(err)
+		}
 
-	// -2: USR2. Send the service a USR2 signal.
+	// 2: USR2. Send the service a USR2 signal.
 	case "2", "usr2":
-		log.Print("2")
+		if err := self.process.Signal(syscall.SIGUSR2); err != nil {
+			log.Print(err)
+		}
 
-	// -t: Terminate. Send the service a TERM signal.
+	// t: Terminate. Send the service a TERM signal.
 	case "t", "term":
-		log.Print("t")
+		if err := self.process.Signal(syscall.SIGTERM); err != nil {
+			log.Print(err)
+		}
 
-	// -k: Kill. Send the service a KILL signal.
+	// k: Kill. Send the service a KILL signal.
 	case "k", "kill":
-		log.Print("k")
+		if err := self.process.Kill(); err != nil {
+			log.Print(err)
+		}
 
-	// -in: TTIN. Send the service a TTIN signal.
+	// in: TTIN. Send the service a TTIN signal.
 	case "in", "TTIN":
-		log.Print("in")
+		if err := self.process.Signal(syscall.SIGTTIN); err != nil {
+			log.Print(err)
+		}
 
-	// -ou: TTOU. Send the service a TTOU signal.
+	// ou: TTOU. Send the service a TTOU signal.
 	case "ou", "out", "TTOU":
-		log.Print("ou")
+		if err := self.process.Signal(syscall.SIGTTOU); err != nil {
+			log.Print(err)
+		}
 
-	// -w: WINCH. Send the service a WINCH signal.
+	// w: WINCH. Send the service a WINCH signal.
 	case "w", "winch":
-		log.Print("w")
+		if err := self.process.Signal(syscall.SIGWINCH); err != nil {
+			log.Print(err)
+		}
 
-	// -x: Exit. supervise will exit as soon as the service is down. If you use this option on a stable system, you're doing something wrong; supervise is designed to run forever.
+	// x: Exit. supervise will exit as soon as the service is down. If you use this option on a stable system, you're doing something wrong; supervise is designed to run forever.
 	case "x", "exit":
-		log.Print("x")
+		close(self.ctrl.quit)
 
 	case "status", "info":
 		log.Print("status, info")

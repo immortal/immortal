@@ -18,7 +18,7 @@ type Daemon struct {
 	log     bool
 	logger  *log.Logger
 	owner   *user.User
-	pid     int
+	process *os.Process
 	run     Run
 }
 
