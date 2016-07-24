@@ -110,7 +110,7 @@ func New(u *user.User, c, d, f, l, logger, p, P *string, cmd []string, ctrl *boo
 			return nil, err
 		}
 		// create status pipe
-		daemon.ctrl.status_fifo, err = MakeFIFO(filepath.Join(wd, "status"))
+		daemon.ctrl.status_fifo, err = MakeFIFO(filepath.Join(wd, "ok"))
 		if err != nil {
 			return nil, err
 		}

@@ -15,7 +15,6 @@ func (self *Daemon) Control() {
 		defer self.ctrl.control_fifo.Close()
 		for {
 			n, err := r.Read(buf[:cap(buf)])
-			buf = buf[:n]
 			if n == 0 {
 				if err == nil {
 					continue
@@ -25,7 +24,11 @@ func (self *Daemon) Control() {
 				}
 				self.ctrl.fifo <- Return{err: err, msg: ""}
 			}
-			self.ctrl.fifo <- Return{err: nil, msg: strings.TrimSpace(string(buf))}
+			buf = buf[:n]
+			self.ctrl.fifo <- Return{
+				err: nil,
+				msg: strings.ToLower(strings.TrimSpace(string(buf))),
+			}
 		}
 	}()
 }

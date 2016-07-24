@@ -1,7 +1,6 @@
 package immortal
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"syscall"
@@ -58,8 +57,10 @@ func (self *Daemon) Supervise() {
 				self.Run(self.ctrl.state)
 			}
 		case fifo := <-self.ctrl.fifo:
-			log.Printf("fifo: %s", fifo)
-			fmt.Fprintf(self.ctrl.status_fifo, "pong: %s\n", fifo)
+			if fifo.err != nil {
+				log.Printf("control error: %s", fifo.err)
+			}
+			self.handleSignals(fifo.msg)
 		}
 	}
 }
