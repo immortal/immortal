@@ -3,6 +3,7 @@ package immortal
 import (
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -103,6 +104,7 @@ func TestLockNonexistent(t *testing.T) {
 		t.Error("Expecting error")
 	}
 }
+
 func TestLock(t *testing.T) {
 	tmpfile, err := ioutil.TempFile("", "TestLock")
 	if err != nil {
@@ -116,5 +118,26 @@ func TestLock(t *testing.T) {
 	err = Lock(tmpfile.Name())
 	if err == nil {
 		t.Error("Expecting error")
+	}
+}
+
+func TestMakeFIFO(t *testing.T) {
+	dir, err := ioutil.TempDir("", "TestMakeFIFO")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(dir)
+	f, err := MakeFIFO(filepath.Join(dir, "pipe"))
+	if err != nil {
+		t.Error(err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		t.Error(err)
+	}
+	if fi.Mode()&os.ModeType != os.ModeNamedPipe {
+		f.Close()
+		t.Error("Expecting os.ModeNamePipe")
 	}
 }
