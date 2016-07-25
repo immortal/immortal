@@ -28,7 +28,6 @@ type Run struct {
 	Env       map[string]string
 	Logfile   string
 	Logger    string
-	Signals   map[string]string
 	User      string
 	ParentPid string
 	ChildPid  string

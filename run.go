@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -26,6 +27,13 @@ func (self *Daemon) Run(ch chan<- error) {
 	}
 
 	cmd := exec.Command(self.command[0], self.command[1:]...)
+
+	// set environment vars
+	env := os.Environ()
+	for k, v := range self.run.Env {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+	cmd.Env = env
 
 	if self.run.Cwd != "" {
 		cmd.Dir = self.run.Cwd
