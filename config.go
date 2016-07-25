@@ -7,19 +7,18 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"sync"
 )
 
 type Daemon struct {
-	sync.Mutex
-	command []string
-	count   uint32
-	ctrl    Ctrl
-	log     bool
-	logger  *log.Logger
-	owner   *user.User
-	process *os.Process
-	run     Run
+	command     []string
+	count       uint32
+	count_defer uint32
+	ctrl        Ctrl
+	log         bool
+	logger      *log.Logger
+	owner       *user.User
+	process     *os.Process
+	run         Run
 }
 
 type Run struct {

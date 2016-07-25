@@ -60,7 +60,7 @@ func (self *Daemon) Supervise() {
 			if fifo.err != nil {
 				log.Printf("control error: %s", fifo.err)
 			}
-			self.handleSignals(fifo.msg)
+			self.handleSignals(fifo.msg, self.ctrl.state)
 		}
 	}
 }

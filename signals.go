@@ -6,20 +6,24 @@ import (
 	"syscall"
 )
 
-func (self *Daemon) handleSignals(signal string) {
+func (self *Daemon) handleSignals(signal string, ch chan<- error) {
 	fmt.Fprintf(self.ctrl.status_fifo, "pong: %s\n", signal)
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
-		log.Print("u")
+		self.count_defer = 0
+		ch <- fmt.Errorf("UP")
 
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
-		log.Print("d")
+		self.count_defer = 1
+		if err := self.process.Kill(); err != nil {
+			log.Print(err)
+		}
 
 	// o: Once. If the service is not running, start it. Do not restart it if it stops.
 	case "o", "once":
-		log.Print("o")
+		self.count_defer = 1
 
 	// p: Pause. Send the service a STOP signal.
 	case "p", "pause", "s", "stop":
