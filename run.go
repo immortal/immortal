@@ -76,11 +76,8 @@ func (self *Daemon) Run(ch chan<- error) {
 	}
 
 	go func() {
-		// count_defer defaults to 0
-		// 1 to run only once (don't restart)
-		//defer atomic.StoreUint32(&self.count, self.count_defer)
+		// count_defer defaults to 0, 1 to run only once/down (don't restart)
 		defer func() {
-			log.Print("-----  defer running: ", self.count, " defer_count: ", self.count_defer)
 			atomic.StoreUint32(&self.count, self.count_defer)
 		}()
 
