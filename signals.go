@@ -11,8 +11,12 @@ func (self *Daemon) handleSignals(signal string, ch chan<- error) {
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
-		self.count_defer = 0
-		ch <- fmt.Errorf("UP")
+		if !self.isRunning(self.process.Pid) {
+			self.count = 0
+			ch <- fmt.Errorf("UP")
+		} else {
+			self.count_defer = 0
+		}
 
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
@@ -108,6 +112,9 @@ func (self *Daemon) handleSignals(signal string, ch chan<- error) {
 		close(self.ctrl.quit)
 
 	case "status", "info":
-		log.Print("status, info")
+		log.Print("status, info: ")
+
+	default:
+		log.Printf("unknown signal: %s", signal)
 	}
 }
