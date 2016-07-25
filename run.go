@@ -20,12 +20,10 @@ func (self *Daemon) stdHandler(p io.ReadCloser) {
 }
 
 func (self *Daemon) Run(ch chan<- error) {
-	log.Print("----- before running: ", self.count, " defer_count: ", self.count_defer)
 	if atomic.SwapUint32(&self.count, uint32(1)) != 0 {
 		log.Printf("PID: %d running", self.process.Pid)
 		return
 	}
-	log.Print("-----  after running: ", self.count, " defer_count: ", self.count_defer)
 
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
