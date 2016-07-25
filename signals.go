@@ -14,9 +14,8 @@ func (self *Daemon) handleSignals(signal string, ch chan<- error) {
 		if !self.isRunning(self.process.Pid) {
 			self.count = 0
 			ch <- fmt.Errorf("UP")
-		} else {
-			self.count_defer = 0
 		}
+		self.count_defer = 0
 
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
