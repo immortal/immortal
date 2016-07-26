@@ -67,7 +67,6 @@ func (self *Daemon) Logger() {
 					time.Sleep(time.Second)
 					runLogger()
 					m.Append(w)
-					//self.logger = log.New(multi, "", 0)
 				}
 			}
 		}()
