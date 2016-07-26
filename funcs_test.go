@@ -183,6 +183,11 @@ func TestGetEnv(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+	e3 := []byte("abcABC-123")
+	err = ioutil.WriteFile(filepath.Join(dir, "GITHUB_TOKEN"), e3, 0644)
+	if err != nil {
+		t.Error(err)
+	}
 	env, err := GetEnv(dir)
 	if err != nil {
 		t.Error(err)
@@ -193,6 +198,7 @@ func TestGetEnv(t *testing.T) {
 	}{
 		{"foo", "bar"},
 		{"PING", "PONG"},
+		{"GITHUB_TOKEN", "abcABC-123"},
 	}
 	for _, tt := range envTest {
 		if env[tt.key] != tt.expected {
