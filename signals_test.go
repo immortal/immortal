@@ -32,7 +32,7 @@ func TestSignals(t *testing.T) {
 	os.Setenv("GO_WANT_HELPER_PROCESS", "1")
 	p := ""
 	ctrl := true
-	D, e := New(nil, &p, &p, &p, &p, &p, &p, &p, []string{"go", "test", "-run", "TestHelperProcess"}, &ctrl)
+	D, e := New(nil, &p, &p, &p, &p, &p, &p, &p, &p, []string{"go", "test", "-run", "TestHelperProcess"}, &ctrl)
 	if e != nil {
 		t.Error(e)
 	}

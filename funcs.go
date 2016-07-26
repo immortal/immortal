@@ -1,10 +1,12 @@
 package immortal
 
 import (
+	"bufio"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -86,4 +88,31 @@ func WritePid(file string, pid int) error {
 		return err
 	}
 	return nil
+}
+
+func GetEnv(dir string) (map[string]string, error) {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	env := make(map[string]string)
+	for _, f := range files {
+		if f.Mode().IsRegular() {
+			lines := 0
+			ff, err := os.Open(filepath.Join(dir, f.Name()))
+			if err != nil {
+				return nil, err
+			}
+			defer ff.Close()
+			s := bufio.NewScanner(ff)
+			for s.Scan() {
+				if lines >= 1 {
+					break
+				}
+				env[f.Name()] = s.Text()
+				lines++
+			}
+		}
+	}
+	return env, nil
 }

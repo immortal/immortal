@@ -60,6 +60,11 @@ type Return struct {
 //    cmd - command to supervise
 //   ctrl - create supervise dir
 func New(u *user.User, c, d, e, f, l, logger, p, P *string, cmd []string, ctrl *bool) (*Daemon, error) {
+	var (
+		env map[string]string
+		err error
+	)
+
 	if *c != "" {
 		yml_file, err := ioutil.ReadFile(*c)
 		if err != nil {
@@ -75,11 +80,20 @@ func New(u *user.User, c, d, e, f, l, logger, p, P *string, cmd []string, ctrl *
 		return &D, nil
 	}
 
+	// set environment
+	if *e != "" {
+		env, err = GetEnv(*e)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	daemon := &Daemon{
 		owner:   u,
 		command: cmd,
 		run: Run{
 			Cwd:       *d,
+			Env:       env,
 			FollowPid: *f,
 			Logfile:   *l,
 			Logger:    *logger,

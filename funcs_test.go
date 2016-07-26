@@ -154,3 +154,37 @@ func TestMakeFIFO(t *testing.T) {
 		t.Error("Expecting error")
 	}
 }
+
+func TestGetEnv(t *testing.T) {
+	dir, err := ioutil.TempDir("", "TestGetEnv")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(dir)
+	e1 := []byte("bar\naaa\nbbb")
+	err = ioutil.WriteFile(filepath.Join(dir, "foo"), e1, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	e2 := []byte("PONG")
+	err = ioutil.WriteFile(filepath.Join(dir, "PING"), e2, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	env, err := GetEnv(dir)
+	if err != nil {
+		t.Error(err)
+	}
+	var envTest = []struct {
+		key      string
+		expected string
+	}{
+		{"foo", "bar"},
+		{"PING", "PONG"},
+	}
+	for _, tt := range envTest {
+		if env[tt.key] != tt.expected {
+			t.Errorf("For %s expected %s, actual %s", tt.key, tt.expected, env[tt.key])
+		}
+	}
+}
