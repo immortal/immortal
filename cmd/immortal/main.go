@@ -37,7 +37,7 @@ func main() {
 	var (
 		c      = flag.String("c", "", "`run.yml` configuration file")
 		d      = flag.String("d", "", "Change to `dir` before starting the command")
-		e      = flag.String("e", "", "`envdir` containing environment vars")
+		e      = flag.String("e", "", "Set environment variables specified by files in the `dir`")
 		f      = flag.String("f", "", "Follow PID in `pidfile`")
 		l      = flag.String("l", "", "Write stdout/stderr to `logfile`")
 		logger = flag.String("logger", "", "A `command` to pipe stdout/stderr to stdin")
