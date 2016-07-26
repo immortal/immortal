@@ -28,6 +28,11 @@ func (self *Daemon) Run(ch chan<- error) {
 
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
+	// change working directory
+	if self.run.Cwd != "" {
+		cmd.Dir = self.run.Cwd
+	}
+
 	// set environment vars
 	env := os.Environ()
 	if self.run.Env != nil {
@@ -36,10 +41,6 @@ func (self *Daemon) Run(ch chan<- error) {
 		}
 	}
 	cmd.Env = env
-
-	if self.run.Cwd != "" {
-		cmd.Dir = self.run.Cwd
-	}
 
 	sysProcAttr := new(syscall.SysProcAttr)
 
