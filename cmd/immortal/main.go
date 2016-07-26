@@ -53,7 +53,7 @@ func main() {
 	)
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [-v -ctrl] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command args ...\n\n", os.Args[0])
 		fmt.Printf("  command\n        The command with arguments if any, to supervise.\n\n")
 		flag.PrintDefaults()
 	}
