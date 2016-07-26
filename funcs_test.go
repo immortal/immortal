@@ -155,6 +155,18 @@ func TestMakeFIFO(t *testing.T) {
 	}
 }
 
+func TestGetEnvBadDir(t *testing.T) {
+	dir, err := ioutil.TempDir("", "TestGetEnvBadDir")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(dir)
+	_, err = GetEnv(filepath.Join(dir, "nonexistent"))
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}
+
 func TestGetEnv(t *testing.T) {
 	dir, err := ioutil.TempDir("", "TestGetEnv")
 	if err != nil {

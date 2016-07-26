@@ -101,7 +101,7 @@ func GetEnv(dir string) (map[string]string, error) {
 			lines := 0
 			ff, err := os.Open(filepath.Join(dir, f.Name()))
 			if err != nil {
-				return nil, err
+				continue
 			}
 			defer ff.Close()
 			s := bufio.NewScanner(ff)
