@@ -51,6 +51,7 @@ type Return struct {
 //      u - usr
 //      c - config
 //      d - working dir
+//      e - envdir
 //      f - follow pid
 //      l - log file
 // logger - command to pipe stdout/stderr
@@ -58,7 +59,7 @@ type Return struct {
 //      p - child pidfile
 //    cmd - command to supervise
 //   ctrl - create supervise dir
-func New(u *user.User, c, d, f, l, logger, p, P *string, cmd []string, ctrl *bool) (*Daemon, error) {
+func New(u *user.User, c, d, e, f, l, logger, p, P *string, cmd []string, ctrl *bool) (*Daemon, error) {
 	if *c != "" {
 		yml_file, err := ioutil.ReadFile(*c)
 		if err != nil {

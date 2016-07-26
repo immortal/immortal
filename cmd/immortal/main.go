@@ -37,6 +37,7 @@ func main() {
 	var (
 		c      = flag.String("c", "", "`run.yml` configuration file")
 		d      = flag.String("d", "", "Change to `dir` before starting the command")
+		e      = flag.String("e", "", "`envdir` containing environment vars")
 		f      = flag.String("f", "", "Follow PID in `pidfile`")
 		l      = flag.String("l", "", "Write stdout/stderr to `logfile`")
 		logger = flag.String("logger", "", "A `command` to pipe stdout/stderr to stdin")
@@ -111,7 +112,7 @@ func main() {
 	}
 
 	// start Daemon
-	D, err = ir.New(usr, c, d, f, l, logger, p, P, flag.Args(), ctrl)
+	D, err = ir.New(usr, c, d, e, f, l, logger, p, P, flag.Args(), ctrl)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
