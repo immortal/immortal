@@ -34,13 +34,13 @@ func (self *Daemon) Run(ch chan<- error) {
 	}
 
 	// set environment vars
-	env := os.Environ()
 	if self.run.Env != nil {
+		env := os.Environ()
 		for k, v := range self.run.Env {
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
+		cmd.Env = env
 	}
-	cmd.Env = env
 
 	sysProcAttr := new(syscall.SysProcAttr)
 
