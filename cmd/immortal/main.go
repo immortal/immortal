@@ -12,11 +12,8 @@ import (
 
 var version, githash string
 
-func exists(path string) bool {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return false
-	}
-	return true
+func exists(x ir.Configuration, path string) bool {
+	return x.Exists(path)
 }
 
 func is_exec(path string) (bool, error) {
@@ -76,15 +73,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// new ...
+	setup := new(ir.Setup)
+
 	if *c != "" {
-		if !exists(*c) {
+		if !exists(setup, *c) {
 			fmt.Printf("Cannot read file: %s, use -h for more info.\n", *c)
 			os.Exit(1)
 		}
 	}
 
 	if *d != "" {
-		if !exists(*d) {
+		if !exists(setup, *d) {
 			fmt.Printf("-d %s does not exist or has wrong permissions.\n", *d)
 			os.Exit(1)
 		}
