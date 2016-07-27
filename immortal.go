@@ -16,6 +16,10 @@ type Parser interface {
 	Parse() *Config
 }
 
+type User interface {
+	Lookup(user string) (*user.User, error)
+}
+
 type Daemon struct {
 	command     []string
 	count       uint32

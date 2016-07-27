@@ -19,19 +19,17 @@ func is_exec(x ir.Configuration, path string) (bool, error) {
 
 func main() {
 	cfg := ir.NewConfig()
-	fmt.Printf("%#v", cfg.Version)
 	cfg.Parse()
-	fmt.Printf("%#v", cfg.Version)
 
 	// print version
-	//if cfg.Version {
-	//if githash != "" {
-	//fmt.Printf("%s+%s\n", version, githash)
-	//} else {
-	//fmt.Printf("%s\n", version)
-	//}
-	//os.Exit(0)
-	//}
+	if cfg.Version {
+		if githash != "" {
+			fmt.Printf("%s+%s\n", version, githash)
+		} else {
+			fmt.Printf("%s\n", version)
+		}
+		os.Exit(0)
+	}
 
 	// if no args exit
 	if len(flag.Args()) < 1 {
