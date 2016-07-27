@@ -6,20 +6,6 @@ import (
 	"os/user"
 )
 
-type Configuration interface {
-	Exists(path string) bool
-	IsExec(path string) (bool, error)
-	Parser
-}
-
-type Parser interface {
-	Parse() *Config
-}
-
-type User interface {
-	Lookup(user string) (*user.User, error)
-}
-
 type Daemon struct {
 	command     []string
 	count       uint32

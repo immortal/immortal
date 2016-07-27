@@ -1,8 +1,7 @@
 package immortal
 
 import (
-	"flag"
-	"fmt"
+	"bufio"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"os"
@@ -10,73 +9,57 @@ import (
 	"path/filepath"
 )
 
-type Config struct {
-	Ctrl       bool
-	Version    bool
-	Configfile string
-	Wrkdir     string
-	Envdir     string
-	FollowPid  string
-	Logfile    string
-	Logger     string
-	ChildPid   string
-	ParentPid  string
-	User       string
-	Command    string
-	Configuration
+type Config interface {
+	Parser
+	User
+	GetEnv(dir string) (map[string]string, error)
 }
 
-func NewConfig() *Config {
-	return &Config{
-		Configuration: &Config{},
+type IConfig struct {
+	Flags
+	Parser
+	User
+}
+
+func New() *IConfig {
+	return &IConfig{
+		Parser: &iParser{},
+		User:   &iUser{},
 	}
 }
 
-func (self *Config) Exists(path string) bool {
+func (self *IConfig) GetEnv(dir string) (map[string]string, error) {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	env := make(map[string]string)
+	for _, f := range files {
+		if f.Mode().IsRegular() {
+			lines := 0
+			ff, err := os.Open(filepath.Join(dir, f.Name()))
+			if err != nil {
+				continue
+			}
+			defer ff.Close()
+			s := bufio.NewScanner(ff)
+			for s.Scan() {
+				if lines >= 1 {
+					break
+				}
+				env[f.Name()] = s.Text()
+				lines++
+			}
+		}
+	}
+	return env, nil
+}
+
+func (self *IConfig) Exists(path string) bool {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false
 	}
 	return true
-}
-
-func (self *Config) IsExec(path string) (bool, error) {
-	if f, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		} else {
-			return false, err
-		}
-	} else if m := f.Mode(); !m.IsDir() && m&0111 != 0 {
-		return true, nil
-	} else {
-		return false, nil
-	}
-}
-
-func (self *Config) Parse() *Config {
-	self.ParseArgs(flag.CommandLine)
-	flag.CommandLine.Parse(os.Args[1:])
-	return self
-}
-
-func (self *Config) ParseArgs(f *flag.FlagSet) {
-	f.BoolVar(&self.Ctrl, "ctrl", false, "Create supervise directory")
-	f.BoolVar(&self.Version, "v", false, "Print version")
-	f.StringVar(&self.Configfile, "c", "", "`run.yml` configuration file")
-	f.StringVar(&self.Wrkdir, "d", "", "Change to `dir` before starting the command")
-	f.StringVar(&self.Envdir, "e", "", "Set environment variables specified by files in the `dir`")
-	f.StringVar(&self.FollowPid, "f", "", "Follow PID in `pidfile`")
-	f.StringVar(&self.Logfile, "l", "", "Write stdout/stderr to `logfile`")
-	f.StringVar(&self.Logger, "logger", "", "A `command` to pipe stdout/stderr to stdin")
-	f.StringVar(&self.ChildPid, "p", "", "Path to write the child `pidfile`")
-	f.StringVar(&self.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
-	f.StringVar(&self.User, "u", "", "Execute command on behalf `user`")
-
-	f.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command args ...\n\n", os.Args[0])
-		fmt.Printf("  command\n        The command with arguments if any, to supervise.\n\n")
-		flag.PrintDefaults()
-	}
 }
 
 // New return a instances of Daemon
@@ -91,10 +74,9 @@ func (self *Config) ParseArgs(f *flag.FlagSet) {
 //      p - child pidfile
 //    cmd - command to supervise
 //   ctrl - create supervise dir
-func New(u *user.User, c, d, e, f, l, logger, p, P *string, cmd []string, ctrl *bool) (*Daemon, error) {
+func NewOld(u *user.User, c, d, e, f, l, logger, p, P *string, cmd []string, ctrl *bool) (*Daemon, error) {
 	var (
 		env map[string]string
-		err error
 	)
 
 	if *c != "" {
@@ -113,12 +95,12 @@ func New(u *user.User, c, d, e, f, l, logger, p, P *string, cmd []string, ctrl *
 	}
 
 	// set environment
-	if *e != "" {
-		env, err = GetEnv(*e)
-		if err != nil {
-			return nil, err
-		}
-	}
+	//if *e != "" {
+	//env, err = GetEnv(*e)
+	//if err != nil {
+	//return nil, err
+	//}
+	//}
 
 	daemon := &Daemon{
 		owner:   u,

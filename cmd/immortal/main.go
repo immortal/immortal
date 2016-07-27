@@ -9,17 +9,13 @@ import (
 
 var version, githash string
 
-func exists(x ir.Configuration, path string) bool {
+func exists(x ir.IConfig, path string) bool {
 	return x.Exists(path)
 }
 
-func is_exec(x ir.Configuration, path string) (bool, error) {
-	return x.IsExec(path)
-}
-
 func main() {
-	cfg := ir.NewConfig()
-	cfg.Parse()
+	cfg := ir.New()
+	cfg.Parser.Parse(&cfg.Flags)
 
 	// print version
 	if cfg.Version {
