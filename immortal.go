@@ -8,20 +8,12 @@ import (
 
 type Configuration interface {
 	Exists(path string) bool
-	IsExec(path string) bool
+	IsExec(path string) (bool, error)
+	Parser
 }
 
-type Setup struct{}
-
-func (self *Setup) Exists(path string) bool {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return false
-	}
-	return true
-}
-
-func (self *Setup) IsExec(path string) bool {
-	return true
+type Parser interface {
+	Parse() *Config
 }
 
 type Daemon struct {
