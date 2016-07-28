@@ -6,6 +6,29 @@ import (
 	"os/user"
 )
 
+type Immortalizer interface {
+	Daemon()
+	Run()
+	Supervise()
+	WatchPid()
+}
+
+type Immortal struct {
+	command []string
+	*Config
+}
+
+func New() *Immortal {
+	return &Immortal{}
+}
+
+//		Users:  &Users{},
+
+func (self *Immortal) Daemon()    {}
+func (self *Immortal) Run()       {}
+func (self *Immortal) Supervise() {}
+func (self *Immortal) WatchPid()  {}
+
 type Daemon struct {
 	command     []string
 	count       uint32

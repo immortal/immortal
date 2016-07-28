@@ -11,16 +11,7 @@ import (
 
 type Config struct {
 	Flags
-	Parser ParserI
-	Users  UserI
-	Logger LoggerI
-}
-
-func New() *Config {
-	return &Config{
-		Parser: &Parser{},
-		Users:  &Users{},
-	}
+	Parser
 }
 
 func (self *Config) GetEnv(dir string) (map[string]string, error) {
