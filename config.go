@@ -10,21 +10,21 @@ import (
 )
 
 type Config interface {
-	Parser
-	User
+	ParserInterface
+	UserInterface
 	GetEnv(dir string) (map[string]string, error)
 }
 
 type IConfig struct {
 	Flags
-	Parser
-	User
+	Parser ParserInterface
+	User   UserInterface
 }
 
 func New() *IConfig {
 	return &IConfig{
-		Parser: &iParser{},
-		User:   &iUser{},
+		Parser: &Parser{},
+		User:   &User{},
 	}
 }
 

@@ -6,13 +6,13 @@ import (
 	"os"
 )
 
-type Parser interface {
+type ParserInterface interface {
 	Parse(flags *Flags)
 }
 
-type iParser struct{}
+type Parser struct{}
 
-func (self *iParser) Parse(flags *Flags) {
+func (self *Parser) Parse(flags *Flags) {
 	flag.BoolVar(&flags.Ctrl, "ctrl", false, "Create supervise directory")
 	flag.BoolVar(&flags.Version, "v", false, "Print version")
 	flag.StringVar(&flags.Configfile, "c", "", "`run.yml` configuration file")
