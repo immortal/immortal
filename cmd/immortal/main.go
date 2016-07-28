@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-var version, githash string
+var version string
 
 func exists(x ir.Config, path string) bool {
 	return x.Exists(path)
