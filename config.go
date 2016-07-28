@@ -9,26 +9,26 @@ import (
 	"path/filepath"
 )
 
-type Config interface {
-	ParserInterface
-	UserInterface
+type ConfigI interface {
+	ParserI
+	UserI
 	GetEnv(dir string) (map[string]string, error)
 }
 
-type IConfig struct {
+type Config struct {
 	Flags
-	Parser ParserInterface
-	User   UserInterface
+	Parser ParserI
+	User   UserI
 }
 
-func New() *IConfig {
-	return &IConfig{
+func New() *Config {
+	return &Config{
 		Parser: &Parser{},
 		User:   &User{},
 	}
 }
 
-func (self *IConfig) GetEnv(dir string) (map[string]string, error) {
+func (self *Config) GetEnv(dir string) (map[string]string, error) {
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func (self *IConfig) GetEnv(dir string) (map[string]string, error) {
 	return env, nil
 }
 
-func (self *IConfig) Exists(path string) bool {
+func (self *Config) Exists(path string) bool {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false
 	}

@@ -4,7 +4,7 @@ import (
 	"os/user"
 )
 
-type UserInterface interface {
+type UserI interface {
 	Lookup(user string) (*user.User, error)
 }
 

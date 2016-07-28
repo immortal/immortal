@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-type ParserInterface interface {
+type ParserI interface {
 	Parse(flags *Flags)
 }
 

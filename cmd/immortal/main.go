@@ -9,7 +9,7 @@ import (
 
 var version, githash string
 
-func exists(x ir.IConfig, path string) bool {
+func exists(x ir.Config, path string) bool {
 	return x.Exists(path)
 }
 
