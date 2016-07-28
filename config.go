@@ -9,22 +9,17 @@ import (
 	"path/filepath"
 )
 
-type ConfigI interface {
-	ParserI
-	UserI
-	GetEnv(dir string) (map[string]string, error)
-}
-
 type Config struct {
 	Flags
 	Parser ParserI
-	User   UserI
+	Users  UserI
+	Logger LoggerI
 }
 
 func New() *Config {
 	return &Config{
 		Parser: &Parser{},
-		User:   &User{},
+		Users:  &Users{},
 	}
 }
 

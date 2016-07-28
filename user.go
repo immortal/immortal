@@ -5,12 +5,12 @@ import (
 )
 
 type UserI interface {
-	Lookup(user string) (*user.User, error)
+	Lookup(u string) (*user.User, error)
 }
 
-type User struct{}
+type Users struct{}
 
-func (self *User) Lookup(u string) (*user.User, error) {
+func (self *Users) Lookup(u string) (*user.User, error) {
 	usr, err := user.Lookup(u)
 	if err != nil {
 		return nil, err
