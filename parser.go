@@ -7,7 +7,7 @@ import (
 )
 
 type Parser interface {
-	Parse() *Flags
+	Parse(fs *flag.FlagSet) (*Flags, error)
 	exists(path string) bool
 	UserFinder
 }
@@ -19,33 +19,29 @@ type Parse struct {
 	args []string
 }
 
-func (self *Parse) Parse() *Flags {
-	flag.BoolVar(&self.Flags.Ctrl, "ctrl", false, "Create supervise directory")
-	flag.BoolVar(&self.Flags.Version, "v", false, "Print version")
-	flag.StringVar(&self.Flags.Configfile, "c", "", "`run.yml` configuration file")
-	flag.StringVar(&self.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
-	flag.StringVar(&self.Flags.Envdir, "e", "", "Set environment variables specified by files in the `dir`")
-	flag.StringVar(&self.Flags.FollowPid, "f", "", "Follow PID in `pidfile`")
-	flag.StringVar(&self.Flags.Logfile, "l", "", "Write stdout/stderr to `logfile`")
-	flag.StringVar(&self.Flags.Logger, "logger", "", "A `command` to pipe stdout/stderr to stdin")
-	flag.StringVar(&self.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
-	flag.StringVar(&self.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
-	flag.StringVar(&self.Flags.User, "u", "", "Execute command on behalf `user`")
-
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command args\n\n", os.Args[0])
-		fmt.Printf("  command\n        The command with arguments if any, to supervise.\n\n")
-		flag.PrintDefaults()
-	}
+func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
+	fs.BoolVar(&self.Flags.Ctrl, "ctrl", false, "Create supervise directory")
+	fs.BoolVar(&self.Flags.Version, "v", false, "Print version")
+	fs.StringVar(&self.Flags.Configfile, "c", "", "`run.yml` configuration file")
+	fs.StringVar(&self.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
+	fs.StringVar(&self.Flags.Envdir, "e", "", "Set environment variables specified by files in the `dir`")
+	fs.StringVar(&self.Flags.FollowPid, "f", "", "Follow PID in `pidfile`")
+	fs.StringVar(&self.Flags.Logfile, "l", "", "Write stdout/stderr to `logfile`")
+	fs.StringVar(&self.Flags.Logger, "logger", "", "A `command` to pipe stdout/stderr to stdin")
+	fs.StringVar(&self.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
+	fs.StringVar(&self.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
+	fs.StringVar(&self.Flags.User, "u", "", "Execute command on behalf `user`")
 
 	a := os.Args[1:]
 	if self.args != nil {
 		a = self.args
 	}
 
-	flag.CommandLine.Parse(a)
-
-	return &self.Flags
+	err := fs.Parse(a)
+	if err != nil {
+		return nil, err
+	}
+	return &self.Flags, nil
 }
 
 func (self *Parse) exists(path string) bool {
@@ -55,10 +51,13 @@ func (self *Parse) exists(path string) bool {
 	return true
 }
 
-func ParseFlags(p Parser) (*Flags, error) {
-	flags := p.Parse()
+func ParseArgs(p Parser, fs *flag.FlagSet) (*Flags, error) {
+	flags, err := p.Parse(fs)
+	if err != nil {
+		return nil, err
+	}
 
-	// if -v
+	//	 if -v
 	if flags.Version {
 		return flags, nil
 	}
