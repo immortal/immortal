@@ -55,5 +55,9 @@ func main() {
 		os.Exit(0)
 	}
 
-	fmt.Printf("%#v", flags)
+	//var cfg []string
+	//fs.Visit(func(f *flag.Flag) {
+	//cfg = append(cfg, f.Name)
+	//})
+	fmt.Println(fs.Args())
 }

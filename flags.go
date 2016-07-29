@@ -1,8 +1,6 @@
 package immortal
 
-import (
-	"os/user"
-)
+import ()
 
 type Flags struct {
 	Ctrl       bool
@@ -16,6 +14,5 @@ type Flags struct {
 	ChildPid   string
 	ParentPid  string
 	User       string
-	user       *user.User
 	Command    string
 }

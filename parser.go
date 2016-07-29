@@ -50,38 +50,41 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (*Flags, error) {
 		return nil, err
 	}
 
-	//	 if -v
-	if flags.Version {
-		return flags, nil
+	var vf []string
+	fs.Visit(func(f *flag.Flag) {
+		vf = append(vf, f.Name)
+	})
+
+	for _, v := range vf {
+		f := fs.Lookup(v)
+		switch f.Name {
+		case "v":
+			return flags, nil
+		case "ctrl":
+			println("create supervise")
+		case "c":
+			if !p.exists(f.Value.String()) {
+				return nil, fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", f.Value, os.Args[0])
+			}
+		case "d":
+			if !p.exists(f.Value.String()) {
+				return nil, fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", f.Value, os.Args[0])
+			}
+		}
 	}
 
 	// if no args
-	if len(flag.Args()) < 1 {
+	if len(fs.Args()) < 1 {
 		return nil, fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
-	}
-
-	// if -c
-	if flags.Configfile != "" {
-		if !p.exists(flags.Configfile) {
-			return nil, fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", flags.Configfile, os.Args[0])
-			os.Exit(1)
-		}
-	}
-
-	// if -d
-	if flags.Wrkdir != "" {
-		if !p.exists(flags.Wrkdir) {
-			return nil, fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", flags.Wrkdir, os.Args[0])
-		}
 	}
 
 	// if -u
 	if flags.User != "" {
-		usr, err := p.Lookup(flags.User)
+		_, err := p.Lookup(flags.User)
 		if err != nil {
 			return nil, err
 		}
-		flags.user = usr
+		//		flags.user = usr
 	}
 
 	return flags, nil
