@@ -83,6 +83,12 @@ func TestParseFlags(t *testing.T) {
 		{[]string{"-c", "run.yml"}, "Configfile", "run.yml"},
 		{[]string{"-d", "/arena/wrkdir"}, "Wrkdir", "/arena/wrkdir"},
 		{[]string{"-e", "/path/to/envdir"}, "Envdir", "/path/to/envdir"},
+		{[]string{"-f", "/path/to/pid"}, "FollowPid", "/path/to/pid"},
+		{[]string{"-l", "/path/to/log"}, "Logfile", "/path/to/log"},
+		{[]string{"-logger", "logger"}, "Logger", "logger"},
+		{[]string{"-p", "/path/to/child"}, "ChildPid", "/path/to/child"},
+		{[]string{"-P", "/path/to/parent"}, "ParentPid", "/path/to/parent"},
+		{[]string{"-u", "nbari"}, "User", "nbari"},
 	}
 	for _, f := range flagTest {
 		p := &Parse{
