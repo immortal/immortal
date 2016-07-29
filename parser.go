@@ -4,16 +4,19 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/user"
 )
 
 type Parser interface {
 	Parse() *Flags
 	exists(path string) bool
+	UserFinder
 }
 
 type Parse struct {
 	Flags
+	UserFinder
+	// for testing only
+	args []string
 }
 
 func (self *Parse) Parse() *Flags {
@@ -30,29 +33,26 @@ func (self *Parse) Parse() *Flags {
 	flag.StringVar(&self.Flags.User, "u", "", "Execute command on behalf `user`")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command args ...\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command args\n\n", os.Args[0])
 		fmt.Printf("  command\n        The command with arguments if any, to supervise.\n\n")
 		flag.PrintDefaults()
 	}
 
-	flag.CommandLine.Parse(os.Args[1:])
+	a := os.Args[1:]
+	if self.args != nil {
+		a = self.args
+	}
+
+	flag.CommandLine.Parse(a)
+
 	return &self.Flags
 }
 
 func (self *Parse) exists(path string) bool {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Stat(path); err != nil {
 		return false
 	}
 	return true
-}
-
-type MyParser struct {
-	Flags
-}
-
-func (self *MyParser) Parse() *Flags {
-	self.Flags.Logfile = "mock-test"
-	return &self.Flags
 }
 
 func ParseFlags(p Parser) (*Flags, error) {
@@ -71,7 +71,7 @@ func ParseFlags(p Parser) (*Flags, error) {
 	// if -c
 	if flags.Configfile != "" {
 		if !p.exists(flags.Configfile) {
-			return nil, fmt.Errorf("Cannot read file: %q, use -h for more info.", flags.Configfile)
+			return nil, fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", flags.Configfile, os.Args[0])
 			os.Exit(1)
 		}
 	}
@@ -79,21 +79,17 @@ func ParseFlags(p Parser) (*Flags, error) {
 	// if -d
 	if flags.Wrkdir != "" {
 		if !p.exists(flags.Wrkdir) {
-			return nil, fmt.Errorf("-d %q does not exist or has wrong permissions.", flags.Wrkdir)
+			return nil, fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", flags.Wrkdir, os.Args[0])
 		}
 	}
 
 	// if -u
 	if flags.User != "" {
-		usr, err := user.Lookup(flags.User)
+		usr, err := p.Lookup(flags.User)
 		if err != nil {
-			if _, ok := err.(user.UnknownUserError); ok {
-				return nil, fmt.Errorf("User %q does not exist.", flags.User)
-			} else if err != nil {
-				return nil, fmt.Errorf("Error looking up user: %q", flags.User)
-			}
+			return nil, err
 		}
-		println(usr)
+		flags.user = usr
 	}
 
 	return flags, nil

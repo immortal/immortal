@@ -1,24 +1,33 @@
 package immortal
 
 import (
+	"reflect"
 	"testing"
 )
 
-func (self *Parse) exists(path string) bool {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return false
+/* Test Helpers */
+func expect(t *testing.T, a interface{}, b interface{}) {
+	if a != b {
+		t.Errorf("Expected %v (type %v) - Got %v (type %v)", b, reflect.TypeOf(b), a, reflect.TypeOf(a))
 	}
-	return true
 }
 
-type MyParser struct {
-	Flags
+func expectDeepEqual(t *testing.T, a interface{}, b interface{}) {
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("Expected %v (type %v) - Got %v (type %v)", b, reflect.TypeOf(b), a, reflect.TypeOf(a))
+	}
 }
 
-func (self *MyParser) Parse() *Flags {
-	self.Flags.Logfile = "mock-test"
-	return &self.Flags
+func TestParseExist(t *testing.T) {
+	p := Parse{}
+	expect(t, false, p.exists("/dev/null/non-existent"))
+	expect(t, true, p.exists("/"))
 }
 
-func (self *MyParser) exists(path string) bool {
+func TestParse(t *testing.T) {
+	p := &Parse{
+		args: []string{"-h"},
+	}
+	flags := p.Parse()
+	t.Logf("%#v", flags)
 }

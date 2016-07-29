@@ -9,7 +9,9 @@ import (
 var version string
 
 func main() {
-	parser := new(immortal.Parse)
+	parser := &immortal.Parse{
+		UserFinder: &immortal.User{},
+	}
 
 	flags, err := immortal.ParseFlags(parser)
 	if err != nil {
