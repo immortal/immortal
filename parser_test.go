@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -28,10 +29,10 @@ func TestParseExist(t *testing.T) {
 }
 
 func TestParseHelp(t *testing.T) {
-	p := &Parse{
-		args: []string{"-h"},
-	}
-
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-h"}
+	p := &Parse{}
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 
 	// Error output buffer
@@ -45,10 +46,10 @@ func TestParseHelp(t *testing.T) {
 }
 
 func TestParseDefault(t *testing.T) {
-	p := &Parse{
-		args: []string{""},
-	}
-
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", ""}
+	p := &Parse{}
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 
 	// Error output buffer
@@ -73,27 +74,29 @@ func TestParseDefault(t *testing.T) {
 }
 
 func TestParseFlags(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
 	var flagTest = []struct {
 		flag     []string
 		name     string
 		expected interface{}
 	}{
-		{[]string{"-v"}, "Version", true},
-		{[]string{"-ctrl"}, "Ctrl", true},
-		{[]string{"-c", "run.yml"}, "Configfile", "run.yml"},
-		{[]string{"-d", "/arena/wrkdir"}, "Wrkdir", "/arena/wrkdir"},
-		{[]string{"-e", "/path/to/envdir"}, "Envdir", "/path/to/envdir"},
-		{[]string{"-f", "/path/to/pid"}, "FollowPid", "/path/to/pid"},
-		{[]string{"-l", "/path/to/log"}, "Logfile", "/path/to/log"},
-		{[]string{"-logger", "logger"}, "Logger", "logger"},
-		{[]string{"-p", "/path/to/child"}, "ChildPid", "/path/to/child"},
-		{[]string{"-P", "/path/to/parent"}, "ParentPid", "/path/to/parent"},
-		{[]string{"-u", "nbari"}, "User", "nbari"},
+		{[]string{"cmd", "-v"}, "Version", true},
+		{[]string{"cmd", "-ctrl"}, "Ctrl", true},
+		{[]string{"cmd", "-c", "run.yml"}, "Configfile", "run.yml"},
+		{[]string{"cmd", "-d", "/arena/wrkdir"}, "Wrkdir", "/arena/wrkdir"},
+		{[]string{"cmd", "-e", "/path/to/envdir"}, "Envdir", "/path/to/envdir"},
+		{[]string{"cmd", "-f", "/path/to/pid"}, "FollowPid", "/path/to/pid"},
+		{[]string{"cmd", "-l", "/path/to/log"}, "Logfile", "/path/to/log"},
+		{[]string{"cmd", "-logger", "logger"}, "Logger", "logger"},
+		{[]string{"cmd", "-p", "/path/to/child"}, "ChildPid", "/path/to/child"},
+		{[]string{"cmd", "-P", "/path/to/parent"}, "ParentPid", "/path/to/parent"},
+		{[]string{"cmd", "-u", "nbari"}, "User", "nbari"},
 	}
 	for _, f := range flagTest {
-		p := &Parse{
-			args: f.flag,
-		}
+		os.Args = []string{}
+		os.Args = f.flag
+		p := &Parse{}
 		fs := flag.NewFlagSet("test", flag.ContinueOnError)
 
 		// Error output buffer

@@ -15,8 +15,6 @@ type Parser interface {
 type Parse struct {
 	Flags
 	UserFinder
-	// for testing only
-	args []string
 }
 
 func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
@@ -32,12 +30,7 @@ func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.StringVar(&self.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
 	fs.StringVar(&self.Flags.User, "u", "", "Execute command on behalf `user`")
 
-	a := os.Args[1:]
-	if self.args != nil {
-		a = self.args
-	}
-
-	err := fs.Parse(a)
+	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		return nil, err
 	}
