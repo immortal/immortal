@@ -196,14 +196,12 @@ func TestParseArgsTable(t *testing.T) {
 		{[]string{"cmd", "-P", "/path/to/parent"}, true},
 		{[]string{"cmd", "-u", "root"}, true},
 		{[]string{"cmd", "-u", "root", "cmd"}, false},
-		{[]string{"cmd", "-u", "toornonexistent", "cmd"}, true},
+		{[]string{"cmd", "-u", "toor-nonexistent", "cmd"}, true},
 	}
 	var helpCalled = false
 	for _, f := range flagTest {
 		os.Args = f.flag
-		parser := &Parse{
-			UserFinder: &User{},
-		}
+		parser := new(Parse)
 		fs := flag.NewFlagSet("TestParseArgsTable", flag.ContinueOnError)
 		fs.Usage = func() { helpCalled = true }
 		_, err := ParseArgs(parser, fs)

@@ -12,9 +12,7 @@ import (
 var version string
 
 func main() {
-	parser := &immortal.Parse{
-		UserFinder: &immortal.User{},
-	}
+	parser := new(immortal.Parse)
 
 	// flag set
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)

@@ -4,17 +4,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/user"
 )
 
 type Parser interface {
 	Parse(fs *flag.FlagSet) (*Flags, error)
 	exists(path string) bool
-	UserFinder
 }
 
 type Parse struct {
 	Flags
-	UserFinder
 }
 
 func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
@@ -87,9 +86,13 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (*Flags, error) {
 
 	// if -u
 	if flags.User != "" {
-		usr, err := p.Lookup(flags.User)
+		usr, err := user.Lookup(flags.User)
 		if err != nil {
-			return nil, err
+			if _, ok := err.(user.UnknownUserError); ok {
+				return nil, fmt.Errorf("User %q does not exist.", flags.User)
+			} else if err != nil {
+				return nil, fmt.Errorf("Error looking up user: %q", flags.User)
+			}
 		}
 		flags.user = usr
 	}
