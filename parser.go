@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"github.com/immortal/natcasesort"
+	"gopkg.in/yaml.v2"
+	"io/ioutil"
 	"os"
-	//	"os/user"
+	"os/user"
 	"sort"
 )
 
@@ -13,6 +15,10 @@ type Parser interface {
 	Parse(fs *flag.FlagSet) (*Flags, error)
 	isDir(path string) bool
 	isFile(path string) bool
+	parseYml(file string) (*Config, error)
+	checkWrkdir(dir string) error
+	checkEnvdir(dir string) error
+	checkUser(user string) (*user.User, error)
 }
 
 type Parse struct {
@@ -61,6 +67,45 @@ func (self *Parse) isFile(path string) bool {
 	return false
 }
 
+func (self *Parse) parseYml(file string) (*Config, error) {
+	f, err := ioutil.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(f, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (self *Parse) checkWrkdir(dir string) (err error) {
+	if !self.isDir(dir) {
+		err = fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", dir, os.Args[0])
+	}
+	return
+}
+
+func (self *Parse) checkEnvdir(dir string) (err error) {
+	if !self.isDir(dir) {
+		err = fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help.", dir, os.Args[0])
+	}
+	return
+}
+
+func (self *Parse) checkUser(u string) (usr *user.User, err error) {
+	usr, err = user.Lookup(u)
+	if err != nil {
+		if _, ok := err.(user.UnknownUserError); ok {
+			err = fmt.Errorf("User %q does not exist.", u)
+		} else if err != nil {
+			err = fmt.Errorf("Error looking up user: %q", u)
+		}
+		return
+	}
+	return
+}
+
 func (self *Parse) Usage(fs *flag.FlagSet) func() {
 	return func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
@@ -87,55 +132,66 @@ func (self *Parse) Usage(fs *flag.FlagSet) func() {
 	}
 }
 
-func ParseArgs(p Parser, fs *flag.FlagSet) (*Flags, error) {
-	flags, err := p.Parse(fs)
+func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, flags *Flags, err error) {
+	flags, err = p.Parse(fs)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	// if -v
 	if flags.Version {
-		return flags, nil
+		return
 	}
 
 	// if no args
 	if len(fs.Args()) < 1 {
-		return nil, fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
+		err = fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
+		return
 	}
 
 	// if -c
 	if flags.Configfile != "" {
 		if !p.isFile(flags.Configfile) {
-			return nil, fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", flags.Configfile, os.Args[0])
+			err = fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", flags.Configfile, os.Args[0])
+			return
 		}
+		cfg, err = p.parseYml(flags.Configfile)
+		if err != nil {
+			return
+		}
+	} else {
+		cfg = new(Config)
 	}
 
 	// if -d
 	if flags.Wrkdir != "" {
-		if !p.isDir(flags.Wrkdir) {
-			return nil, fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", flags.Wrkdir, os.Args[0])
+		if err = p.checkWrkdir(flags.Wrkdir); err != nil {
+			return
+		}
+	}
+	if cfg.Cwd != "" {
+		if err = p.checkWrkdir(cfg.Cwd); err != nil {
+			return
 		}
 	}
 
 	// if -e
 	if flags.Envdir != "" {
-		if !p.isDir(flags.Envdir) {
-			return nil, fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help.", flags.Envdir, os.Args[0])
+		if err = p.checkEnvdir(flags.Envdir); err != nil {
+			return
 		}
 	}
 
-	//// if -u
-	//if flags.User != "" {
-	//_, err := user.Lookup(flags.User)
-	//if err != nil {
-	//if _, ok := err.(user.UnknownUserError); ok {
-	//return nil, fmt.Errorf("User %q does not exist.", flags.User)
-	//} else if err != nil {
-	//return nil, fmt.Errorf("Error looking up user: %q", flags.User)
-	//}
-	//}
-	////		flags.user = usr
-	//}
-
-	return flags, nil
+	// if -u
+	if flags.User != "" {
+		if cfg.user, err = p.checkUser(flags.User); err != nil {
+			return
+		}
+	}
+	if cfg.User != "" {
+		if cfg.user, err = p.checkUser(cfg.User); err != nil {
+			return
+		}
+	}
+	return
 }

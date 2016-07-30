@@ -173,7 +173,7 @@ func TestParseArgsNoargs(t *testing.T) {
 	var helpCalled = false
 	fs := flag.NewFlagSet("TestParseArgsNoargs", flag.ContinueOnError)
 	fs.Usage = func() { helpCalled = true }
-	_, err := ParseArgs(parser, fs)
+	_, _, err := ParseArgs(parser, fs)
 	if helpCalled {
 		t.Error("help called for regular flag")
 	}
@@ -210,9 +210,9 @@ func TestParseArgsTable(t *testing.T) {
 		{[]string{"cmd", "-logger", "logger"}, true},
 		{[]string{"cmd", "-p", "/path/to/child"}, true},
 		{[]string{"cmd", "-P", "/path/to/parent"}, true},
-		//{[]string{"cmd", "-u", "root"}, true},
-		//{[]string{"cmd", "-u", "root", "cmd"}, false},
-		//{[]string{"cmd", "-u", "toor-nonexistent", "cmd"}, true},
+		{[]string{"cmd", "-u", "root"}, true},
+		{[]string{"cmd", "-u", "root", "cmd"}, false},
+		{[]string{"cmd", "-u", "toor-nonexistent", "cmd"}, true},
 	}
 	var helpCalled = false
 	for _, f := range flagTest {
@@ -220,7 +220,7 @@ func TestParseArgsTable(t *testing.T) {
 		parser := new(Parse)
 		fs := flag.NewFlagSet("TestParseArgsTable", flag.ContinueOnError)
 		fs.Usage = func() { helpCalled = true }
-		_, err := ParseArgs(parser, fs)
+		_, _, err := ParseArgs(parser, fs)
 		if f.expected {
 			if err == nil {
 				t.Error("Expecting error")

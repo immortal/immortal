@@ -1,5 +1,5 @@
 cmd: bundle exec unicorn -c unicorn.rb
-cwd: /tmp
+cwd: /tmp/
 env:
     DEBUG: 1
     ENVIROMENT: production

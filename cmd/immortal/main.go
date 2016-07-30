@@ -16,7 +16,7 @@ func main() {
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	fs.Usage = parser.Usage(fs)
 
-	flags, err := immortal.ParseArgs(parser, fs)
+	cfg, flags, err := immortal.ParseArgs(parser, fs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -28,16 +28,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	// if -c parse run.yml
-	if flags.Configfile != "" {
-		cfg, err := immortal.ParseYml(flags.Configfile)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		fmt.Printf("%#v", cfg)
-	}
-
 	// create a new daemon
 	//	daemon = new(immortal.Daemon)
 
@@ -46,5 +36,5 @@ func main() {
 		//		immortal.CreateSuperviseDir(&FIFO{}, os.Getwd())
 	}
 
-	fmt.Println(fs.Args())
+	fmt.Println(cfg, fs.Args())
 }
