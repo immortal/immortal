@@ -38,10 +38,14 @@ func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 }
 
 func (self *Parse) exists(path string) bool {
-	if _, err := os.Stat(path); err != nil {
+	f, err := os.Stat(path)
+	if err != nil {
 		return false
 	}
-	return true
+	if m := f.Mode(); m.IsDir() && m&400 != 0 {
+		return true
+	}
+	return false
 }
 
 func ParseArgs(p Parser, fs *flag.FlagSet) (*Flags, error) {
@@ -50,27 +54,9 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (*Flags, error) {
 		return nil, err
 	}
 
-	var vf []string
-	fs.Visit(func(f *flag.Flag) {
-		vf = append(vf, f.Name)
-	})
-
-	for _, v := range vf {
-		f := fs.Lookup(v)
-		switch f.Name {
-		case "v":
-			return flags, nil
-		case "ctrl":
-			println("create supervise")
-		case "c":
-			if !p.exists(f.Value.String()) {
-				return nil, fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", f.Value, os.Args[0])
-			}
-		case "d":
-			if !p.exists(f.Value.String()) {
-				return nil, fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", f.Value, os.Args[0])
-			}
-		}
+	// if -v
+	if flags.Version {
+		return flags, nil
 	}
 
 	// if no args
@@ -78,13 +64,34 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (*Flags, error) {
 		return nil, fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
 	}
 
+	// if -c
+	if flags.Configfile != "" {
+		if !p.exists(flags.Configfile) {
+			return nil, fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", flags.Configfile, os.Args[0])
+		}
+	}
+
+	// if -d
+	if flags.Wrkdir != "" {
+		if !p.exists(flags.Wrkdir) {
+			return nil, fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", flags.Wrkdir, os.Args[0])
+		}
+	}
+
+	// if -e
+	if flags.Envdir != "" {
+		if !p.exists(flags.Envdir) {
+			return nil, fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help.", flags.Envdir, os.Args[0])
+		}
+	}
+
 	// if -u
 	if flags.User != "" {
-		_, err := p.Lookup(flags.User)
+		usr, err := p.Lookup(flags.User)
 		if err != nil {
 			return nil, err
 		}
-		//		flags.user = usr
+		flags.user = usr
 	}
 
 	return flags, nil
