@@ -16,10 +16,18 @@ func expect(t *testing.T, a interface{}, b interface{}) {
 	}
 }
 
-func TestParseExist(t *testing.T) {
+func TestParseisDir(t *testing.T) {
 	p := Parse{}
-	expect(t, false, p.exists("/dev/null/non-existent"))
-	expect(t, true, p.exists("/"))
+	expect(t, false, p.isDir("/dev/null"))
+	expect(t, true, p.isDir("/"))
+	expect(t, false, p.isDir("/etc/hosts"))
+}
+
+func TestParseisFile(t *testing.T) {
+	p := Parse{}
+	expect(t, false, p.isFile("/dev/null"))
+	expect(t, false, p.isFile("/"))
+	expect(t, true, p.isFile("/etc/hosts"))
 }
 
 func TestParseHelp(t *testing.T) {
@@ -202,9 +210,9 @@ func TestParseArgsTable(t *testing.T) {
 		{[]string{"cmd", "-logger", "logger"}, true},
 		{[]string{"cmd", "-p", "/path/to/child"}, true},
 		{[]string{"cmd", "-P", "/path/to/parent"}, true},
-		{[]string{"cmd", "-u", "root"}, true},
-		{[]string{"cmd", "-u", "root", "cmd"}, false},
-		{[]string{"cmd", "-u", "toor-nonexistent", "cmd"}, true},
+		//{[]string{"cmd", "-u", "root"}, true},
+		//{[]string{"cmd", "-u", "root", "cmd"}, false},
+		//{[]string{"cmd", "-u", "toor-nonexistent", "cmd"}, true},
 	}
 	var helpCalled = false
 	for _, f := range flagTest {

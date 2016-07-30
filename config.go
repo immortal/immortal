@@ -10,8 +10,32 @@ import (
 )
 
 type Config struct {
-	Flags
-	Parser
+	Cmd    string            `yaml:"cmd" json:"cmd"`
+	Cwd    string            `yaml:",omitempty" json:",omitempty"`
+	Env    map[string]string `yaml:",omitempty" json:",omitempty"`
+	Pid    map[string]string `yaml:",omitempty" json:",omitempty"`
+	Log    `yaml:",omitempty" json:",omitempty"`
+	Logger string `yaml:",omitempty" json:",omitempty"`
+	User   string `yaml:",omitempty" json:",omitempty"`
+}
+
+type Log struct {
+	File string `yaml:",omitempty"`
+	Age  int    `yaml:",omitempty"`
+	Num  int    `yaml:",omitempty"`
+	Size int    `yaml:",omitempty"`
+}
+
+func ParseYml(file string) (*Config, error) {
+	f, err := ioutil.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(f, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
 }
 
 func (self *Config) GetEnv(dir string) (map[string]string, error) {

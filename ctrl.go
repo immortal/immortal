@@ -10,19 +10,12 @@ func CreateSuperviseDir(f FIFOer, path string) (err error) {
 	if err = os.MkdirAll(wd, 0700); err != nil {
 		return
 	}
-	// create control pipe
-	err = f.Make(filepath.Join(wd, "control"))
-	if err != nil {
-		return
-	}
-	// create status pipe
-	err = f.Make(filepath.Join(wd, "ok"))
-	if err != nil {
-		return
-	}
-	// create lock
-	if err = Lock(filepath.Join(wd, "lock")); err != nil {
-		return
+	// create control & ok  pipe
+	for _, v := range []string{"control", "ok"} {
+		err = f.Make(filepath.Join(wd, v))
+		if err != nil {
+			return
+		}
 	}
 	return
 }

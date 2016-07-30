@@ -28,9 +28,22 @@ func main() {
 		os.Exit(0)
 	}
 
+	// if -c parse run.yml
+	if flags.Configfile != "" {
+		cfg, err := immortal.ParseYml(flags.Configfile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("%#v", cfg)
+	}
+
+	// create a new daemon
+	//	daemon = new(immortal.Daemon)
+
 	// if -ctrl create supervise
 	if flags.Ctrl {
-
+		//		immortal.CreateSuperviseDir(&FIFO{}, os.Getwd())
 	}
 
 	fmt.Println(fs.Args())

@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"github.com/immortal/natcasesort"
 	"os"
-	"os/user"
+	//	"os/user"
 	"sort"
 )
 
 type Parser interface {
 	Parse(fs *flag.FlagSet) (*Flags, error)
-	exists(path string) bool
+	isDir(path string) bool
+	isFile(path string) bool
 }
 
 type Parse struct {
@@ -27,8 +28,8 @@ func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.StringVar(&self.Flags.FollowPid, "f", "", "Follow PID in `pidfile`")
 	fs.StringVar(&self.Flags.Logfile, "l", "", "Write stdout/stderr to `logfile`")
 	fs.StringVar(&self.Flags.Logger, "logger", "", "A `command` to pipe stdout/stderr to stdin")
-	fs.StringVar(&self.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
 	fs.StringVar(&self.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
+	fs.StringVar(&self.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
 	fs.StringVar(&self.Flags.User, "u", "", "Execute command on behalf `user`")
 
 	err := fs.Parse(os.Args[1:])
@@ -38,12 +39,23 @@ func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	return &self.Flags, nil
 }
 
-func (self *Parse) exists(path string) bool {
+func (self *Parse) isDir(path string) bool {
 	f, err := os.Stat(path)
 	if err != nil {
 		return false
 	}
 	if m := f.Mode(); m.IsDir() && m&400 != 0 {
+		return true
+	}
+	return false
+}
+
+func (self *Parse) isFile(path string) bool {
+	f, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if m := f.Mode(); !m.IsDir() && m.IsRegular() && m&400 != 0 {
 		return true
 	}
 	return false
@@ -93,37 +105,37 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (*Flags, error) {
 
 	// if -c
 	if flags.Configfile != "" {
-		if !p.exists(flags.Configfile) {
+		if !p.isFile(flags.Configfile) {
 			return nil, fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", flags.Configfile, os.Args[0])
 		}
 	}
 
 	// if -d
 	if flags.Wrkdir != "" {
-		if !p.exists(flags.Wrkdir) {
+		if !p.isDir(flags.Wrkdir) {
 			return nil, fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", flags.Wrkdir, os.Args[0])
 		}
 	}
 
 	// if -e
 	if flags.Envdir != "" {
-		if !p.exists(flags.Envdir) {
+		if !p.isDir(flags.Envdir) {
 			return nil, fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help.", flags.Envdir, os.Args[0])
 		}
 	}
 
-	// if -u
-	if flags.User != "" {
-		usr, err := user.Lookup(flags.User)
-		if err != nil {
-			if _, ok := err.(user.UnknownUserError); ok {
-				return nil, fmt.Errorf("User %q does not exist.", flags.User)
-			} else if err != nil {
-				return nil, fmt.Errorf("Error looking up user: %q", flags.User)
-			}
-		}
-		flags.user = usr
-	}
+	//// if -u
+	//if flags.User != "" {
+	//_, err := user.Lookup(flags.User)
+	//if err != nil {
+	//if _, ok := err.(user.UnknownUserError); ok {
+	//return nil, fmt.Errorf("User %q does not exist.", flags.User)
+	//} else if err != nil {
+	//return nil, fmt.Errorf("Error looking up user: %q", flags.User)
+	//}
+	//}
+	////		flags.user = usr
+	//}
 
 	return flags, nil
 }
