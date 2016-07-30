@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"bytes"
 	"flag"
 	"io/ioutil"
 	"os"
@@ -26,12 +27,19 @@ func TestParseHelp(t *testing.T) {
 	defer func() { os.Args = oldArgs }()
 	os.Args = []string{"cmd", "-h"}
 	p := &Parse{}
-	var helpCalled = false
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	fs.Usage = func() { helpCalled = true }
-	p.Parse(fs)
-	if !helpCalled {
-		t.Fatal("help was not called")
+	fs.Usage = p.Usage(fs)
+	// Error output buffer
+	buf := bytes.NewBuffer([]byte{})
+	fs.SetOutput(buf)
+	_, w, err := os.Pipe()
+	if err != nil {
+		t.Error(err)
+	}
+	os.Stderr = w
+	_, err = p.Parse(fs)
+	if err == nil {
+		t.Error("Expecting error")
 	}
 }
 

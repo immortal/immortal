@@ -108,30 +108,5 @@ func NewOld(u *user.User, c, d, e, f, l, logger, p, P *string, cmd []string, ctr
 		},
 	}
 
-	if *ctrl {
-		wd, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-		wd = filepath.Join(wd, "supervise")
-		if err := os.MkdirAll(wd, 0700); err != nil {
-			return nil, err
-		}
-		// create control pipe
-		daemon.ctrl.control_fifo, err = MakeFIFO(filepath.Join(wd, "control"))
-		if err != nil {
-			return nil, err
-		}
-		// create status pipe
-		daemon.ctrl.status_fifo, err = MakeFIFO(filepath.Join(wd, "ok"))
-		if err != nil {
-			return nil, err
-		}
-		// create lock
-		if err = Lock(filepath.Join(wd, "lock")); err != nil {
-			return nil, err
-		}
-	}
-
 	return daemon, nil
 }

@@ -3,8 +3,10 @@ package immortal
 import (
 	"flag"
 	"fmt"
+	"github.com/immortal/natcasesort"
 	"os"
 	"os/user"
+	"sort"
 )
 
 type Parser interface {
@@ -45,6 +47,32 @@ func (self *Parse) exists(path string) bool {
 		return true
 	}
 	return false
+}
+
+func (self *Parse) Usage(fs *flag.FlagSet) func() {
+	return func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
+		var flags []string
+		fs.VisitAll(func(f *flag.Flag) {
+			flags = append(flags, f.Name)
+		})
+		sort.Sort(natcasesort.Sort(flags))
+		for _, v := range flags {
+			f := fs.Lookup(v)
+			s := fmt.Sprintf("  -%s", f.Name)
+			name, usage := flag.UnquoteUsage(f)
+			if len(name) > 0 {
+				s += " " + name
+			}
+			if len(s) <= 4 {
+				s += "\t"
+			} else {
+				s += "\n    \t"
+			}
+			s += usage
+			fmt.Fprintf(os.Stderr, "%s\n", s)
+		}
+	}
 }
 
 func ParseArgs(p Parser, fs *flag.FlagSet) (*Flags, error) {

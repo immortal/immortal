@@ -35,20 +35,6 @@ func Lock(f string) error {
 	return syscall.Flock(int(file.Fd()), syscall.LOCK_EX+syscall.LOCK_NB)
 }
 
-func MakeFIFO(path string) (f *os.File, err error) {
-	err = syscall.Mknod(path, syscall.S_IFIFO|0666, 0)
-	// ignore "file exists" errors and assume the FIFO was pre-made
-	if err != nil && !os.IsExist(err) {
-		return
-	}
-
-	f, err = os.OpenFile(path, os.O_RDWR, os.ModeNamedPipe)
-	if err != nil {
-		return
-	}
-	return
-}
-
 func Fork() (int, error) {
 	args := os.Args[1:]
 	cmd := exec.Command(os.Args[0], args...)
