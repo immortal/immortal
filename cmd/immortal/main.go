@@ -31,5 +31,5 @@ func main() {
 	// create a new daemon
 	//	daemon = new(immortal.Daemon)
 
-	fmt.Println(cfg, fs.Args())
+	fmt.Printf("%v", cfg)
 }

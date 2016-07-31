@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"github.com/immortal/natcasesort"
@@ -8,7 +9,9 @@ import (
 	"io/ioutil"
 	"os"
 	"os/user"
+	"path/filepath"
 	"sort"
+	"strings"
 )
 
 type Parser interface {
@@ -17,7 +20,7 @@ type Parser interface {
 	isFile(path string) bool
 	parseYml(file string) (*Config, error)
 	checkWrkdir(dir string) error
-	checkEnvdir(dir string) error
+	parseEnvdir(dir string) (map[string]string, error)
 	checkUser(user string) (*user.User, error)
 }
 
@@ -87,11 +90,34 @@ func (self *Parse) checkWrkdir(dir string) (err error) {
 	return
 }
 
-func (self *Parse) checkEnvdir(dir string) (err error) {
+func (self *Parse) parseEnvdir(dir string) (map[string]string, error) {
 	if !self.isDir(dir) {
-		err = fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help.", dir, os.Args[0])
+		return nil, fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help.", dir, os.Args[0])
 	}
-	return
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	env := make(map[string]string)
+	for _, f := range files {
+		if f.Mode().IsRegular() {
+			lines := 0
+			ff, err := os.Open(filepath.Join(dir, f.Name()))
+			if err != nil {
+				continue
+			}
+			defer ff.Close()
+			s := bufio.NewScanner(ff)
+			for s.Scan() {
+				if lines >= 1 {
+					break
+				}
+				env[f.Name()] = s.Text()
+				lines++
+			}
+		}
+	}
+	return env, nil
 }
 
 func (self *Parse) checkUser(u string) (usr *user.User, err error) {
@@ -160,8 +186,26 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		if err != nil {
 			return
 		}
-	} else {
-		cfg = new(Config)
+		if cfg.Cwd != "" {
+			if err = p.checkWrkdir(cfg.Cwd); err != nil {
+				return
+			}
+		}
+		if cfg.User != "" {
+			if cfg.user, err = p.checkUser(cfg.User); err != nil {
+				return
+			}
+		}
+		return
+	}
+
+	// create new cfg if not using run.yml
+	cfg = new(Config)
+	cfg.Cmd = strings.Join(fs.Args(), " ")
+
+	// if -ctrl
+	if flags.Ctrl {
+		cfg.Ctrl = true
 	}
 
 	// if -d
@@ -169,28 +213,49 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		if err = p.checkWrkdir(flags.Wrkdir); err != nil {
 			return
 		}
-	}
-	if cfg.Cwd != "" {
-		if err = p.checkWrkdir(cfg.Cwd); err != nil {
-			return
-		}
+		cfg.Cwd = flags.Wrkdir
 	}
 
 	// if -e
 	if flags.Envdir != "" {
-		if err = p.checkEnvdir(flags.Envdir); err != nil {
+		if cfg.Env, err = p.parseEnvdir(flags.Envdir); err != nil {
 			return
 		}
+	}
+
+	// if -f
+	if flags.FollowPid != "" {
+		cfg.Follow = flags.FollowPid
+	}
+
+	// if -l
+	if flags.Logfile != "" {
+		cfg.File = flags.Logfile
+	}
+
+	// if -logger
+	if flags.Logger != "" {
+		cfg.Logger = flags.Logger
+	}
+
+	// if -P
+	if flags.ParentPid != "" {
+		cfg.Parent = flags.ParentPid
+	}
+
+	// if -p
+	if flags.ChildPid != "" {
+		cfg.Child = flags.ChildPid
+	}
+
+	// if -s
+	if flags.Seconds > 0 {
+		cfg.Wait = flags.Seconds
 	}
 
 	// if -u
 	if flags.User != "" {
 		if cfg.user, err = p.checkUser(flags.User); err != nil {
-			return
-		}
-	}
-	if cfg.User != "" {
-		if cfg.user, err = p.checkUser(cfg.User); err != nil {
 			return
 		}
 	}
