@@ -16,25 +16,20 @@ func main() {
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	fs.Usage = parser.Usage(fs)
 
-	cfg, flags, err := immortal.ParseArgs(parser, fs)
+	cfg, err := immortal.ParseArgs(parser, fs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
 	// if -v print version
-	if flags.Version {
+	if (fs.Lookup("v")).Value.(flag.Getter).Get().(bool) {
 		fmt.Printf("%s\n", version)
 		os.Exit(0)
 	}
 
 	// create a new daemon
 	//	daemon = new(immortal.Daemon)
-
-	// if -ctrl create supervise
-	if flags.Ctrl {
-		//		immortal.CreateSuperviseDir(&FIFO{}, os.Getwd())
-	}
 
 	fmt.Println(cfg, fs.Args())
 }

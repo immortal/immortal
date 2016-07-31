@@ -132,7 +132,8 @@ func (self *Parse) Usage(fs *flag.FlagSet) func() {
 	}
 }
 
-func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, flags *Flags, err error) {
+func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
+	var flags *Flags
 	flags, err = p.Parse(fs)
 	if err != nil {
 		return

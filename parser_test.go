@@ -173,7 +173,7 @@ func TestParseArgsNoargs(t *testing.T) {
 	var helpCalled = false
 	fs := flag.NewFlagSet("TestParseArgsNoargs", flag.ContinueOnError)
 	fs.Usage = func() { helpCalled = true }
-	_, _, err := ParseArgs(parser, fs)
+	_, err := ParseArgs(parser, fs)
 	if helpCalled {
 		t.Error("help called for regular flag")
 	}
@@ -220,7 +220,7 @@ func TestParseArgsTable(t *testing.T) {
 		parser := new(Parse)
 		fs := flag.NewFlagSet("TestParseArgsTable", flag.ContinueOnError)
 		fs.Usage = func() { helpCalled = true }
-		_, _, err := ParseArgs(parser, fs)
+		_, err := ParseArgs(parser, fs)
 		if f.expected {
 			if err == nil {
 				t.Error("Expecting error")
