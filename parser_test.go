@@ -191,25 +191,34 @@ func TestParseArgsTable(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	var flagTest = []struct {
-		flag     []string
-		expected bool
+		flag        []string
+		expectError bool
 	}{
 		{[]string{"cmd", "-v"}, false},
 		{[]string{"cmd", "-ctrl"}, true},
+		{[]string{"cmd", "-ctrl", "cmd"}, false},
 		{[]string{"cmd", "-c", "run.yml"}, true},
 		{[]string{"cmd", "-c", "run.yml", "cmd"}, true},
+		{[]string{"cmd", "-c", "example/run.yml", "cmd"}, false},
 		{[]string{"cmd", "-d", "/arena/wrkdir"}, true},
 		{[]string{"cmd", "-d", "/dev/null", "cmd"}, true},
 		{[]string{"cmd", "-d", dir, "cmd"}, false},
 		{[]string{"cmd", "-e", "/path/to/envdir"}, true},
 		{[]string{"cmd", "-e", "/dev/null", "cmd"}, true},
+		{[]string{"cmd", "-e", "example/env", "cmd"}, false},
 		{[]string{"cmd", "-e", dir, "cmd"}, false},
 		{[]string{"cmd", "-f", "/path/to/pid"}, true},
 		{[]string{"cmd", "-f", "/path/to/pid", "cmd"}, false},
 		{[]string{"cmd", "-l", "/path/to/log"}, true},
+		{[]string{"cmd", "-l", "/path/to/log", "cmd"}, false},
 		{[]string{"cmd", "-logger", "logger"}, true},
+		{[]string{"cmd", "-logger", "logger", "cmd"}, false},
 		{[]string{"cmd", "-p", "/path/to/child"}, true},
+		{[]string{"cmd", "-p", "/path/to/child", "cmd"}, false},
 		{[]string{"cmd", "-P", "/path/to/parent"}, true},
+		{[]string{"cmd", "-P", "/path/to/parent", "cmd"}, false},
+		{[]string{"cmd", "-s", "30"}, true},
+		{[]string{"cmd", "-s", "30", "cmd"}, false},
 		{[]string{"cmd", "-u", "root"}, true},
 		{[]string{"cmd", "-u", "root", "cmd"}, false},
 		{[]string{"cmd", "-u", "toor-nonexistent", "cmd"}, true},
@@ -221,7 +230,7 @@ func TestParseArgsTable(t *testing.T) {
 		fs := flag.NewFlagSet("TestParseArgsTable", flag.ContinueOnError)
 		fs.Usage = func() { helpCalled = true }
 		_, err := ParseArgs(parser, fs)
-		if f.expected {
+		if f.expectError {
 			if err == nil {
 				t.Error("Expecting error")
 			}
