@@ -12,5 +12,6 @@ type Flags struct {
 	ParentPid  string
 	ChildPid   string
 	User       string
+	Seconds    int
 	Command    string
 }

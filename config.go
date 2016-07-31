@@ -17,6 +17,7 @@ type Config struct {
 	Log    `yaml:",omitempty" json:",omitempty"`
 	Logger string `yaml:",omitempty" json:",omitempty"`
 	User   string `yaml:",omitempty" json:",omitempty"`
+	Wait   int    `yaml:",omitempty"`
 	user   *user.User
 }
 

@@ -36,6 +36,7 @@ func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.StringVar(&self.Flags.Logger, "logger", "", "A `command` to pipe stdout/stderr to stdin")
 	fs.StringVar(&self.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
 	fs.StringVar(&self.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
+	fs.IntVar(&self.Flags.Seconds, "s", 0, "`seconds` to wait before starting")
 	fs.StringVar(&self.Flags.User, "u", "", "Execute command on behalf `user`")
 
 	err := fs.Parse(os.Args[1:])
@@ -74,7 +75,7 @@ func (self *Parse) parseYml(file string) (*Config, error) {
 	}
 	var cfg Config
 	if err := yaml.Unmarshal(f, &cfg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Unable to parse YAML file %q %s", file, err)
 	}
 	return &cfg, nil
 }
@@ -133,8 +134,7 @@ func (self *Parse) Usage(fs *flag.FlagSet) func() {
 }
 
 func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
-	var flags *Flags
-	flags, err = p.Parse(fs)
+	flags, err := p.Parse(fs)
 	if err != nil {
 		return
 	}
