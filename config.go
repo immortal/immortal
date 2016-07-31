@@ -2,7 +2,6 @@ package immortal
 
 import (
 	"bufio"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"os"
 	"os/user"
@@ -55,72 +54,26 @@ func (self *Config) GetEnv(dir string) (map[string]string, error) {
 	return env, nil
 }
 
-func (self *Config) Exists(path string) bool {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return false
-	}
-	return true
-}
+//func AA() {
+//daemon := &Daemon{
+//owner:   u,
+//command: cmd,
+//run: Run{
+//Cwd:       *d,
+//Env:       env,
+//FollowPid: *f,
+//Logfile:   *l,
+//Logger:    *logger,
+//ParentPid: *P,
+//ChildPid:  *p,
+//Ctrl:      *ctrl,
+//},
+//ctrl: Ctrl{
+//fifo:  make(chan Return),
+//quit:  make(chan struct{}),
+//state: make(chan error),
+//},
+//}
 
-// New return a instances of Daemon
-//      u - usr
-//      c - config
-//      d - working dir
-//      e - envdir
-//      f - follow pid
-//      l - log file
-// logger - command to pipe stdout/stderr
-//      P - parent pidfile
-//      p - child pidfile
-//    cmd - command to supervise
-//   ctrl - create supervise dir
-func NewOld(u *user.User, c, d, e, f, l, logger, p, P *string, cmd []string, ctrl *bool) (*Daemon, error) {
-	var (
-		env map[string]string
-	)
-
-	if *c != "" {
-		yml_file, err := ioutil.ReadFile(*c)
-		if err != nil {
-			return nil, err
-		}
-
-		var D Daemon
-
-		if err := yaml.Unmarshal(yml_file, &D); err != nil {
-			return nil, err
-		}
-
-		return &D, nil
-	}
-
-	// set environment
-	//if *e != "" {
-	//env, err = GetEnv(*e)
-	//if err != nil {
-	//return nil, err
-	//}
-	//}
-
-	daemon := &Daemon{
-		owner:   u,
-		command: cmd,
-		run: Run{
-			Cwd:       *d,
-			Env:       env,
-			FollowPid: *f,
-			Logfile:   *l,
-			Logger:    *logger,
-			ParentPid: *P,
-			ChildPid:  *p,
-			Ctrl:      *ctrl,
-		},
-		ctrl: Ctrl{
-			fifo:  make(chan Return),
-			quit:  make(chan struct{}),
-			state: make(chan error),
-		},
-	}
-
-	return daemon, nil
-}
+//return daemon, nil
+//}
