@@ -42,8 +42,12 @@ func main() {
 		defer logger.Close()
 	}
 
-	// create a new daemon
-	//	daemon = new(immortal.Daemon)
+	// create daemon
+	var daemon immortal.Immortal
+	daemon = immortal.New(cfg)
 
-	fmt.Printf("%v", cfg)
+	daemon.Fork()
+
+	daemon.Run()
+	daemon.Supervise()
 }

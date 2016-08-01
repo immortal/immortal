@@ -35,7 +35,7 @@ func Lock(f string) error {
 	return syscall.Flock(int(file.Fd()), syscall.LOCK_EX+syscall.LOCK_NB)
 }
 
-func Fork() (int, error) {
+func ForkOff() (int, error) {
 	args := os.Args[1:]
 	cmd := exec.Command(os.Args[0], args...)
 	cmd.Env = append(cmd.Env, os.Environ()...)

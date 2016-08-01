@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-type LoggerI interface {
-}
-
 func (self *Daemon) Log(msg string) {
 	self.logger.Print(msg)
 }

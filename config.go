@@ -29,27 +29,3 @@ type Log struct {
 	Num  int    `yaml:",omitempty"`
 	Size int    `yaml:",omitempty"`
 }
-
-//func AA() {
-//daemon := &Daemon{
-//owner:   u,
-//command: cmd,
-//run: Run{
-//Cwd:       *d,
-//Env:       env,
-//FollowPid: *f,
-//Logfile:   *l,
-//Logger:    *logger,
-//ParentPid: *P,
-//ChildPid:  *p,
-//Ctrl:      *ctrl,
-//},
-//ctrl: Ctrl{
-//fifo:  make(chan Return),
-//quit:  make(chan struct{}),
-//state: make(chan error),
-//},
-//}
-
-//return daemon, nil
-//}

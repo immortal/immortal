@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func (self *Daemon) Control() {
+func ControlXX() {
 	r := bufio.NewReader(self.ctrl.control_fifo)
 
 	buf := make([]byte, 0, 8)
