@@ -13,6 +13,7 @@ import (
 )
 
 type Immortal interface {
+	Logger
 	Daemonizer
 	Controller
 	Supervise()
@@ -29,6 +30,7 @@ type Daemon struct {
 	*Config
 	*Control
 	Forker
+	Logger
 	Supervisor
 	Watcher
 	count       uint32
@@ -114,13 +116,12 @@ func (self *Daemon) Run() {
 		r *io.PipeReader
 		w *io.PipeWriter
 	)
-	if self.Log.File != "" {
+	//	if self.Log.file != "" || self.Logger != "" {
+	if self.log {
 		r, w = io.Pipe()
 		cmd.Stdout = w
 		cmd.Stderr = w
-		//  user loger
-		//go self.stdHandler(r)
-		print(r)
+		go self.Logger.StdHandler(r)
 	} else {
 		cmd.Stdin = nil
 		cmd.Stdout = nil
@@ -162,7 +163,8 @@ func (self *Daemon) Run() {
 			}
 		}
 
-		self.Control.state <- cmd.Wait()
+		//self.Control.state <- cmd.Wait()
+		self.Control.Send(cmd.Wait())
 	}()
 }
 
@@ -174,7 +176,10 @@ func New(cfg *Config) *Daemon {
 			quit:  make(chan struct{}),
 			state: make(chan error),
 		},
-		Forker:     &Fork{},
+		Forker: &Fork{},
+		Logger: &LogWriter{
+			logger: NewLogger(cfg),
+		},
 		Supervisor: &Sup{},
 	}
 }

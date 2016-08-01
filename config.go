@@ -15,6 +15,7 @@ type Config struct {
 	Wait    int    `yaml:",omitempty"`
 	command []string
 	ctrl    bool
+	log     bool
 	user    *user.User
 }
 

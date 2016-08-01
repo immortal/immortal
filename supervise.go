@@ -1,5 +1,9 @@
 package immortal
 
+import (
+	"time"
+)
+
 type Supervisor interface {
 	Supervise()
 }
@@ -7,5 +11,6 @@ type Supervisor interface {
 type Sup struct{}
 
 func (self Sup) Supervise() {
-	println("0000")
+	println("sleeping.....")
+	time.Sleep(10000 * time.Second)
 }
