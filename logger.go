@@ -33,12 +33,12 @@ func NewLogger(cfg *Config) *log.Logger {
 	var m *multiwriter.MultiWriter = multi.(*multiwriter.MultiWriter)
 
 	if cfg.Log.File != "" {
-		cfg.log = true
 		file, err = logrotate.New(cfg.Log.File)
 		if err != nil {
 			log.Printf("Failed to open log file %q: %s\n", cfg.Log.File, err)
+		} else {
+			m.Append(file)
 		}
-		m.Append(file)
 	}
 
 	runLogger := func() {
@@ -59,7 +59,6 @@ func NewLogger(cfg *Config) *log.Logger {
 	}
 
 	if cfg.Logger != "" {
-		cfg.log = true
 		runLogger()
 
 		go func() {
@@ -78,7 +77,7 @@ func NewLogger(cfg *Config) *log.Logger {
 	}
 
 	// create the logger
-	if cfg.log {
+	if m.Len() > 0 {
 		return log.New(multi, "", 0)
 	}
 	return nil

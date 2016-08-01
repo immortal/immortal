@@ -116,8 +116,8 @@ func (self *Daemon) Run() {
 		r *io.PipeReader
 		w *io.PipeWriter
 	)
-	//	if self.Log.file != "" || self.Logger != "" {
-	if self.log {
+	if self.Config.Log.File != "" || self.Config.Logger != "" {
+		//	if self.log {
 		r, w = io.Pipe()
 		cmd.Stdout = w
 		cmd.Stderr = w
