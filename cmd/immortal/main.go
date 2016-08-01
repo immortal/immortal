@@ -4,13 +4,18 @@ import (
 	"flag"
 	"fmt"
 	"github.com/immortal/immortal"
+	"log"
+	"log/syslog"
 	"os"
+	"os/user"
 )
 
 var version string
 
 func main() {
-	parser := new(immortal.Parse)
+	parser := &immortal.Parse{
+		UserLookup: user.Lookup,
+	}
 
 	// flag set
 	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
@@ -26,6 +31,15 @@ func main() {
 	if (fs.Lookup("v")).Value.(flag.Getter).Get().(bool) {
 		fmt.Printf("%s\n", version)
 		os.Exit(0)
+	}
+
+	// log to syslog
+	logger, err := syslog.New(syslog.LOG_NOTICE|syslog.LOG_DAEMON, "immortal")
+	if err == nil {
+		log.SetOutput(logger)
+		log.SetFlags(0)
+	} else {
+		defer logger.Close()
 	}
 
 	// create a new daemon

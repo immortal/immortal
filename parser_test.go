@@ -3,8 +3,10 @@ package immortal
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"os"
+	"os/user"
 	"reflect"
 	"testing"
 )
@@ -14,6 +16,13 @@ func expect(t *testing.T, a interface{}, b interface{}) {
 	if a != b {
 		t.Errorf("Expected: %v (type %v)  Got: %v (type %v)", a, reflect.TypeOf(a), b, reflect.TypeOf(b))
 	}
+}
+
+func MockLookup(username string) (*user.User, error) {
+	if username == "www" {
+		return new(user.User), nil
+	}
+	return nil, fmt.Errorf("error")
 }
 
 func TestParseisDir(t *testing.T) {
@@ -219,14 +228,16 @@ func TestParseArgsTable(t *testing.T) {
 		{[]string{"cmd", "-P", "/path/to/parent", "cmd"}, false},
 		{[]string{"cmd", "-s", "30"}, true},
 		{[]string{"cmd", "-s", "30", "cmd"}, false},
-		{[]string{"cmd", "-u", "root"}, true},
-		{[]string{"cmd", "-u", "root", "cmd"}, false},
-		{[]string{"cmd", "-u", "toor-nonexistent", "cmd"}, true},
+		{[]string{"cmd", "-u", "www"}, true},
+		{[]string{"cmd", "-u", "www", "cmd"}, false},
+		{[]string{"cmd", "-u", "nonexistent", "cmd"}, true},
 	}
 	var helpCalled = false
 	for _, f := range flagTest {
 		os.Args = f.flag
-		parser := new(Parse)
+		parser := &Parse{
+			UserLookup: MockLookup,
+		}
 		fs := flag.NewFlagSet("TestParseArgsTable", flag.ContinueOnError)
 		fs.Usage = func() { helpCalled = true }
 		_, err := ParseArgs(parser, fs)

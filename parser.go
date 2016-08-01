@@ -21,11 +21,12 @@ type Parser interface {
 	parseYml(file string) (*Config, error)
 	checkWrkdir(dir string) error
 	parseEnvdir(dir string) (map[string]string, error)
-	checkUser(user string) (*user.User, error)
+	checkUser(username string) (*user.User, error)
 }
 
 type Parse struct {
 	Flags
+	UserLookup func(username string) (*user.User, error)
 }
 
 func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
@@ -121,7 +122,7 @@ func (self *Parse) parseEnvdir(dir string) (map[string]string, error) {
 }
 
 func (self *Parse) checkUser(u string) (usr *user.User, err error) {
-	usr, err = user.Lookup(u)
+	usr, err = self.UserLookup(u)
 	if err != nil {
 		if _, ok := err.(user.UnknownUserError); ok {
 			err = fmt.Errorf("User %q does not exist.", u)
