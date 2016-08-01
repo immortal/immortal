@@ -19,8 +19,11 @@ func expect(t *testing.T, a interface{}, b interface{}) {
 }
 
 func MockLookup(username string) (*user.User, error) {
-	if username == "www" {
+	switch {
+	case username == "www":
 		return new(user.User), nil
+	case username == "nonexistent":
+		return nil, user.UnknownUserError("nonexistent")
 	}
 	return nil, fmt.Errorf("error")
 }
@@ -231,6 +234,7 @@ func TestParseArgsTable(t *testing.T) {
 		{[]string{"cmd", "-u", "www"}, true},
 		{[]string{"cmd", "-u", "www", "cmd"}, false},
 		{[]string{"cmd", "-u", "nonexistent", "cmd"}, true},
+		{[]string{"cmd", "-u", "err!=nil", "cmd"}, true},
 	}
 	var helpCalled = false
 	for _, f := range flagTest {
