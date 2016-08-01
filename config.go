@@ -6,7 +6,6 @@ import (
 
 type Config struct {
 	Cmd    string            `yaml:"cmd" json:"cmd"`
-	Ctrl   bool              `yaml:"ctrl,omitempty"`
 	Cwd    string            `yaml:",omitempty" json:",omitempty"`
 	Env    map[string]string `yaml:",omitempty" json:",omitempty"`
 	Pid    `yaml:",omitempty" json:",omitempty"`
@@ -14,6 +13,7 @@ type Config struct {
 	Logger string `yaml:",omitempty" json:",omitempty"`
 	User   string `yaml:",omitempty" json:",omitempty"`
 	Wait   int    `yaml:",omitempty"`
+	ctrl   bool
 	user   *user.User
 }
 

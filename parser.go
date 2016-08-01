@@ -171,12 +171,6 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		return
 	}
 
-	// if no args
-	if len(fs.Args()) < 1 {
-		err = fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
-		return
-	}
-
 	// if -c
 	if flags.Configfile != "" {
 		if !p.isFile(flags.Configfile) {
@@ -185,6 +179,10 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		}
 		cfg, err = p.parseYml(flags.Configfile)
 		if err != nil {
+			return
+		}
+		if cfg.Cmd == "" {
+			err = fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
 			return
 		}
 		if cfg.Cwd != "" {
@@ -197,6 +195,15 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 				return
 			}
 		}
+		if flags.Ctrl {
+			cfg.ctrl = true
+		}
+		return
+	}
+
+	// if no args
+	if len(fs.Args()) < 1 {
+		err = fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
 		return
 	}
 
@@ -206,7 +213,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 
 	// if -ctrl
 	if flags.Ctrl {
-		cfg.Ctrl = true
+		cfg.ctrl = true
 	}
 
 	// if -d
