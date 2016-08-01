@@ -48,6 +48,12 @@ func main() {
 
 	daemon.Fork()
 
+	// if ctrl create supervise dir
+	err = daemon.FiFo(&immortal.FIFO{})
+	if err != nil {
+		log.Print(err)
+	}
+
 	daemon.Run()
 	daemon.Supervise()
 }

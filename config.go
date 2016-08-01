@@ -5,16 +5,17 @@ import (
 )
 
 type Config struct {
-	Cmd    string            `yaml:"cmd" json:"cmd"`
-	Cwd    string            `yaml:",omitempty" json:",omitempty"`
-	Env    map[string]string `yaml:",omitempty" json:",omitempty"`
-	Pid    `yaml:",omitempty" json:",omitempty"`
-	Log    `yaml:",omitempty" json:",omitempty"`
-	Logger string `yaml:",omitempty" json:",omitempty"`
-	User   string `yaml:",omitempty" json:",omitempty"`
-	Wait   int    `yaml:",omitempty"`
-	ctrl   bool
-	user   *user.User
+	Cmd     string            `yaml:"cmd" json:"cmd"`
+	Cwd     string            `yaml:",omitempty" json:",omitempty"`
+	Env     map[string]string `yaml:",omitempty" json:",omitempty"`
+	Log     `yaml:",omitempty" json:",omitempty"`
+	Logger  string `yaml:",omitempty" json:",omitempty"`
+	Pid     `yaml:",omitempty" json:",omitempty"`
+	User    string `yaml:",omitempty" json:",omitempty"`
+	Wait    int    `yaml:",omitempty"`
+	command []string
+	ctrl    bool
+	user    *user.User
 }
 
 type Pid struct {
