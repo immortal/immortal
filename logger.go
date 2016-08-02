@@ -13,6 +13,7 @@ import (
 
 type Logger interface {
 	StdHandler(input io.ReadCloser)
+	IsLogging() bool
 }
 
 type LogWriter struct {
@@ -89,4 +90,8 @@ func (self *LogWriter) StdHandler(input io.ReadCloser) {
 		self.logger.Print(in.Text())
 	}
 	input.Close()
+}
+
+func (self *LogWriter) IsLogging() bool {
+	return self.logger != nil
 }
