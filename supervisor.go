@@ -13,6 +13,7 @@ import (
 type Supervisor interface {
 	IsRunning(pid int) bool
 	ReadPidFile(pidfile string) (int, error)
+	WatchPid(pid int, ch chan<- error)
 }
 
 type Sup struct{}

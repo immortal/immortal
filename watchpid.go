@@ -1,5 +1,5 @@
-// +build freebsd netbsd openbsd darwin
-// +build arm
+// +build freebsd netbsd openbsd dragonfly darwin
+// +build amd64
 
 package immortal
 
@@ -9,8 +9,8 @@ import (
 	"syscall"
 )
 
-func (self *Daemon) watchPid(pid int, ch chan<- error) {
-	if !self.isRunning(pid) {
+func (self *Sup) WatchPid(pid int, ch chan<- error) {
+	if !self.IsRunning(pid) {
 		ch <- fmt.Errorf("PID NOT FOUND")
 		return
 	}
@@ -22,7 +22,7 @@ func (self *Daemon) watchPid(pid int, ch chan<- error) {
 	}
 
 	ev1 := syscall.Kevent_t{
-		Ident:  uint32(pid),
+		Ident:  uint64(pid),
 		Filter: syscall.EVFILT_PROC,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
 		Fflags: syscall.NOTE_EXIT,
