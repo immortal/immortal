@@ -70,7 +70,7 @@ func Supervise(s Supervisor, d *Daemon) {
 						// set pid to new pid in file
 						d.process.Pid = pid
 						log.Printf("Watching pid %d on file: %s", d.process.Pid, d.Pid.Follow)
-						go self.WatchPid(pid, d.Control.state)
+						go s.WatchPid(pid, d.Control.state)
 					} else {
 						// if cmd exits or process is kill
 						d.Run()
