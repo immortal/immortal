@@ -17,7 +17,6 @@ type Daemon struct {
 	*Control
 	Forker
 	Logger
-	Watcher
 	count       uint32
 	count_defer uint32
 	process     *os.Process
