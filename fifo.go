@@ -6,14 +6,7 @@ import (
 	"syscall"
 )
 
-type FIFOer interface {
-	Make(path string) error
-	Open(path string) (*os.File, error)
-}
-
-type FIFO struct{}
-
-func (self *FIFO) Make(path string) error {
+func MakeFifo(path string) error {
 	err := os.MkdirAll(filepath.Dir(path), os.ModePerm)
 	if err != nil {
 		return err
@@ -26,7 +19,7 @@ func (self *FIFO) Make(path string) error {
 	return nil
 }
 
-func (self *FIFO) Open(path string) (*os.File, error) {
+func OpenFifo(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, os.ModeNamedPipe)
 	if err != nil {
 		return nil, err

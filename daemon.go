@@ -23,7 +23,6 @@ type Immortal interface {
 type Daemonizer interface {
 	Fork()
 	Run()
-	FiFo(f FIFOer) error
 }
 
 type Daemon struct {
@@ -37,31 +36,6 @@ type Daemon struct {
 	count_defer uint32
 	process     *os.Process
 	supDir      string
-}
-
-func (self *Daemon) FiFo(f FIFOer) error {
-	if self.ctrl {
-		var ctrl = []string{"control", "ok"}
-		if self.Cwd != "" {
-			self.supDir = filepath.Join(self.Cwd, "supervise")
-		} else {
-			d, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			self.supDir = filepath.Join(d, "supervise")
-		}
-		for k, v := range ctrl {
-			ctrl[k] = filepath.Join(self.supDir, v)
-		}
-		for _, v := range ctrl {
-			err := f.Make(v)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func (self *Daemon) Run() {
@@ -168,7 +142,39 @@ func (self *Daemon) Run() {
 	}()
 }
 
-func New(cfg *Config) *Daemon {
+func New(cfg *Config) (*Daemon, error) {
+	var supDir string
+	if cfg.Cwd != "" {
+		supDir = filepath.Join(cfg.Cwd, "supervise")
+	} else {
+		d, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		supDir = filepath.Join(d, "supervise")
+	}
+
+	// if ctrl create supervise dir
+	if cfg.ctrl {
+		var ctrl = []string{"control", "ok"}
+		for _, v := range ctrl {
+			err := MakeFifo(filepath.Join(supDir, v))
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		// lock
+		lock, err := os.Create(filepath.Join(supDir, "lock"))
+		if err != nil {
+			return nil, err
+		}
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX+syscall.LOCK_NB)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &Daemon{
 		Config: cfg,
 		Control: &Control{
@@ -181,5 +187,6 @@ func New(cfg *Config) *Daemon {
 			logger: NewLogger(cfg),
 		},
 		Supervisor: &Sup{},
-	}
+		supDir:     supDir,
+	}, nil
 }

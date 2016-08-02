@@ -44,16 +44,13 @@ func main() {
 
 	// create daemon
 	var daemon immortal.Immortal
-	daemon = immortal.New(cfg)
-
-	daemon.Fork()
-
-	// if ctrl create supervise dir
-	err = daemon.FiFo(&immortal.FIFO{})
+	daemon, err = immortal.New(cfg)
 	if err != nil {
-		log.Print(err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 
+	daemon.Fork()
 	daemon.Run()
 	daemon.Supervise()
 }
