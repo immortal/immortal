@@ -1,9 +1,7 @@
 package immortal
 
-import ()
-
 type Controller interface {
-	Send(e error)
+	SendState(e error)
 }
 
 type Control struct {
@@ -17,6 +15,6 @@ type Return struct {
 	msg string
 }
 
-func (self *Control) Send(e error) {
+func (self *Control) SendState(e error) {
 	self.state <- e
 }

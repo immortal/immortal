@@ -27,7 +27,7 @@ type Daemonizer interface {
 
 type Daemon struct {
 	*Config
-	*Control
+	Controller
 	Forker
 	Logger
 	Supervisor
@@ -65,12 +65,12 @@ func (self *Daemon) Run() {
 	if self.user != nil {
 		uid, err := strconv.Atoi(self.user.Uid)
 		if err != nil {
-			self.Control.state <- err
+			self.Controller.SendState(err)
 		}
 
 		gid, err := strconv.Atoi(self.user.Gid)
 		if err != nil {
-			self.Control.state <- err
+			self.Controller.SendState(err)
 		}
 
 		//	https://golang.org/pkg/syscall/#SysProcAttr
@@ -86,6 +86,7 @@ func (self *Daemon) Run() {
 
 	cmd.SysProcAttr = sysProcAttr
 
+	// log only if are available loggers
 	var (
 		r *io.PipeReader
 		w *io.PipeWriter
@@ -107,12 +108,12 @@ func (self *Daemon) Run() {
 			atomic.StoreUint32(&self.count, self.count_defer)
 		}()
 
-		if self.Log.File != "" {
+		if self.Logger.IsLogging() {
 			defer w.Close()
 		}
 
 		if err := cmd.Start(); err != nil {
-			self.Control.Send(err)
+			self.Controller.SendState(err)
 		}
 
 		self.process = cmd.Process
@@ -136,8 +137,7 @@ func (self *Daemon) Run() {
 			}
 		}
 
-		//self.Control.state <- cmd.Wait()
-		self.Control.Send(cmd.Wait())
+		self.Controller.SendState(cmd.Wait())
 	}()
 }
 
@@ -171,7 +171,7 @@ func New(cfg *Config) (*Daemon, error) {
 
 	return &Daemon{
 		Config: cfg,
-		Control: &Control{
+		Controller: &Control{
 			fifo:  make(chan Return),
 			quit:  make(chan struct{}),
 			state: make(chan error),
