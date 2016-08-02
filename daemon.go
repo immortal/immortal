@@ -17,7 +17,6 @@ type Daemon struct {
 	*Control
 	Forker
 	Logger
-	Supervisor
 	Watcher
 	count       uint32
 	count_defer uint32
@@ -167,7 +166,6 @@ func New(cfg *Config) (*Daemon, error) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
-		Supervisor: &Sup{},
-		supDir:     supDir,
+		supDir: supDir,
 	}, nil
 }

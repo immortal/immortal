@@ -50,6 +50,9 @@ func main() {
 	}
 
 	daemon.Fork()
+
 	daemon.Run()
-	daemon.Supervise()
+
+	// supervise daemon
+	immortal.Supervise(&immortal.Sup{}, daemon)
 }
