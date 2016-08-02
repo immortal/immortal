@@ -43,12 +43,12 @@ func main() {
 	}
 
 	// create daemon
-	var daemon immortal.Immortal
-	daemon, err = immortal.New(cfg)
+	daemon, err := immortal.New(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
 	daemon.Fork()
 	daemon.Run()
 	daemon.Supervise()
