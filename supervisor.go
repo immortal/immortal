@@ -43,9 +43,12 @@ func (self *Sup) ReadPidFile(pidfile string) (int, error) {
 }
 
 func Supervise(s Supervisor, d *Daemon) {
+	// listen on control for signals
 	if d.ctrl {
 		s.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
 	}
+
+	// loop until quit signal received
 	for {
 		select {
 		case <-d.Control.quit:
