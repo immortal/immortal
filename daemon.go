@@ -149,6 +149,14 @@ func New(cfg *Config) (*Daemon, error) {
 
 	// if ctrl create supervise dir
 	if cfg.ctrl {
+		// create fifo
+		var ctrl = []string{"control", "ok"}
+		for _, v := range ctrl {
+			if err := MakeFifo(filepath.Join(supDir, v)); err != nil {
+				return nil, err
+			}
+		}
+
 		// lock
 		if lock, err := os.Create(filepath.Join(supDir, "lock")); err != nil {
 			return nil, err
@@ -156,13 +164,7 @@ func New(cfg *Config) (*Daemon, error) {
 			return nil, err
 		}
 
-		// fifo
-		var ctrl = []string{"control", "ok"}
-		for _, v := range ctrl {
-			if err := MakeFifo(filepath.Join(supDir, v)); err != nil {
-				return nil, err
-			}
-		}
+		// read fifo
 		if control.fifo_control, err = OpenFifo(filepath.Join(supDir, "control")); err != nil {
 			return nil, err
 		}
