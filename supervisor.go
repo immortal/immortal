@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -14,6 +15,7 @@ type Supervisor interface {
 	IsRunning(pid int) bool
 	ReadPidFile(pidfile string) (int, error)
 	WatchPid(pid int, ch chan<- error)
+	ReadFifoControl(fifo *os.File, ch chan<- Return)
 }
 
 type Sup struct{}
@@ -41,6 +43,9 @@ func (self *Sup) ReadPidFile(pidfile string) (int, error) {
 }
 
 func Supervise(s Supervisor, d *Daemon) {
+	if d.ctrl {
+		s.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
+	}
 	for {
 		select {
 		case <-d.Control.quit:
@@ -83,6 +88,7 @@ func Supervise(s Supervisor, d *Daemon) {
 			if fifo.err != nil {
 				log.Printf("control error: %s", fifo.err)
 			}
+			fmt.Fprintf(d.Control.fifo_ok, "pong: %s\n", fifo.msg)
 			//			go self.handleSignals(fifo.msg, self.ctrl.state)
 		}
 	}
