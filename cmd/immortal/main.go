@@ -46,6 +46,7 @@ func main() {
 	daemon, err := immortal.New(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		log.Print(err)
 		os.Exit(1)
 	}
 

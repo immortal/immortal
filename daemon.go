@@ -20,7 +20,6 @@ type Daemon struct {
 	count       uint32
 	count_defer uint32
 	process     *os.Process
-	supDir      string
 }
 
 func (self *Daemon) Run() {
@@ -127,7 +126,11 @@ func (self *Daemon) Run() {
 }
 
 func New(cfg *Config) (*Daemon, error) {
-	var supDir string
+	var (
+		supDir string
+		err    error
+	)
+
 	if cfg.Cwd != "" {
 		supDir = filepath.Join(cfg.Cwd, "supervise")
 	} else {
@@ -138,33 +141,42 @@ func New(cfg *Config) (*Daemon, error) {
 		supDir = filepath.Join(d, "supervise")
 	}
 
+	control := &Control{
+		fifo:  make(chan Return),
+		quit:  make(chan struct{}),
+		state: make(chan error),
+	}
+
 	// if ctrl create supervise dir
 	if cfg.ctrl {
-		var ctrl = []string{"control", "ok"}
-		for _, v := range ctrl {
-			if err := MakeFifo(filepath.Join(supDir, v)); err != nil {
-				return nil, err
-			}
-		}
 		// lock
 		if lock, err := os.Create(filepath.Join(supDir, "lock")); err != nil {
 			return nil, err
 		} else if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX+syscall.LOCK_NB); err != nil {
 			return nil, err
 		}
+
+		// fifo
+		var ctrl = []string{"control", "ok"}
+		for _, v := range ctrl {
+			if err := MakeFifo(filepath.Join(supDir, v)); err != nil {
+				return nil, err
+			}
+		}
+		if control.fifo_control, err = OpenFifo(filepath.Join(supDir, "control")); err != nil {
+			return nil, err
+		}
+		if control.fifo_ok, err = OpenFifo(filepath.Join(supDir, "ok")); err != nil {
+			return nil, err
+		}
 	}
 
 	return &Daemon{
-		Config: cfg,
-		Control: &Control{
-			fifo:  make(chan Return),
-			quit:  make(chan struct{}),
-			state: make(chan error),
-		},
-		Forker: &Fork{},
+		Config:  cfg,
+		Control: control,
+		Forker:  &Fork{},
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
-		supDir: supDir,
 	}, nil
 }
