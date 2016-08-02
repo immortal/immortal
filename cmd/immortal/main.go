@@ -49,7 +49,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-
 	daemon.Fork()
 	daemon.Run()
 	daemon.Supervise()

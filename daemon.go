@@ -158,19 +158,14 @@ func New(cfg *Config) (*Daemon, error) {
 	if cfg.ctrl {
 		var ctrl = []string{"control", "ok"}
 		for _, v := range ctrl {
-			err := MakeFifo(filepath.Join(supDir, v))
-			if err != nil {
+			if err := MakeFifo(filepath.Join(supDir, v)); err != nil {
 				return nil, err
 			}
 		}
-
 		// lock
-		lock, err := os.Create(filepath.Join(supDir, "lock"))
-		if err != nil {
+		if lock, err := os.Create(filepath.Join(supDir, "lock")); err != nil {
 			return nil, err
-		}
-		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX+syscall.LOCK_NB)
-		if err != nil {
+		} else if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX+syscall.LOCK_NB); err != nil {
 			return nil, err
 		}
 	}
