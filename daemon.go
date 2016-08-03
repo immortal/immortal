@@ -3,6 +3,7 @@ package immortal
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -20,6 +21,13 @@ type Daemon struct {
 	count       uint32
 	count_defer uint32
 	process     *os.Process
+}
+
+func (self *Daemon) WritePid(file string, pid int) error {
+	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (self *Daemon) Run() {
@@ -107,14 +115,14 @@ func (self *Daemon) Run() {
 
 		// write parent pid
 		if self.Pid.Parent != "" {
-			if err := WritePid(self.Pid.Parent, os.Getpid()); err != nil {
+			if err := self.WritePid(self.Pid.Parent, os.Getpid()); err != nil {
 				log.Print(err)
 			}
 		}
 
 		// write child pid
 		if self.Pid.Child != "" {
-			if err := WritePid(self.Pid.Child, self.process.Pid); err != nil {
+			if err := self.WritePid(self.Pid.Child, self.process.Pid); err != nil {
 				log.Print(err)
 			}
 		}

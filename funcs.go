@@ -1,13 +1,7 @@
 package immortal
 
 import (
-	"fmt"
-	"io/ioutil"
-	"os"
-	"os/exec"
 	"strconv"
-	"strings"
-	"syscall"
 )
 
 const (
@@ -25,51 +19,4 @@ func Icon(h string) rune {
 		return 0
 	}
 	return rune(i)
-}
-
-func Lock(f string) error {
-	file, err := os.Create(f)
-	if err != nil {
-		return err
-	}
-	return syscall.Flock(int(file.Fd()), syscall.LOCK_EX+syscall.LOCK_NB)
-}
-
-func ForkOff() (int, error) {
-	args := os.Args[1:]
-	cmd := exec.Command(os.Args[0], args...)
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.ExtraFiles = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-		Pgid:    0,
-	}
-	if err := cmd.Start(); err != nil {
-		return 0, err
-	}
-	return cmd.Process.Pid, nil
-}
-
-// ReadPidfile read pid from file if error returns pid 0
-func ReadPidfile(pidfile string) (int, error) {
-	content, err := ioutil.ReadFile(pidfile)
-	if err != nil {
-		return 0, err
-	}
-	lines := strings.Split(string(content), "\n")
-	pid, err := strconv.Atoi(lines[0])
-	if err != nil {
-		return 0, err
-	}
-	return pid, nil
-}
-
-func WritePid(file string, pid int) error {
-	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
-		return err
-	}
-	return nil
 }
