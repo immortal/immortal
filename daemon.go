@@ -27,6 +27,8 @@ func (self *Daemon) Run() {
 		log.Printf("PID: %d running", self.process.Pid)
 		return
 	}
+
+	// Command to execute
 	cmd := exec.Command(self.command[0], self.command[1:]...)
 
 	// change working directory
@@ -98,14 +100,10 @@ func (self *Daemon) Run() {
 
 		if err := cmd.Start(); err != nil {
 			self.Control.state <- err
+			return
 		}
 
 		self.process = cmd.Process
-
-		// follow pid
-		if self.Pid.Follow != "" {
-			//			go self.watchPid(self.process.Pid)
-		}
 
 		// write parent pid
 		if self.Pid.Parent != "" {
