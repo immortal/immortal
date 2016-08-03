@@ -59,7 +59,7 @@ func (self *Daemon) Run() {
 			self.Control.state <- err
 		}
 
-		//	https://golang.org/pkg/syscall/#SysProcAttr
+		// https://golang.org/pkg/syscall/#SysProcAttr
 		sysProcAttr.Credential = &syscall.Credential{
 			Uid: uint32(uid),
 			Gid: uint32(gid),
