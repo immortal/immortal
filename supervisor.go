@@ -1,7 +1,8 @@
 package immortal
 
 import (
-	"fmt"
+	"bufio"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -16,6 +17,7 @@ type Supervisor interface {
 	ReadPidFile(pidfile string) (int, error)
 	WatchPid(pid int, ch chan<- error)
 	ReadFifoControl(fifo *os.File, ch chan<- Return)
+	HandleSignals(signal string, d *Daemon)
 }
 
 type Sup struct{}
@@ -40,6 +42,33 @@ func (self *Sup) ReadPidFile(pidfile string) (int, error) {
 		return 0, err
 	}
 	return pid, nil
+}
+
+func (self *Sup) ReadFifoControl(fifo *os.File, ch chan<- Return) {
+	r := bufio.NewReader(fifo)
+
+	buf := make([]byte, 0, 8)
+
+	go func() {
+		defer fifo.Close()
+		for {
+			n, err := r.Read(buf[:cap(buf)])
+			if n == 0 {
+				if err == nil {
+					continue
+				}
+				if err == io.EOF {
+					continue
+				}
+				ch <- Return{err: err, msg: ""}
+			}
+			buf = buf[:n]
+			ch <- Return{
+				err: nil,
+				msg: strings.ToLower(strings.TrimSpace(string(buf))),
+			}
+		}
+	}()
 }
 
 func Supervise(s Supervisor, d *Daemon) {
@@ -91,8 +120,7 @@ func Supervise(s Supervisor, d *Daemon) {
 			if fifo.err != nil {
 				log.Printf("control error: %s", fifo.err)
 			}
-			fmt.Fprintf(d.Control.fifo_ok, "pong: %s\n", fifo.msg)
-			//			go self.handleSignals(fifo.msg, self.ctrl.state)
+			go s.HandleSignals(fifo.msg, d)
 		}
 	}
 }
