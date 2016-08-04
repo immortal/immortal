@@ -1,7 +1,7 @@
 package immortal
 
 import (
-	//	"fmt"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -33,7 +33,7 @@ func TestSupervisor(t *testing.T) {
 	cfg := &Config{
 		command: []string{"go", "test", "-run", "TestHelperProcess"},
 	}
-	d := Daemon{
+	d := &Daemon{
 		Config: cfg,
 		Control: &Control{
 			fifo:  make(chan Return),
@@ -46,16 +46,17 @@ func TestSupervisor(t *testing.T) {
 		},
 	}
 	d.Run()
-	//for {
-	//select {
-	//case s := <-d.Control.state:
-	//t.Logf("%#v", s)
+	for {
+		select {
+		case s := <-d.Control.state:
+			t.Logf("%#v", s)
 
-	//default:
-	//fmt.Println(&d)
-	//}
-	//}
-	sup := new(Sup)
-	Supervise(sup, &d)
-	sup.HandleSignals("h", &d)
+		case fifo := <-d.Control.fifo:
+			if fifo.err != nil {
+				t.Error(fifo.err)
+			}
+		default:
+			fmt.Printf("%#v", d.process.Pid)
+		}
+	}
 }
