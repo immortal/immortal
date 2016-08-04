@@ -1,11 +1,12 @@
 package immortal
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 )
 
 type myFork struct{}
@@ -23,15 +24,27 @@ func TestHelperProcess(t *testing.T) {
 	select {
 	case s := <-c:
 		if s != syscall.SIGHUP {
-			expect(t, syscall.SIGHUP, s)
+			return
 		}
 	}
 }
 
 func TestSupervisor(t *testing.T) {
-	os.Setenv("GO_WANT_HELPER_PROCESS", "1")
+	base := filepath.Base(os.Args[0]) // "exec.test"
+	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
+	if dir == "." {
+		t.Skip("skipping; running test at root somehow")
+	}
+	parentDir := filepath.Dir(dir) // "/tmp/go-buildNNNN/os/exec"
+	dirBase := filepath.Base(dir)  // "_test"
+	if dirBase == "." {
+		t.Skipf("skipping; unexpected shallow dir of %q", dir)
+	}
+
 	cfg := &Config{
-		command: []string{"go", "test", "-run", "TestHelperProcess"},
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcess"},
+		Cwd:     parentDir,
 	}
 	d := &Daemon{
 		Config: cfg,
@@ -46,17 +59,13 @@ func TestSupervisor(t *testing.T) {
 		},
 	}
 	d.Run()
-	for {
-		select {
-		case s := <-d.Control.state:
-			t.Logf("%#v", s)
-
-		case fifo := <-d.Control.fifo:
-			if fifo.err != nil {
-				t.Error(fifo.err)
-			}
-		default:
-			fmt.Printf("%#v", d.process.Pid)
+	select {
+	case err := <-d.Control.state:
+		if err == nil {
+			t.Error("Expecting error: signal: Killed")
+			return
 		}
+	case <-time.After(1 * time.Second):
+		d.process.Kill()
 	}
 }
