@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -41,7 +42,6 @@ func TestDaemonRun(t *testing.T) {
 		t.Skipf("skipping; unexpected shallow dir of %q", dir)
 	}
 
-	println(parentDir)
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcess"},
@@ -65,23 +65,26 @@ func TestDaemonRun(t *testing.T) {
 	}
 	d.Run()
 	sup := new(Sup)
-	select {
-	case err := <-d.Control.state:
-		if err == nil {
-			t.Error("Expecting error: signal: Killed")
+	for {
+		select {
+		case err := <-d.Control.state:
+			if err == nil {
+				t.Error("Expecting error: signal: Killed")
+			}
 			return
+		case <-time.After(1 * time.Second):
+			if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
+				t.Error(err)
+			} else {
+				expect(t, os.Getpid(), pid)
+			}
+			if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
+				t.Error(err)
+			} else {
+				expect(t, d.process.Pid, pid)
+			}
+			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.Pid))
+			d.process.Kill()
 		}
-	case <-time.After(1 * time.Second):
-		if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
-			t.Error(err)
-		} else {
-			expect(t, os.Getpid(), pid)
-		}
-		if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
-			t.Error(err)
-		} else {
-			expect(t, d.process.Pid, pid)
-		}
-		d.process.Kill()
 	}
 }
