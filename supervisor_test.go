@@ -6,7 +6,6 @@ import (
 	"os/signal"
 	"syscall"
 	"testing"
-	//	"time"
 )
 
 type myFork struct{}
@@ -47,7 +46,16 @@ func TestSupervisor(t *testing.T) {
 		},
 	}
 	d.Run()
-	//	sup := new(Sup)
-	//	sup.HandleSignals("h", &d)
-	//	time.Sleep(1000 * time.Second)
+	//for {
+	//select {
+	//case s := <-d.Control.state:
+	//t.Logf("%#v", s)
+
+	//default:
+	//fmt.Println(&d)
+	//}
+	//}
+	sup := new(Sup)
+	Supervise(sup, &d)
+	sup.HandleSignals("h", &d)
 }

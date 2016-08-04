@@ -23,6 +23,10 @@ type Daemon struct {
 	process     *os.Process
 }
 
+func (self *Daemon) String() string {
+	return fmt.Sprintf("%d", self.process.Pid)
+}
+
 func (self *Daemon) WritePid(file string, pid int) error {
 	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
 		return err
