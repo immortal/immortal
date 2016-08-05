@@ -42,7 +42,7 @@ func (self *Daemon) Run() {
 	}
 
 	if self.Wait > 0 {
-		time.Sleep(self.Wait * time.Second)
+		time.Sleep(time.Duration(self.Wait) * time.Second)
 	}
 
 	// Command to execute
