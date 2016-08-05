@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 type Daemon struct {
@@ -38,6 +39,10 @@ func (self *Daemon) Run() {
 	if atomic.SwapUint32(&self.count, uint32(1)) != 0 {
 		log.Printf("PID: %d running", self.process.Pid)
 		return
+	}
+
+	if self.Wait > 0 {
+		time.Sleep(self.Wait * time.Second)
 	}
 
 	// Command to execute
