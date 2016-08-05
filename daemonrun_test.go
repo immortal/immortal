@@ -12,8 +12,8 @@ import (
 
 type myFork struct{}
 
-func (self myFork) Fork() {
-	return
+func (self myFork) Fork() (int, error) {
+	return 0, nil
 }
 
 func TestHelperProcess(t *testing.T) {

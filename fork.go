@@ -7,16 +7,12 @@ import (
 )
 
 type Forker interface {
-	Fork()
+	Fork() (int, error)
 }
 
 type Fork struct{}
 
-func (self *Fork) Fork() {
-	println("forking....")
-}
-
-func ForkOff() (int, error) {
+func (self *Fork) Fork() (int, error) {
 	args := os.Args[1:]
 	cmd := exec.Command(os.Args[0], args...)
 	cmd.Env = append(cmd.Env, os.Environ()...)
