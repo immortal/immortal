@@ -1,31 +1,18 @@
 package immortal
 
 import (
-	"bufio"
-	"io"
-	"strings"
+	"os"
 )
 
-func (self *Daemon) Control() {
-	r := bufio.NewReader(self.ctrl.control_fifo)
+type Control struct {
+	fifo         chan Return
+	fifo_control *os.File
+	fifo_ok      *os.File
+	quit         chan struct{}
+	state        chan error
+}
 
-	buf := make([]byte, 0, 8)
-
-	go func() {
-		defer self.ctrl.control_fifo.Close()
-		for {
-			n, err := r.Read(buf[:cap(buf)])
-			buf = buf[:n]
-			if n == 0 {
-				if err == nil {
-					continue
-				}
-				if err == io.EOF {
-					continue
-				}
-				self.ctrl.fifo <- Return{err: err, msg: ""}
-			}
-			self.ctrl.fifo <- Return{err: nil, msg: strings.TrimSpace(string(buf))}
-		}
-	}()
+type Return struct {
+	err error
+	msg string
 }

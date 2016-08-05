@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"bufio"
 	"github.com/immortal/logrotate"
 	"github.com/immortal/multiwriter"
 	"io"
@@ -10,11 +11,16 @@ import (
 	"time"
 )
 
-func (self *Daemon) Log(msg string) {
-	self.logger.Print(msg)
+type Logger interface {
+	StdHandler(input io.ReadCloser)
+	IsLogging() bool
 }
 
-func (self *Daemon) Logger() {
+type LogWriter struct {
+	logger *log.Logger
+}
+
+func NewLogger(cfg *Config) *log.Logger {
 	var (
 		ch      chan error
 		err     error
@@ -27,18 +33,17 @@ func (self *Daemon) Logger() {
 	multi := multiwriter.New()
 	var m *multiwriter.MultiWriter = multi.(*multiwriter.MultiWriter)
 
-	if self.run.Logfile != "" {
-		self.log = true
-		file, err = logrotate.New(self.run.Logfile)
+	if cfg.Log.File != "" {
+		file, err = logrotate.New(cfg.Log.File)
 		if err != nil {
-			log.Printf("Failed to open log file %q: %s\n", self.run.Logfile, err)
-			return
+			log.Printf("Failed to open log file %q: %s\n", cfg.Log.File, err)
+		} else {
+			m.Append(file)
 		}
-		m.Append(file)
 	}
 
 	runLogger := func() {
-		command := strings.Fields(self.run.Logger)
+		command := strings.Fields(cfg.Logger)
 		cmd := exec.Command(command[0], command[1:]...)
 		w, err = cmd.StdinPipe()
 		if err != nil {
@@ -54,8 +59,7 @@ func (self *Daemon) Logger() {
 		}()
 	}
 
-	if self.run.Logger != "" {
-		self.log = true
+	if cfg.Logger != "" {
 		runLogger()
 
 		go func() {
@@ -67,7 +71,6 @@ func (self *Daemon) Logger() {
 					time.Sleep(time.Second)
 					runLogger()
 					m.Append(w)
-					//self.logger = log.New(multi, "", 0)
 				}
 			}
 		}()
@@ -75,7 +78,20 @@ func (self *Daemon) Logger() {
 	}
 
 	// create the logger
-	if self.log {
-		self.logger = log.New(multi, "", 0)
+	if m.Len() > 0 {
+		return log.New(multi, "", 0)
 	}
+	return nil
+}
+
+func (self *LogWriter) StdHandler(input io.ReadCloser) {
+	in := bufio.NewScanner(input)
+	for in.Scan() {
+		self.logger.Print(in.Text())
+	}
+	input.Close()
+}
+
+func (self *LogWriter) IsLogging() bool {
+	return self.logger != nil
 }

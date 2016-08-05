@@ -9,8 +9,8 @@ import (
 	"syscall"
 )
 
-func (self *Daemon) watchPid(pid int, ch chan<- error) {
-	if !self.isRunning(pid) {
+func (self *Sup) WatchPid(pid int, ch chan<- error) {
+	if !self.IsRunning(pid) {
 		ch <- fmt.Errorf("PID NOT FOUND")
 		return
 	}

@@ -1,9 +1,12 @@
 cmd: bundle exec unicorn -c unicorn.rb
-cwd: /tmp
+cwd: /tmp/
 env:
     DEBUG: 1
     ENVIROMENT: production
-followpid: /path/to/unicorn.pid
+pid:
+    follow: /path/to/unicorn.pid
+    parent: /tmp/parent.pid
+    child: /tmp/child.pid
 log:
     file: /var/log/app.log
     age: 86400 # seconds
@@ -11,13 +14,4 @@ log:
     size: 1    # MegaBytes
 logger: logger -t unicorn
 user: www
-# SIGKILL and SIGSTOP cannot be blocked.
-if_signal:
-    HUP:
-    INT:
-    TERM:
-    USR1:
-    USR2:
-    WINCH:
-    TTIN:
-    TTOU:
+wait: 1
