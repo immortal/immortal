@@ -62,7 +62,7 @@ func TestDaemonRun(t *testing.T) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
-		ps: &Process{&os.Process{}},
+		process: &Process{&os.Process{}},
 	}
 	d.Run()
 	sup := new(Sup)
@@ -82,9 +82,9 @@ func TestDaemonRun(t *testing.T) {
 			if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 				t.Error(err)
 			} else {
-				expect(t, d.process.Pid, pid)
+				expect(t, d.process.GetPid(), pid)
 			}
-			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.Pid))
+			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.GetPid()))
 			d.process.Kill()
 		}
 	}
