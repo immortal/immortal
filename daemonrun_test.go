@@ -62,6 +62,7 @@ func TestDaemonRun(t *testing.T) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
+		ps: &Process{&os.Process{}},
 	}
 	d.Run()
 	sup := new(Sup)

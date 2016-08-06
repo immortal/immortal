@@ -22,6 +22,7 @@ type Daemon struct {
 	count       uint32
 	count_defer uint32
 	process     *os.Process
+	ps          ProcessContainer
 }
 
 func (self *Daemon) String() string {
@@ -121,6 +122,7 @@ func (self *Daemon) Run() {
 		}
 
 		self.process = cmd.Process
+		self.ps.GetPid()
 
 		// write parent pid
 		if self.Pid.Parent != "" {
@@ -195,5 +197,6 @@ func New(cfg *Config) (*Daemon, error) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
+		ps: &Process{&os.Process{}},
 	}, nil
 }
