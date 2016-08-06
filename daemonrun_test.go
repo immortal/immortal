@@ -10,12 +10,6 @@ import (
 	"time"
 )
 
-type myFork struct{}
-
-func (self myFork) Fork() (int, error) {
-	return 0, nil
-}
-
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
