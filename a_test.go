@@ -1,8 +1,10 @@
 package immortal
 
 import (
+	//	"fmt"
 	"os"
 	"reflect"
+	"syscall"
 	"testing"
 )
 
@@ -22,6 +24,7 @@ func (self myFork) Fork() (int, error) {
 type catchSignals struct {
 	*os.Process
 	signal chan os.Signal
+	wait   chan struct{}
 }
 
 func (self *catchSignals) GetPid() int {
@@ -34,6 +37,7 @@ func (self *catchSignals) SetPid(pid int) {
 
 func (self *catchSignals) SetProcess(p *os.Process) {
 	self.Process = p
+	close(self.wait)
 }
 
 func (self *catchSignals) Kill() error {
@@ -41,6 +45,10 @@ func (self *catchSignals) Kill() error {
 }
 
 func (self *catchSignals) Signal(sig os.Signal) error {
+	process, _ := os.FindProcess(self.Pid)
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		return err
+	}
 	self.signal <- sig
 	return nil
 }

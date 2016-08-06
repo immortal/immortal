@@ -21,6 +21,8 @@ func TestHelperProcessSignals(t *testing.T) {
 		if s != syscall.SIGHUP {
 			return
 		}
+	case <-time.After(10 * time.Second):
+		os.Exit(0)
 	}
 }
 
@@ -46,6 +48,7 @@ func TestSignals(t *testing.T) {
 		},
 	}
 	c := make(chan os.Signal)
+	wait := make(chan struct{})
 	d := &Daemon{
 		Config: cfg,
 		Control: &Control{
@@ -57,12 +60,21 @@ func TestSignals(t *testing.T) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
-		process: &catchSignals{&os.Process{}, c},
+		process: &catchSignals{&os.Process{}, c, wait},
 	}
 	d.Run()
+	defer func() {
+		pid := d.process.GetPid()
+		syscall.Kill(pid, syscall.SIGKILL)
+	}()
 	sup := new(Sup)
 	go Supervise(sup, d)
 
+	select {
+	case <-wait:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for pid")
+	}
 	var testSignals = []struct {
 		signal   string
 		expected os.Signal
