@@ -156,8 +156,9 @@ func New(cfg *Config) (*Daemon, error) {
 		supDir = filepath.Join(d, "supervise")
 	}
 
+	// buffer because goroutine might write before main goroutine starts
 	control := &Control{
-		fifo:  make(chan Return),
+		fifo:  make(chan Return, 1),
 		quit:  make(chan struct{}),
 		state: make(chan error, 1),
 	}

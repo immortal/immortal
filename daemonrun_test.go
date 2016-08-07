@@ -48,7 +48,7 @@ func TestDaemonRun(t *testing.T) {
 	d := &Daemon{
 		Config: cfg,
 		Control: &Control{
-			fifo:  make(chan Return),
+			fifo:  make(chan Return, 1),
 			quit:  make(chan struct{}),
 			state: make(chan error, 1),
 		},

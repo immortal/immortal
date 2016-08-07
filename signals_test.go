@@ -42,12 +42,12 @@ func TestSignals(t *testing.T) {
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
 	}
-	c := make(chan os.Signal)
+	c := make(chan os.Signal, 1)
 	wait := make(chan struct{})
 	d := &Daemon{
 		Config: cfg,
 		Control: &Control{
-			fifo:  make(chan Return),
+			fifo:  make(chan Return, 1),
 			quit:  make(chan struct{}),
 			state: make(chan error, 1),
 		},
