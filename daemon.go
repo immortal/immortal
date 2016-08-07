@@ -21,11 +21,11 @@ type Daemon struct {
 	Logger
 	count       uint32
 	count_defer uint32
-	process     *os.Process
+	process     ProcessContainer
 }
 
 func (self *Daemon) String() string {
-	return fmt.Sprintf("%d", self.process.Pid)
+	return fmt.Sprintf("%d", self.process.GetPid())
 }
 
 func (self *Daemon) WritePid(file string, pid int) error {
@@ -37,7 +37,7 @@ func (self *Daemon) WritePid(file string, pid int) error {
 
 func (self *Daemon) Run() {
 	if atomic.SwapUint32(&self.count, uint32(1)) != 0 {
-		log.Printf("PID: %d running", self.process.Pid)
+		log.Printf("PID: %d running", self.process.GetPid())
 		return
 	}
 
@@ -120,7 +120,7 @@ func (self *Daemon) Run() {
 			return
 		}
 
-		self.process = cmd.Process
+		self.process.SetProcess(cmd.Process)
 
 		// write parent pid
 		if self.Pid.Parent != "" {
@@ -131,7 +131,7 @@ func (self *Daemon) Run() {
 
 		// write child pid
 		if self.Pid.Child != "" {
-			if err := self.WritePid(self.Pid.Child, self.process.Pid); err != nil {
+			if err := self.WritePid(self.Pid.Child, self.process.GetPid()); err != nil {
 				log.Print(err)
 			}
 		}
@@ -195,5 +195,6 @@ func New(cfg *Config) (*Daemon, error) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
+		process: &Process{&os.Process{}},
 	}, nil
 }

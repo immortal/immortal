@@ -10,12 +10,6 @@ import (
 	"time"
 )
 
-type myFork struct{}
-
-func (self myFork) Fork() (int, error) {
-	return 0, nil
-}
-
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -62,6 +56,7 @@ func TestDaemonRun(t *testing.T) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
+		process: &Process{&os.Process{}},
 	}
 	d.Run()
 	sup := new(Sup)
@@ -81,9 +76,9 @@ func TestDaemonRun(t *testing.T) {
 			if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 				t.Error(err)
 			} else {
-				expect(t, d.process.Pid, pid)
+				expect(t, d.process.GetPid(), pid)
 			}
-			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.Pid))
+			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.GetPid()))
 			d.process.Kill()
 		}
 	}
