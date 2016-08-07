@@ -105,23 +105,23 @@ func TestSignals(t *testing.T) {
 	// test kill process will restart
 	old_pid := d.process.GetPid()
 	d.Control.fifo <- Return{err: nil, msg: "k"}
-	expect(t, d.count, uint32(1))
-	expect(t, d.count_defer, uint32(0))
+	expect(t, d.count, uint32(1), "in 108")
+	expect(t, d.count_defer, uint32(0), "in 109")
 
 	// wait for process to came up and then send signal "once"
 	for sup.IsRunning(d.process.GetPid()) {
 		d.Control.fifo <- Return{err: nil, msg: "o"}
 		break
 	}
-	expect(t, d.count, uint32(1))
-	expect(t, d.count_defer, uint32(1))
+	expect(t, d.count, uint32(1), "in 116")
+	expect(t, d.count_defer, uint32(1), "in 117")
 	expect(t, old_pid, d.process.GetPid())
 
 	// kill for test once
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	// process shuld not start and pids remains the same
-	expect(t, d.count, uint32(1))
-	expect(t, d.count_defer, uint32(1))
+	expect(t, d.count, uint32(1), "in 123")
+	expect(t, d.count_defer, uint32(1), "in 124")
 	expect(t, old_pid, d.process.GetPid())
 
 	for sup.IsRunning(d.process.GetPid()) {

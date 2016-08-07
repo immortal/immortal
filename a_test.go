@@ -9,9 +9,13 @@ import (
 )
 
 /* Test Helpers */
-func expect(t *testing.T, a interface{}, b interface{}) {
+func expect(t *testing.T, a interface{}, b interface{}, where ...string) {
+	var w string
+	if len(where) > 0 {
+		w = where[0]
+	}
 	if a != b {
-		t.Fatalf("Expected: %v (type %v)  Got: %v (type %v)", a, reflect.TypeOf(a), b, reflect.TypeOf(b))
+		t.Fatalf("Expected: %v (type %v)  Got: %v (type %v)  %v", a, reflect.TypeOf(a), b, reflect.TypeOf(b), w)
 	}
 }
 
