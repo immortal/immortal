@@ -128,14 +128,6 @@ func TestSignals(t *testing.T) {
 		time.Sleep(time.Second)
 	}
 
-	//// bring up the service (new pid expected)
-	//d.Control.fifo <- Return{err: nil, msg: "u"}
-	//for old_pid == d.process.GetPid() {
-	//// waiting to change pid
-	//}
-	//expect(t, d.count, uint32(1))
-	//expect(t, d.count_defer, uint32(0))
-
 	var testSignalsError = []struct {
 		signal   string
 		expected os.Signal
@@ -181,6 +173,7 @@ func TestSignals(t *testing.T) {
 	}
 	// create zombie
 	d.Control.fifo <- Return{err: nil, msg: "d"}
+	d.Control.fifo <- Return{err: nil, msg: "x"}
 }
 
 func waitSig(t *testing.T, c <-chan os.Signal, sig os.Signal) {
