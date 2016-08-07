@@ -21,6 +21,8 @@ func TestHelperProcess(t *testing.T) {
 		if s != syscall.SIGHUP {
 			return
 		}
+	case <-time.After(10 * time.Second):
+		os.Exit(1)
 	}
 }
 
@@ -60,6 +62,9 @@ func TestDaemonRun(t *testing.T) {
 	}
 	d.Run()
 	sup := new(Sup)
+	defer func() {
+		d.process.Kill()
+	}()
 	for {
 		select {
 		case err := <-d.Control.state:

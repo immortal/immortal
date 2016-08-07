@@ -2,10 +2,15 @@ package immortal
 
 import (
 	"os"
+	"syscall"
 	"testing"
 )
 
 func TestFork(t *testing.T) {
+	var pid int
+	defer func() {
+		syscall.Kill(pid, syscall.SIGKILL)
+	}()
 	f := Fork{}
 	pid, err := f.Fork()
 	if err != nil {
