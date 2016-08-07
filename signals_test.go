@@ -181,8 +181,9 @@ func TestSignals(t *testing.T) {
 	}
 	expect(t, d.count, uint32(1))
 	expect(t, d.count_defer, uint32(0))
-	d.Control.fifo <- Return{err: nil, msg: "d"}
 
+	// create zombie
+	d.Control.fifo <- Return{err: nil, msg: "d"}
 }
 
 func waitSig(t *testing.T, c <-chan os.Signal, sig os.Signal) {
