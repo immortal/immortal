@@ -179,9 +179,6 @@ func TestSignals(t *testing.T) {
 	for old_pid == d.process.GetPid() {
 		time.Sleep(time.Second)
 	}
-	expect(t, d.count, uint32(1))
-	expect(t, d.count_defer, uint32(0))
-
 	// create zombie
 	d.Control.fifo <- Return{err: nil, msg: "d"}
 }
