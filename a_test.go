@@ -11,7 +11,7 @@ import (
 /* Test Helpers */
 func expect(t *testing.T, a interface{}, b interface{}) {
 	if a != b {
-		t.Errorf("Expected: %v (type %v)  Got: %v (type %v)", a, reflect.TypeOf(a), b, reflect.TypeOf(b))
+		t.Fatalf("Expected: %v (type %v)  Got: %v (type %v)", a, reflect.TypeOf(a), b, reflect.TypeOf(b))
 	}
 }
 
@@ -37,16 +37,22 @@ func (self *catchSignals) SetPid(pid int) {
 
 func (self *catchSignals) SetProcess(p *os.Process) {
 	self.Process = p
-	close(self.wait)
+	self.wait <- struct{}{}
 }
 
-func (self *catchSignals) Kill() error {
-	return nil
+func (self *catchSignals) Kill() (err error) {
+	err = self.Process.Kill()
+	if err != nil {
+		return
+	}
+	self.wait <- struct{}{}
+	return
 }
 
 func (self *catchSignals) Signal(sig os.Signal) error {
 	process, _ := os.FindProcess(self.Pid)
 	if err := process.Signal(syscall.Signal(0)); err != nil {
+		self.signal <- syscall.SIGILL
 		return err
 	}
 	self.signal <- sig
