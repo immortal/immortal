@@ -45,7 +45,6 @@ func (self *catchSignals) Kill() (err error) {
 	if err != nil {
 		return
 	}
-	self.wait <- struct{}{}
 	return
 }
 
