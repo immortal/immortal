@@ -49,6 +49,11 @@ func (self *catchSignals) Kill() (err error) {
 	if err != nil {
 		return
 	}
+	// to avoid zombie
+	_, err = self.Process.Wait()
+	if err != nil {
+		return
+	}
 	return
 }
 

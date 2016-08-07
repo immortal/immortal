@@ -69,11 +69,13 @@ func (self *Daemon) Run() {
 		uid, err := strconv.Atoi(self.user.Uid)
 		if err != nil {
 			self.Control.state <- err
+			return
 		}
 
 		gid, err := strconv.Atoi(self.user.Gid)
 		if err != nil {
 			self.Control.state <- err
+			return
 		}
 
 		// https://golang.org/pkg/syscall/#SysProcAttr
@@ -156,11 +158,10 @@ func New(cfg *Config) (*Daemon, error) {
 		supDir = filepath.Join(d, "supervise")
 	}
 
-	// buffer because goroutine might write before main goroutine starts
 	control := &Control{
-		fifo:  make(chan Return, 1),
+		fifo:  make(chan Return),
 		quit:  make(chan struct{}),
-		state: make(chan error, 1),
+		state: make(chan error),
 	}
 
 	// if ctrl create supervise dir

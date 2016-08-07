@@ -1,8 +1,8 @@
 package immortal
 
 import (
-	"io/ioutil"
-	"log"
+	//	"io/ioutil"
+	//	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -17,12 +17,16 @@ func TestHelperProcessSignals(*testing.T) {
 	}
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)
-	<-c
-	os.Exit(0)
+	select {
+	case <-c:
+		os.Exit(0)
+	case <-time.After(30 * time.Second):
+		os.Exit(1)
+	}
 }
 
 func TestSignals(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	//	log.SetOutput(ioutil.Discard)
 	base := filepath.Base(os.Args[0]) // "exec.test"
 	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
 	if dir == "." {
@@ -42,14 +46,14 @@ func TestSignals(t *testing.T) {
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
 	}
-	c := make(chan os.Signal, 1)
+	c := make(chan os.Signal)
 	wait := make(chan struct{})
 	d := &Daemon{
 		Config: cfg,
 		Control: &Control{
-			fifo:  make(chan Return, 1),
+			fifo:  make(chan Return),
 			quit:  make(chan struct{}),
-			state: make(chan error, 1),
+			state: make(chan error),
 		},
 		Forker: &myFork{},
 		Logger: &LogWriter{
@@ -172,12 +176,55 @@ func TestSignals(t *testing.T) {
 	for old_pid == d.process.GetPid() {
 		time.Sleep(time.Second)
 	}
-	// create zombie
-	println(d.process.GetPid())
-	d.Control.fifo <- Return{err: nil, msg: "d"}
-	for {
 
+	// test down
+	d.Control.fifo <- Return{err: nil, msg: "down"}
+	for sup.IsRunning(d.process.GetPid()) {
+		// waiting for process to exit
 	}
+
+	// test up
+	// bring up the service (new pid expected)
+	d.Control.fifo <- Return{err: nil, msg: "up"}
+	for !sup.IsRunning(d.process.GetPid()) {
+	}
+	d.Control.fifo <- Return{err: nil, msg: "once"}
+	for d.count_defer != 1 {
+	}
+	expect(t, d.count, uint32(1), "in 194")
+	expect(t, d.count_defer, uint32(1), "in 195")
+
+	// save old pid
+	old_pid = d.process.GetPid()
+	// send kill (should not start)
+	d.Control.fifo <- Return{err: nil, msg: "k"}
+	for sup.IsRunning(d.process.GetPid()) {
+	}
+	expect(t, old_pid, d.process.GetPid(), "in 203")
+	expect(t, false, sup.IsRunning(d.process.GetPid()), "in 204")
+
+	// test up
+	// bring up the service (new pid expected)
+	d.Control.fifo <- Return{err: nil, msg: "up"}
+	for !sup.IsRunning(d.process.GetPid()) {
+	}
+	old_pid = d.process.GetPid()
+
+	// send kill (should re-start, and get new pid)
+	d.Control.fifo <- Return{err: nil, msg: "k"}
+	for sup.IsRunning(d.process.GetPid()) {
+	}
+	select {
+	case <-wait:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for pid")
+	}
+	for old_pid == d.process.GetPid() {
+	}
+	expect(t, true, sup.IsRunning(d.process.GetPid()))
+
+	// quit
+	d.Control.fifo <- Return{err: nil, msg: "exit"}
 }
 
 func waitSig(t *testing.T, c <-chan os.Signal, sig os.Signal) {
