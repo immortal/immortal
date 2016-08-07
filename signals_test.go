@@ -173,8 +173,11 @@ func TestSignals(t *testing.T) {
 		time.Sleep(time.Second)
 	}
 	// create zombie
+	println(d.process.GetPid())
 	d.Control.fifo <- Return{err: nil, msg: "d"}
-	d.Control.fifo <- Return{err: nil, msg: "x"}
+	for {
+
+	}
 }
 
 func waitSig(t *testing.T, c <-chan os.Signal, sig os.Signal) {
