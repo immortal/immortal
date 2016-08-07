@@ -129,6 +129,7 @@ func TestSignals(t *testing.T) {
 	expect(t, old_pid, d.process.GetPid())
 
 	for sup.IsRunning(d.process.GetPid()) {
+		// wait for process to die
 	}
 
 	var testSignalsError = []struct {
@@ -193,8 +194,8 @@ func TestSignals(t *testing.T) {
 	d.Control.fifo <- Return{err: nil, msg: "once"}
 	for d.count_defer != 1 {
 	}
-	expect(t, d.count, uint32(1), "in 196")
-	expect(t, d.count_defer, uint32(1), "in 197")
+	expect(t, d.count, uint32(1), "in 197")
+	expect(t, d.count_defer, uint32(1), "in 198")
 
 	// save old pid
 	old_pid = d.process.GetPid()
@@ -203,8 +204,8 @@ func TestSignals(t *testing.T) {
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	for sup.IsRunning(d.process.GetPid()) {
 	}
-	expect(t, old_pid, d.process.GetPid(), "in 206")
-	expect(t, false, sup.IsRunning(d.process.GetPid()), "in 207")
+	expect(t, old_pid, d.process.GetPid(), "in 207")
+	expect(t, false, sup.IsRunning(d.process.GetPid()), "in 208")
 
 	// test up
 	// bring up the service (new pid expected)
