@@ -1,6 +1,8 @@
 package immortal
 
 import (
+	"io/ioutil"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,6 +22,7 @@ func TestHelperProcessSignals(*testing.T) {
 }
 
 func TestSignals(t *testing.T) {
+	log.SetOutput(ioutil.Discard)
 	base := filepath.Base(os.Args[0]) // "exec.test"
 	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
 	if dir == "." {
@@ -101,7 +104,6 @@ func TestSignals(t *testing.T) {
 		waitSig(t, c, s.expected)
 	}
 
-	time.Sleep(time.Second)
 	// test kill process will restart
 	old_pid := d.process.GetPid()
 	d.Control.fifo <- Return{err: nil, msg: "k"}
@@ -110,6 +112,7 @@ func TestSignals(t *testing.T) {
 
 	// wait for process to came up and then send signal "once"
 	for sup.IsRunning(d.process.GetPid()) {
+		time.Sleep(time.Second)
 		d.Control.fifo <- Return{err: nil, msg: "o"}
 		break
 	}
