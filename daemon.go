@@ -159,7 +159,7 @@ func New(cfg *Config) (*Daemon, error) {
 	control := &Control{
 		fifo:  make(chan Return),
 		quit:  make(chan struct{}),
-		state: make(chan error),
+		state: make(chan error, 1),
 	}
 
 	// if ctrl create supervise dir

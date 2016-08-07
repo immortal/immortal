@@ -49,7 +49,7 @@ func TestSignals(t *testing.T) {
 		Control: &Control{
 			fifo:  make(chan Return),
 			quit:  make(chan struct{}),
-			state: make(chan error),
+			state: make(chan error, 1),
 		},
 		Forker: &myFork{},
 		Logger: &LogWriter{
