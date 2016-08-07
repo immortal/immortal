@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -84,10 +85,12 @@ func Supervise(s Supervisor, d *Daemon) {
 			return
 		case state := <-d.Control.state:
 			if state != nil {
-				if state.Error() == "EXIT" {
+				if exitError, ok := state.(*exec.ExitError); ok {
+					log.Print(exitError)
+				} else if state.Error() == "EXIT" {
 					log.Printf("PID: %d Exited", d.process.GetPid())
 				} else {
-					log.Print(state.Error())
+					log.Print(state)
 				}
 			}
 

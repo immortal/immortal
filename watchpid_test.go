@@ -9,7 +9,7 @@ import (
 
 func TestWatchPidGetpid(t *testing.T) {
 	sup := new(Sup)
-	ch := make(chan error)
+	ch := make(chan error, 1)
 
 	cmd := exec.Command("go", "version")
 	cmd.Start()
@@ -32,7 +32,7 @@ func TestWatchPidGetpid(t *testing.T) {
 
 func TestWatchPidGetpidKill(t *testing.T) {
 	sup := new(Sup)
-	ch := make(chan error)
+	ch := make(chan error, 1)
 
 	cmd := exec.Command("sleep", "100")
 	cmd.Start()

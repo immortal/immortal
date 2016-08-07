@@ -69,11 +69,13 @@ func (self *Daemon) Run() {
 		uid, err := strconv.Atoi(self.user.Uid)
 		if err != nil {
 			self.Control.state <- err
+			return
 		}
 
 		gid, err := strconv.Atoi(self.user.Gid)
 		if err != nil {
 			self.Control.state <- err
+			return
 		}
 
 		// https://golang.org/pkg/syscall/#SysProcAttr
