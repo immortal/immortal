@@ -1,7 +1,6 @@
 package immortal
 
 import (
-	//	"fmt"
 	"os"
 	"reflect"
 	"runtime"
@@ -43,20 +42,15 @@ func (self *catchSignals) SetProcess(p *os.Process) {
 }
 
 func (self *catchSignals) Kill() (err error) {
-	println("<--------", self.Process.Pid)
-	err = self.Process.Kill()
-	if err != nil {
-		return
-	}
-	return
+	return self.Process.Kill()
 }
 
-func (self *catchSignals) Signal(sig os.Signal) error {
+func (self *catchSignals) Signal(sig os.Signal) (err error) {
 	process, _ := os.FindProcess(self.Pid)
-	if err := process.Signal(syscall.Signal(0)); err != nil {
+	if err = process.Signal(syscall.Signal(0)); err != nil {
 		self.signal <- syscall.SIGILL
-		return err
+		return
 	}
 	self.signal <- sig
-	return nil
+	return
 }

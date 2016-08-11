@@ -24,6 +24,12 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 			log.Print(err)
 		}
 
+	// t: Terminate. Send the service a TERM signal.
+	case "t", "term":
+		if err := d.process.Signal(syscall.SIGTERM); err != nil {
+			log.Print(err)
+		}
+
 	// o: Once. If the service is not running, start it. Do not restart it if it stops.
 	case "o", "once":
 		d.count_defer = 1
@@ -76,16 +82,18 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 			log.Print(err)
 		}
 
-	// t: Terminate. Send the service a TERM signal.
-	case "t", "term":
-		if err := d.process.Signal(syscall.SIGTERM); err != nil {
-			log.Print(err)
-		}
-
 	// k: Kill. Send the service a KILL signal.
 	case "k", "kill":
 		if err := d.process.Kill(); err != nil {
 			log.Print(err)
+		}
+		// to handle zombies
+		var w syscall.WaitStatus
+		pid, err := syscall.Wait4(-1, &w, 0, nil)
+		if err != nil {
+			log.Println(err)
+		} else {
+			log.Println("pid", pid, "exited", w.Exited(), "exit status", w.ExitStatus())
 		}
 
 	// in: TTIN. Send the service a TTIN signal.
@@ -115,5 +123,6 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 
 	default:
 		log.Printf("unknown signal: %s", signal)
+		println("UNKNOW")
 	}
 }

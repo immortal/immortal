@@ -111,29 +111,17 @@ func TestSignals(t *testing.T) {
 
 	// test kill process will restart and get new pid
 	old_pid := d.process.GetPid()
-	println(old_pid, "first kill")
-	time.Sleep(10 * time.Second)
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	expect(t, d.count, uint32(1))
 	expect(t, d.count_defer, uint32(0))
-	println("killing pid ", d.process.GetPid())
 	for old_pid == d.process.GetPid() {
-		// wait for new pid
+		// wait for process to end
 	}
-	println("new pid: ", d.process.GetPid())
 
-	for {
-	}
 	// send signal "once"
 	d.Control.fifo <- Return{err: nil, msg: "o"}
-	expect(t, d.count, uint32(1))
-
-	// kill for test once (should re-sestart)
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	// process shuld not start and pids remains the same
-	expect(t, d.count, uint32(1))
-	expect(t, d.count_defer, uint32(1))
-
 	for sup.IsRunning(d.process.GetPid()) {
 		// wait for process to die
 	}
@@ -187,9 +175,6 @@ func TestSignals(t *testing.T) {
 	for old_pid == d.process.GetPid() {
 		// wait for new pid
 	}
-	println(d.process.GetPid())
-	for {
-	}
 
 	// test down
 	d.Control.fifo <- Return{err: nil, msg: "down"}
@@ -200,7 +185,8 @@ func TestSignals(t *testing.T) {
 	// test up
 	// bring up the service (new pid expected)
 	d.Control.fifo <- Return{err: nil, msg: "up"}
-	for !sup.IsRunning(d.process.GetPid()) {
+	for sup.IsRunning(d.process.GetPid()) {
+		// want it up
 	}
 	d.Control.fifo <- Return{err: nil, msg: "once"}
 	for d.count_defer != 1 {
@@ -208,19 +194,15 @@ func TestSignals(t *testing.T) {
 	expect(t, d.count, uint32(1))
 	expect(t, d.count_defer, uint32(1))
 
-	// save old pid
-	old_pid = d.process.GetPid()
-
 	// send kill (should not start)
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	for sup.IsRunning(d.process.GetPid()) {
 	}
-	expect(t, old_pid, d.process.GetPid())
 	expect(t, false, sup.IsRunning(d.process.GetPid()))
 
 	// test up
 	// bring up the service (new pid expected)
-	d.Control.fifo <- Return{err: nil, msg: "up"}
+	d.Control.fifo <- Return{err: nil, msg: "u"}
 	for !sup.IsRunning(d.process.GetPid()) {
 	}
 	old_pid = d.process.GetPid()
@@ -229,6 +211,7 @@ func TestSignals(t *testing.T) {
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	for sup.IsRunning(d.process.GetPid()) {
 	}
+
 	select {
 	case <-wait:
 	case <-time.After(2 * time.Second):
