@@ -4,18 +4,16 @@ import (
 	//	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"syscall"
 	"testing"
 )
 
 /* Test Helpers */
-func expect(t *testing.T, a interface{}, b interface{}, where ...string) {
-	var w string
-	if len(where) > 0 {
-		w = where[0]
-	}
+func expect(t *testing.T, a interface{}, b interface{}) {
+	_, fn, line, _ := runtime.Caller(1)
 	if a != b {
-		t.Fatalf("Expected: %v (type %v)  Got: %v (type %v)  %v", a, reflect.TypeOf(a), b, reflect.TypeOf(b), w)
+		t.Fatalf("Expected: %v (type %v)  Got: %v (type %v)  in %s:%d", a, reflect.TypeOf(a), b, reflect.TypeOf(b), fn, line)
 	}
 }
 
@@ -45,12 +43,8 @@ func (self *catchSignals) SetProcess(p *os.Process) {
 }
 
 func (self *catchSignals) Kill() (err error) {
+	println("<--------", self.Process.Pid)
 	err = self.Process.Kill()
-	if err != nil {
-		return
-	}
-	// to avoid zombie
-	_, err = self.Process.Wait()
 	if err != nil {
 		return
 	}

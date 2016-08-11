@@ -138,7 +138,16 @@ func (self *Daemon) Run() {
 			}
 		}
 
-		self.Control.state <- cmd.Wait()
+		// handle zombies
+		err := cmd.Wait()
+		if err != nil {
+			if exitError, ok := err.(*exec.ExitError); ok {
+				ws := exitError.Sys().(syscall.WaitStatus)
+				wpid, err := syscall.Wait4(-1, &ws, syscall.WNOHANG, &syscall.Rusage{})
+				println(wpid, err.Error())
+			}
+		}
+		//	self.Control.state <- err
 	}()
 }
 

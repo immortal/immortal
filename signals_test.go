@@ -20,7 +20,7 @@ func TestHelperProcessSignals(*testing.T) {
 	select {
 	case <-c:
 		os.Exit(0)
-	case <-time.After(30 * time.Second):
+	case <-time.After(10 * time.Second):
 		os.Exit(1)
 	}
 }
@@ -61,6 +61,7 @@ func TestSignals(t *testing.T) {
 		},
 		process: &catchSignals{&os.Process{}, c, wait},
 	}
+	println("papa pid: ", os.Getpid())
 	d.Run()
 	sup := new(Sup)
 	go Supervise(sup, d)
@@ -108,29 +109,35 @@ func TestSignals(t *testing.T) {
 		waitSig(t, c, s.expected)
 	}
 
-	// test kill process will restart
+	// test kill process will restart and get new pid
 	old_pid := d.process.GetPid()
+	println(old_pid, "first kill")
+	time.Sleep(10 * time.Second)
 	d.Control.fifo <- Return{err: nil, msg: "k"}
-	expect(t, d.count, uint32(1), "in 114")
-	expect(t, d.count_defer, uint32(0), "in 115")
-
-	// wait for process to came up and then send signal "once"
-	d.Control.fifo <- Return{err: nil, msg: "o"}
-	for d.count_defer != 1 {
+	expect(t, d.count, uint32(1))
+	expect(t, d.count_defer, uint32(0))
+	println("killing pid ", d.process.GetPid())
+	for old_pid == d.process.GetPid() {
+		// wait for new pid
 	}
-	expect(t, d.count, uint32(1), "in 121")
-	expect(t, old_pid, d.process.GetPid())
+	println("new pid: ", d.process.GetPid())
+
+	for {
+	}
+	// send signal "once"
+	d.Control.fifo <- Return{err: nil, msg: "o"}
+	expect(t, d.count, uint32(1))
 
 	// kill for test once (should re-sestart)
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	// process shuld not start and pids remains the same
-	expect(t, d.count, uint32(1), "in 127")
-	expect(t, d.count_defer, uint32(1), "in 128")
-	expect(t, old_pid, d.process.GetPid())
+	expect(t, d.count, uint32(1))
+	expect(t, d.count_defer, uint32(1))
 
 	for sup.IsRunning(d.process.GetPid()) {
 		// wait for process to die
 	}
+	expect(t, false, sup.IsRunning(d.process.GetPid()))
 
 	var testSignalsError = []struct {
 		signal   string
@@ -178,6 +185,10 @@ func TestSignals(t *testing.T) {
 		t.Fatal("timeout waiting for pid")
 	}
 	for old_pid == d.process.GetPid() {
+		// wait for new pid
+	}
+	println(d.process.GetPid())
+	for {
 	}
 
 	// test down
@@ -194,8 +205,8 @@ func TestSignals(t *testing.T) {
 	d.Control.fifo <- Return{err: nil, msg: "once"}
 	for d.count_defer != 1 {
 	}
-	expect(t, d.count, uint32(1), "in 197")
-	expect(t, d.count_defer, uint32(1), "in 198")
+	expect(t, d.count, uint32(1))
+	expect(t, d.count_defer, uint32(1))
 
 	// save old pid
 	old_pid = d.process.GetPid()
@@ -204,8 +215,8 @@ func TestSignals(t *testing.T) {
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	for sup.IsRunning(d.process.GetPid()) {
 	}
-	expect(t, old_pid, d.process.GetPid(), "in 207")
-	expect(t, false, sup.IsRunning(d.process.GetPid()), "in 208")
+	expect(t, old_pid, d.process.GetPid())
+	expect(t, false, sup.IsRunning(d.process.GetPid()))
 
 	// test up
 	// bring up the service (new pid expected)
