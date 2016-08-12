@@ -41,7 +41,7 @@ func (self *Daemon) Run() {
 		if self.process.Pid == 0 {
 			log.Printf("Service down")
 		} else {
-			log.Printf("PID: %d running", self.process.Pid)
+			log.Printf("PID %d running", self.process.Pid)
 		}
 		return
 	}

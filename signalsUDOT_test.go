@@ -109,7 +109,9 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 	expect(t, true, sup.IsRunning(d.process.Pid))
 
-	d.Control.fifo <- Return{err: nil, msg: "once"}
+	// run only one command at a time
+	d.Run()
+
 	d.Control.fifo <- Return{err: nil, msg: "t"}
 	for d.process.Pid != 0 {
 		// wait for process to stop
