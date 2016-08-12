@@ -7,7 +7,6 @@ import (
 )
 
 func (self *Sup) HandleSignals(signal string, d *Daemon) {
-	fmt.Fprintf(d.Control.fifo_ok, "pong: %s\n", signal)
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
@@ -123,5 +122,6 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 
 	default:
 		log.Printf("unknown signal: %s", signal)
+		fmt.Fprintf(d.Control.fifo_ok, "%s\n", signal)
 	}
 }

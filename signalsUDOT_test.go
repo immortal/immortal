@@ -1,7 +1,5 @@
 package immortal
 
-// watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
-
 import (
 	"io/ioutil"
 	"log"
@@ -40,7 +38,7 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignals"},
+		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsUDOT"},
 		Cwd:     parentDir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
@@ -69,17 +67,21 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 
 	// test "k", process should restart and get a new pid
-	old_pid := d.process.Pid
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	expect(t, d.lock, uint32(1))
 	expect(t, d.lock_defer, uint32(0))
-	for old_pid != d.process.Pid && d.process.Pid == 0 {
-		// wait for process to restart and come up
+	for d.process.Pid != 0 {
+		// wait for process to die
+	}
+	for d.process.Pid == 0 {
+		// wait for process to come  up
 	}
 	expect(t, true, sup.IsRunning(d.process.Pid))
 
+	// just to track using: watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
+	time.Sleep(500 * time.Millisecond)
+
 	// test "once", process should not restart after going down
-	old_pid = d.process.Pid
 	d.Control.fifo <- Return{err: nil, msg: "o"}
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	// process shuld not start
@@ -94,6 +96,8 @@ func TestSignalsUDOT(t *testing.T) {
 		// wait for new pid
 	}
 	expect(t, true, sup.IsRunning(d.process.Pid))
+
+	time.Sleep(500 * time.Millisecond)
 
 	// test "down"
 	d.Control.fifo <- Return{err: nil, msg: "down"}
