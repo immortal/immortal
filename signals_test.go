@@ -1,3 +1,4 @@
+// watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
 package immortal
 
 import (
@@ -19,9 +20,9 @@ func TestHelperProcessSignals(*testing.T) {
 	signal.Notify(c, os.Interrupt, os.Kill)
 	select {
 	case <-c:
-		os.Exit(0)
-	case <-time.After(10 * time.Second):
 		os.Exit(1)
+	case <-time.After(10 * time.Second):
+		os.Exit(0)
 	}
 }
 
@@ -112,17 +113,17 @@ func TestSignals(t *testing.T) {
 	// test kill process will restart and get new pid
 	old_pid := d.process.GetPid()
 	d.Control.fifo <- Return{err: nil, msg: "k"}
-	expect(t, d.count, uint32(1))
-	expect(t, d.count_defer, uint32(0))
-	for old_pid == d.process.GetPid() {
+	expect(t, d.lock, uint32(1))
+	expect(t, d.lock_defer, uint32(0))
+	for sup.IsRunning(d.process.GetPid()) {
 		// wait for process to end
 	}
 
 	// send signal "once"
 	d.Control.fifo <- Return{err: nil, msg: "o"}
 	d.Control.fifo <- Return{err: nil, msg: "k"}
-	// process shuld not start and pids remains the same
-	for sup.IsRunning(d.process.GetPid()) {
+	// process shuld not start
+	for d.process.GetPid() != 0 {
 		// wait for process to die
 	}
 	expect(t, false, sup.IsRunning(d.process.GetPid()))
@@ -164,6 +165,10 @@ func TestSignals(t *testing.T) {
 		waitSig(t, c, s.expected)
 	}
 
+	for {
+		println("isolate cmd........")
+	}
+
 	// test u
 	// bring up the service (new pid expected)
 	d.Control.fifo <- Return{err: nil, msg: "u"}
@@ -172,7 +177,8 @@ func TestSignals(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for pid")
 	}
-	for old_pid == d.process.GetPid() {
+
+	for d.process.GetPid() == 0 {
 		// wait for new pid
 	}
 
@@ -189,10 +195,10 @@ func TestSignals(t *testing.T) {
 		// want it up
 	}
 	d.Control.fifo <- Return{err: nil, msg: "once"}
-	for d.count_defer != 1 {
+	for d.lock_defer != 1 {
 	}
-	expect(t, d.count, uint32(1))
-	expect(t, d.count_defer, uint32(1))
+	expect(t, d.lock, uint32(1))
+	expect(t, d.lock_defer, uint32(1))
 
 	// send kill (should not start)
 	d.Control.fifo <- Return{err: nil, msg: "k"}

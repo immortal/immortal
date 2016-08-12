@@ -34,8 +34,8 @@ func TestDaemonNewCtrl(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(dir, "supervise/lock")); err != nil {
 		t.Error(err)
 	}
-	expect(t, uint32(0), d.count)
-	expect(t, uint32(0), d.count_defer)
+	expect(t, uint32(0), d.lock)
+	expect(t, uint32(0), d.lock_defer)
 	// test lock
 	_, err = New(cfg)
 	if err == nil {
@@ -92,8 +92,8 @@ func TestDaemonNewCtrlCwd(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(dir, "supervise/lock")); err != nil {
 		t.Error(err)
 	}
-	expect(t, uint32(0), d.count)
-	expect(t, uint32(0), d.count_defer)
+	expect(t, uint32(0), d.lock)
+	expect(t, uint32(0), d.lock_defer)
 	// test lock
 	_, err = New(cfg)
 	if err == nil {

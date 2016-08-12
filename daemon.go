@@ -19,9 +19,10 @@ type Daemon struct {
 	*Control
 	Forker
 	Logger
-	count       uint32
-	count_defer uint32
-	process     ProcessContainer
+	lock       uint32
+	lock_defer uint32
+	process    ProcessContainer
+	start      time.Time
 }
 
 func (self *Daemon) String() string {
@@ -36,11 +37,15 @@ func (self *Daemon) WritePid(file string, pid int) error {
 }
 
 func (self *Daemon) Run() {
-	if atomic.SwapUint32(&self.count, uint32(1)) != 0 {
+	if atomic.SwapUint32(&self.lock, uint32(1)) != 0 {
 		log.Printf("PID: %d running", self.process.GetPid())
 		return
 	}
 
+	// set start
+	self.start = time.Now()
+
+	// wait N seconds before starting
 	if self.Wait > 0 {
 		time.Sleep(time.Duration(self.Wait) * time.Second)
 	}
@@ -89,6 +94,7 @@ func (self *Daemon) Run() {
 	sysProcAttr.Setpgid = true
 	sysProcAttr.Pgid = 0
 
+	// set the attributes
 	cmd.SysProcAttr = sysProcAttr
 
 	// log only if are available loggers
@@ -108,9 +114,16 @@ func (self *Daemon) Run() {
 	}
 
 	go func() {
-		// count_defer defaults to 0, 1 to run only once/down (don't restart)
+		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
 		defer func() {
-			atomic.StoreUint32(&self.count, self.count_defer)
+			fmt.Printf("self.lock = %+v\n", self.lock)
+			fmt.Printf("self.lock_defer = %+v\n", self.lock_defer)
+			atomic.StoreUint32(&self.lock, self.lock_defer)
+			println("process ended ........ lock: ", self.lock, " lock_defer: ", self.lock_defer)
+			if cmd.ProcessState != nil {
+				fmt.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n", cmd.ProcessState.Pid(), cmd.ProcessState, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), time.Since(self.start))
+			}
+			//	self.process = &Process{&os.Process{}}
 		}()
 
 		if self.Logger.IsLogging() {
@@ -122,6 +135,7 @@ func (self *Daemon) Run() {
 			return
 		}
 
+		// use the process container
 		self.process.SetProcess(cmd.Process)
 
 		// write parent pid
@@ -139,6 +153,7 @@ func (self *Daemon) Run() {
 		}
 
 		self.Control.state <- cmd.Wait()
+		return
 	}()
 }
 

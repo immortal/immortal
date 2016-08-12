@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"runtime"
@@ -49,8 +50,10 @@ func (self *catchSignals) Signal(sig os.Signal) (err error) {
 	process, _ := os.FindProcess(self.Pid)
 	if err = process.Signal(syscall.Signal(0)); err != nil {
 		self.signal <- syscall.SIGILL
+		println("error: -----------", err.Error())
 		return
 	}
+	fmt.Printf("self.Pid = %+v\n", self.Pid)
 	self.signal <- sig
 	return
 }

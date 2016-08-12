@@ -7,19 +7,20 @@ import (
 )
 
 func (self *Sup) HandleSignals(signal string, d *Daemon) {
+	fmt.Printf("signal = %+v\n", signal)
 	fmt.Fprintf(d.Control.fifo_ok, "pong: %s\n", signal)
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
 		if !self.IsRunning(d.process.GetPid()) {
-			d.count = 0
+			d.lock = 0
 			d.Control.state <- fmt.Errorf("UP")
 		}
-		d.count_defer = 0
+		d.lock_defer = 0
 
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
-		d.count_defer = 1
+		d.lock_defer = 1
 		if err := d.process.Kill(); err != nil {
 			log.Print(err)
 		}
@@ -32,11 +33,12 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 
 	// o: Once. If the service is not running, start it. Do not restart it if it stops.
 	case "o", "once":
-		d.count_defer = 1
+		d.lock_defer = 1
 
 	// p: Pause. Send the service a STOP signal.
 	case "p", "pause", "s", "stop":
 		if err := d.process.Signal(syscall.SIGSTOP); err != nil {
+			println("error.........", err.Error())
 			log.Print(err)
 		}
 
@@ -88,13 +90,13 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 			log.Print(err)
 		}
 		// to handle zombies
-		var w syscall.WaitStatus
-		pid, err := syscall.Wait4(-1, &w, 0, nil)
-		if err != nil {
-			log.Println(err)
-		} else {
-			log.Println("pid", pid, "exited", w.Exited(), "exit status", w.ExitStatus())
-		}
+		//var w syscall.WaitStatus
+		//pid, err := syscall.Wait4(-1, &w, 0, nil)
+		//if err != nil {
+		//log.Println(err)
+		//} else {
+		//log.Println("pid", pid, "exited", w.Exited(), "exit status", w.ExitStatus())
+		//}
 
 	// in: TTIN. Send the service a TTIN signal.
 	case "in", "TTIN":
