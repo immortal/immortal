@@ -88,7 +88,7 @@ func Supervise(s Supervisor, d *Daemon) {
 				if exitError, ok := state.(*exec.ExitError); ok {
 					log.Print(exitError)
 				} else if state.Error() == "EXIT" {
-					log.Printf("PID: %d Exited", d.process.GetPid())
+					log.Printf("PID: %d Exited", d.process.Pid)
 				} else {
 					log.Print(state)
 				}
@@ -106,10 +106,10 @@ func Supervise(s Supervisor, d *Daemon) {
 					d.Run()
 				} else {
 					// check if pid in file is valid
-					if pid > 1 && pid != d.process.GetPid() && s.IsRunning(pid) {
+					if pid > 1 && pid != d.process.Pid && s.IsRunning(pid) {
 						// set pid to new pid in file
-						d.process.SetPid(pid)
-						log.Printf("Watching pid %d on file: %s", d.process.GetPid(), d.Pid.Follow)
+						d.process.Pid = pid
+						log.Printf("Watching pid %d on file: %s", d.process.Pid, d.Pid.Follow)
 						go s.WatchPid(pid, d.Control.state)
 					} else {
 						// if cmd exits or process is kill

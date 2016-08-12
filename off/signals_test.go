@@ -60,7 +60,6 @@ func TestSignals(t *testing.T) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
-		process: &catchSignals{&os.Process{}, c, wait},
 	}
 	println("papa pid: ", os.Getpid())
 	d.Run()
@@ -111,22 +110,24 @@ func TestSignals(t *testing.T) {
 	}
 
 	// test kill process will restart and get new pid
-	old_pid := d.process.GetPid()
+	old_pid := d.process.Pid
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	expect(t, d.lock, uint32(1))
 	expect(t, d.lock_defer, uint32(0))
-	for sup.IsRunning(d.process.GetPid()) {
+	for sup.IsRunning(d.process.Pid) {
 		// wait for process to end
 	}
 
+	for {
+	}
 	// send signal "once"
 	d.Control.fifo <- Return{err: nil, msg: "o"}
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	// process shuld not start
-	for d.process.GetPid() != 0 {
+	for d.process.Pid != 0 {
 		// wait for process to die
 	}
-	expect(t, false, sup.IsRunning(d.process.GetPid()))
+	expect(t, false, sup.IsRunning(d.process.Pid))
 
 	var testSignalsError = []struct {
 		signal   string
@@ -178,20 +179,20 @@ func TestSignals(t *testing.T) {
 		t.Fatal("timeout waiting for pid")
 	}
 
-	for d.process.GetPid() == 0 {
+	for d.process.Pid == 0 {
 		// wait for new pid
 	}
 
 	// test down
 	d.Control.fifo <- Return{err: nil, msg: "down"}
-	for sup.IsRunning(d.process.GetPid()) {
+	for sup.IsRunning(d.process.Pid) {
 		// waiting for process to exit
 	}
 
 	// test up
 	// bring up the service (new pid expected)
 	d.Control.fifo <- Return{err: nil, msg: "up"}
-	for sup.IsRunning(d.process.GetPid()) {
+	for sup.IsRunning(d.process.Pid) {
 		// want it up
 	}
 	d.Control.fifo <- Return{err: nil, msg: "once"}
@@ -202,20 +203,20 @@ func TestSignals(t *testing.T) {
 
 	// send kill (should not start)
 	d.Control.fifo <- Return{err: nil, msg: "k"}
-	for sup.IsRunning(d.process.GetPid()) {
+	for sup.IsRunning(d.process.Pid) {
 	}
-	expect(t, false, sup.IsRunning(d.process.GetPid()))
+	expect(t, false, sup.IsRunning(d.process.Pid))
 
 	// test up
 	// bring up the service (new pid expected)
 	d.Control.fifo <- Return{err: nil, msg: "u"}
-	for !sup.IsRunning(d.process.GetPid()) {
+	for !sup.IsRunning(d.process.Pid) {
 	}
-	old_pid = d.process.GetPid()
+	old_pid = d.process.Pid
 
 	// send kill (should re-start, and get new pid)
 	d.Control.fifo <- Return{err: nil, msg: "k"}
-	for sup.IsRunning(d.process.GetPid()) {
+	for sup.IsRunning(d.process.Pid) {
 	}
 
 	select {
@@ -223,11 +224,11 @@ func TestSignals(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for pid")
 	}
-	for old_pid == d.process.GetPid() {
+	for old_pid == d.process.Pid {
 	}
 
 	// should be running
-	expect(t, true, sup.IsRunning(d.process.GetPid()))
+	expect(t, true, sup.IsRunning(d.process.Pid))
 
 	// quit
 	d.Control.fifo <- Return{err: nil, msg: "k"}

@@ -3,9 +3,7 @@ package immortal
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -14,16 +12,7 @@ func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGHUP, syscall.SIGUSR1)
-	select {
-	case s := <-c:
-		if s != syscall.SIGHUP {
-			return
-		}
-	case <-time.After(10 * time.Second):
-		os.Exit(1)
-	}
+	time.Sleep(10 * time.Second)
 }
 
 func TestDaemonRun(t *testing.T) {
@@ -58,7 +47,6 @@ func TestDaemonRun(t *testing.T) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
-		process: &Process{&os.Process{}},
 	}
 	d.Run()
 	sup := new(Sup)
@@ -81,9 +69,9 @@ func TestDaemonRun(t *testing.T) {
 			if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 				t.Error(err)
 			} else {
-				expect(t, d.process.GetPid(), pid)
+				expect(t, d.process.Pid, pid)
 			}
-			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.GetPid()))
+			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.Pid))
 			d.process.Kill()
 		}
 	}

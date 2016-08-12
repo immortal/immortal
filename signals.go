@@ -7,12 +7,11 @@ import (
 )
 
 func (self *Sup) HandleSignals(signal string, d *Daemon) {
-	fmt.Printf("signal = %+v\n", signal)
 	fmt.Fprintf(d.Control.fifo_ok, "pong: %s\n", signal)
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
-		if !self.IsRunning(d.process.GetPid()) {
+		if !self.IsRunning(d.process.Pid) {
 			d.lock = 0
 			d.Control.state <- fmt.Errorf("UP")
 		}
@@ -21,7 +20,7 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
 		d.lock_defer = 1
-		if err := d.process.Kill(); err != nil {
+		if err := d.process.Signal(syscall.SIGTERM); err != nil {
 			log.Print(err)
 		}
 
@@ -38,7 +37,6 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 	// p: Pause. Send the service a STOP signal.
 	case "p", "pause", "s", "stop":
 		if err := d.process.Signal(syscall.SIGSTOP); err != nil {
-			println("error.........", err.Error())
 			log.Print(err)
 		}
 
@@ -125,6 +123,5 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 
 	default:
 		log.Printf("unknown signal: %s", signal)
-		println("UNKNOW")
 	}
 }

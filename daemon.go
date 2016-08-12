@@ -26,7 +26,7 @@ type Daemon struct {
 }
 
 func (self *Daemon) String() string {
-	return fmt.Sprintf("%d", self.process.GetPid())
+	return fmt.Sprintf("%d", self.process.Pid)
 }
 
 func (self *Daemon) WritePid(file string, pid int) error {
@@ -38,7 +38,11 @@ func (self *Daemon) WritePid(file string, pid int) error {
 
 func (self *Daemon) Run() {
 	if atomic.SwapUint32(&self.lock, uint32(1)) != 0 {
-		log.Printf("PID: %d running", self.process.GetPid())
+		if self.process.Pid == 0 {
+			log.Printf("Service down")
+		} else {
+			log.Printf("PID: %d running", self.process.Pid)
+		}
 		return
 	}
 
@@ -114,28 +118,25 @@ func (self *Daemon) Run() {
 	}
 
 	go func() {
-		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
 		defer func() {
-			fmt.Printf("self.lock = %+v\n", self.lock)
-			fmt.Printf("self.lock_defer = %+v\n", self.lock_defer)
-			atomic.StoreUint32(&self.lock, self.lock_defer)
-			println("process ended ........ lock: ", self.lock, " lock_defer: ", self.lock_defer)
-			if cmd.ProcessState != nil {
-				fmt.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n", cmd.ProcessState.Pid(), cmd.ProcessState, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), time.Since(self.start))
+			if self.Logger.IsLogging() {
+				w.Close()
 			}
+			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+			atomic.StoreUint32(&self.lock, self.lock_defer)
+			if cmd.ProcessState != nil {
+				log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n", cmd.ProcessState.Pid(), cmd.ProcessState, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), time.Since(self.start))
+			}
+			// reset process
 			self.process = &os.Process{}
 		}()
-
-		if self.Logger.IsLogging() {
-			defer w.Close()
-		}
 
 		if err := cmd.Start(); err != nil {
 			self.Control.state <- err
 			return
 		}
 
-		// store the pid
+		// store command process
 		self.process = cmd.Process
 
 		// write parent pid
@@ -147,7 +148,7 @@ func (self *Daemon) Run() {
 
 		// write child pid
 		if self.Pid.Child != "" {
-			if err := self.WritePid(self.Pid.Child, self.process.GetPid()); err != nil {
+			if err := self.WritePid(self.Pid.Child, self.process.Pid); err != nil {
 				log.Print(err)
 			}
 		}
@@ -212,5 +213,6 @@ func New(cfg *Config) (*Daemon, error) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
+		process: &os.Process{},
 	}, nil
 }
