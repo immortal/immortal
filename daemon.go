@@ -21,8 +21,8 @@ type Daemon struct {
 	Logger
 	lock       uint32
 	lock_defer uint32
-	process    ProcessContainer
 	start      time.Time
+	process    *os.Process
 }
 
 func (self *Daemon) String() string {
@@ -123,7 +123,7 @@ func (self *Daemon) Run() {
 			if cmd.ProcessState != nil {
 				fmt.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n", cmd.ProcessState.Pid(), cmd.ProcessState, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), time.Since(self.start))
 			}
-			//	self.process = &Process{&os.Process{}}
+			self.process = &os.Process{}
 		}()
 
 		if self.Logger.IsLogging() {
@@ -135,8 +135,8 @@ func (self *Daemon) Run() {
 			return
 		}
 
-		// use the process container
-		self.process.SetProcess(cmd.Process)
+		// store the pid
+		self.process = cmd.Process
 
 		// write parent pid
 		if self.Pid.Parent != "" {
@@ -212,6 +212,5 @@ func New(cfg *Config) (*Daemon, error) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
-		process: &Process{&os.Process{}},
 	}, nil
 }
