@@ -2,9 +2,9 @@ package immortal
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
@@ -65,7 +65,9 @@ func TestHelperProcessSignalsFiFo(*testing.T) {
 }
 
 func TestSignalsFiFo(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	var mylog bytes.Buffer
+	log.SetOutput(&mylog)
+	log.SetFlags(0)
 	base := filepath.Base(os.Args[0]) // "exec.test"
 	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
 	if dir == "." {
@@ -134,6 +136,29 @@ func TestSignalsFiFo(t *testing.T) {
 		sup.HandleSignals(s.signal, d)
 		waitSig(t, fifo, s.expected)
 	}
+
+	sup.HandleSignals("stop", d)
+	d.process.Kill()
+	for d.process.Pid != 0 {
+		// kill process and try to send signals
+	}
+
+	// create error os: process not initialized
+	mylog.Reset()
+	for _, s := range testSignals {
+		sup.HandleSignals(s.signal, d)
+		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+		mylog.Reset()
+	}
+
+	sup.HandleSignals("k", d)
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+	sup.HandleSignals("d", d)
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+	sup.HandleSignals("t", d)
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+	sup.HandleSignals("p", d)
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
 }
 
 func waitSig(t *testing.T, fifo *os.File, sig string) {
@@ -153,7 +178,7 @@ func waitSig(t *testing.T, fifo *os.File, sig string) {
 		buf = buf[:n]
 		msg := strings.TrimSpace(string(buf))
 		if msg != sig {
-			t.Fatalf("Expecting %v got %v", sig, msg)
+			expect(t, sig, msg)
 		}
 		return
 	}
