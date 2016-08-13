@@ -102,7 +102,7 @@ func Supervise(s Supervisor, d *Daemon) {
 			if d.Pid.Follow != "" {
 				pid, err := s.ReadPidFile(d.Pid.Follow)
 				if err != nil {
-					log.Printf("Cannot read pidfile:%s,  %s", d.Pid.Follow, err.Error())
+					log.Printf("Cannot read pidfile:%s,  %s", d.Pid.Follow, err)
 					d.Run()
 				} else {
 					// check if pid in file is valid
