@@ -253,3 +253,22 @@ func TestParseArgsTable(t *testing.T) {
 		}
 	}
 }
+
+func TestParseYaml(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", "example/bad-run.yml"}
+	parser := &Parse{
+		UserLookup: MockLookup,
+	}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsYaml", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	_, err := ParseArgs(parser, fs)
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	if err == nil {
+		t.Error("Expecting error: Missing command")
+	}
+}

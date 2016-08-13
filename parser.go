@@ -4,14 +4,15 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"github.com/immortal/natcasesort"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"os"
 	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/immortal/natcasesort"
+	"gopkg.in/yaml.v2"
 )
 
 type Parser interface {
@@ -196,9 +197,6 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 			if cfg.user, err = p.checkUser(cfg.User); err != nil {
 				return
 			}
-		}
-		if flags.Ctrl {
-			cfg.ctrl = true
 		}
 		return
 	}
