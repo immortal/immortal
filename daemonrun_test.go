@@ -74,8 +74,6 @@ func TestDaemonRun(t *testing.T) {
 			}
 			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.Pid))
 			d.process.Kill()
-			for d.process.Pid == 0 {
-			}
 			expect(t, 2, int(time.Since(d.start).Seconds()))
 		}
 	}
