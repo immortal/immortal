@@ -35,6 +35,7 @@ func TestDaemonRun(t *testing.T) {
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
+		Wait: 1,
 	}
 	d := &Daemon{
 		Config: cfg,
@@ -73,6 +74,9 @@ func TestDaemonRun(t *testing.T) {
 			}
 			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.Pid))
 			d.process.Kill()
+			for d.process.Pid == 0 {
+			}
+			expect(t, 2, int(time.Since(d.start).Seconds()))
 		}
 	}
 }
