@@ -122,11 +122,11 @@ func (self *Daemon) Run() {
 		return
 	}
 
-	// set start
+	// set start time
 	self.start = time.Now()
 
 	// store command process
-	self.process = cmd.Process
+	self.process.Pid = cmd.Process.Pid
 
 	// write parent pid
 	if self.Pid.Parent != "" {
@@ -159,7 +159,7 @@ func (self *Daemon) Run() {
 			time.Since(self.start))
 
 		// reset process
-		self.process = &os.Process{}
+		// self.process = &os.Process{}
 		self.Unlock()
 	}()
 }

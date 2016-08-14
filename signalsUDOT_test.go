@@ -1,8 +1,7 @@
 package immortal
 
 import (
-	"io/ioutil"
-	"log"
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,7 +24,7 @@ func TestHelperProcessSignalsUDOT(*testing.T) {
 }
 
 func TestSignalsUDOT(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	//log.SetOutput(ioutil.Discard)
 	base := filepath.Base(os.Args[0]) // "exec.test"
 	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
 	if dir == "." {
@@ -52,6 +51,20 @@ func TestSignalsUDOT(t *testing.T) {
 	d.Run()
 	sup := new(Sup)
 	go Supervise(sup, d)
+
+	fmt.Printf("d.process.Pid XXXXXX= %+v\n", d.process.Pid)
+
+	for !d.IsRunning() {
+	}
+	fmt.Printf("d.process.Pid = %+v\n", d.process.Pid)
+	sup.HandleSignals("k", d)
+	fmt.Printf("d.process.Pid = %+v\n", d.process.Pid)
+
+	for {
+
+	}
+
+	// # ----------------------------------------------------------------------------
 
 	// test "k", process should restart and get a new pid
 	//d.Control.fifo <- Return{err: nil, msg: "k"}
