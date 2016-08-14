@@ -3,11 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/immortal/immortal"
 	"log"
 	"log/syslog"
 	"os"
 	"os/user"
+
+	"github.com/immortal/immortal"
 )
 
 var version string

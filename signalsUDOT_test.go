@@ -62,14 +62,14 @@ func TestSignalsUDOT(t *testing.T) {
 	sup := new(Sup)
 	go Supervise(sup, d)
 
-	for d.process != nil && d.process.Pid == 0 {
+	for !d.Running() {
 		// wait for process to come up
 	}
 
 	// test "k", process should restart and get a new pid
 	d.Control.fifo <- Return{err: nil, msg: "k"}
-	expect(t, d.lock, uint32(1))
-	expect(t, d.lock_defer, uint32(0))
+	//expect(t, d.lock, uint32(1))
+	//expect(t, d.lock_defer, uint32(0))
 	for d.Running() {
 		// wait for process to die
 	}
@@ -93,7 +93,7 @@ func TestSignalsUDOT(t *testing.T) {
 	// test "u" bring up the service (new pid expected)
 	d.Control.fifo <- Return{err: nil, msg: "u"}
 	for !d.Running() {
-		// wait for new pid
+		// want it up
 	}
 	expect(t, true, d.Running())
 
@@ -101,15 +101,15 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "down"
 	d.Control.fifo <- Return{err: nil, msg: "down"}
-	for d.process != nil {
-		// wait for new pid
+	for d.Running() {
+		// want it down
 	}
 	expect(t, false, d.Running())
 
 	// test "up" bring up the service
 	d.Control.fifo <- Return{err: nil, msg: "up"}
 	for !d.Running() {
-		// wait for new pid
+		// want it up
 	}
 	expect(t, true, d.Running())
 

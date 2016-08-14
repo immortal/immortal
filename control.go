@@ -1,8 +1,6 @@
 package immortal
 
-import (
-	"os"
-)
+import "os"
 
 type Control struct {
 	fifo         chan Return

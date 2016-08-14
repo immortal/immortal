@@ -109,7 +109,38 @@ func (self *Daemon) Run() {
 		cmd.Stderr = nil
 	}
 
+	// wait N seconds before starting
+	if self.Wait > 0 {
+		time.Sleep(time.Duration(self.Wait) * time.Second)
+	}
+
+	if err := cmd.Start(); err != nil {
+		self.Control.state <- err
+		return
+	}
+
+	// set start
+	self.start = time.Now()
+
+	// store command process
+	self.process = cmd.Process
+
+	// write parent pid
+	if self.Pid.Parent != "" {
+		if err := self.WritePid(self.Pid.Parent, os.Getpid()); err != nil {
+			log.Print(err)
+		}
+	}
+
+	// write child pid
+	if self.Pid.Child != "" {
+		if err := self.WritePid(self.Pid.Child, self.process.Pid); err != nil {
+			log.Print(err)
+		}
+	}
+
 	go func() {
+		self.Control.state <- cmd.Wait()
 		defer func() {
 			if self.Logger.IsLogging() {
 				w.Close()
@@ -127,38 +158,6 @@ func (self *Daemon) Run() {
 			// reset process
 			self.process = &os.Process{}
 		}()
-
-		// wait N seconds before starting
-		if self.Wait > 0 {
-			time.Sleep(time.Duration(self.Wait) * time.Second)
-		}
-
-		if err := cmd.Start(); err != nil {
-			self.Control.state <- err
-			return
-		}
-
-		// set start
-		self.start = time.Now()
-
-		// store command process
-		self.process = cmd.Process
-
-		// write parent pid
-		if self.Pid.Parent != "" {
-			if err := self.WritePid(self.Pid.Parent, os.Getpid()); err != nil {
-				log.Print(err)
-			}
-		}
-
-		// write child pid
-		if self.Pid.Child != "" {
-			if err := self.WritePid(self.Pid.Child, self.process.Pid); err != nil {
-				log.Print(err)
-			}
-		}
-
-		self.Control.state <- cmd.Wait()
 	}()
 }
 
