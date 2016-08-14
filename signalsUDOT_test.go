@@ -62,7 +62,7 @@ func TestSignalsUDOT(t *testing.T) {
 	sup := new(Sup)
 	go Supervise(sup, d)
 
-	for d.process.Pid == 0 {
+	for d.process != nil && d.process.Pid == 0 {
 		// wait for process to come up
 	}
 
@@ -70,13 +70,13 @@ func TestSignalsUDOT(t *testing.T) {
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	expect(t, d.lock, uint32(1))
 	expect(t, d.lock_defer, uint32(0))
-	for d.process.Pid != 0 {
+	for d.Running() {
 		// wait for process to die
 	}
-	for d.process.Pid == 0 {
-		// wait for process to come  up
+	for !d.Running() {
+		// wait for process to came up
 	}
-	expect(t, true, sup.IsRunning(d.process.Pid))
+	expect(t, true, d.Running())
 
 	// just to track using: watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
 	time.Sleep(500 * time.Millisecond)
@@ -85,42 +85,42 @@ func TestSignalsUDOT(t *testing.T) {
 	d.Control.fifo <- Return{err: nil, msg: "o"}
 	d.Control.fifo <- Return{err: nil, msg: "k"}
 	// process shuld not start
-	for d.process.Pid != 0 {
+	for d.Running() {
 		// wait for process to restart and came up
 	}
-	expect(t, false, sup.IsRunning(d.process.Pid))
+	expect(t, false, d.Running())
 
 	// test "u" bring up the service (new pid expected)
 	d.Control.fifo <- Return{err: nil, msg: "u"}
-	for d.process.Pid == 0 {
+	for !d.Running() {
 		// wait for new pid
 	}
-	expect(t, true, sup.IsRunning(d.process.Pid))
+	expect(t, true, d.Running())
 
 	time.Sleep(500 * time.Millisecond)
 
 	// test "down"
 	d.Control.fifo <- Return{err: nil, msg: "down"}
-	for d.process.Pid != 0 {
+	for d.process != nil {
 		// wait for new pid
 	}
-	expect(t, false, sup.IsRunning(d.process.Pid))
+	expect(t, false, d.Running())
 
 	// test "up" bring up the service
 	d.Control.fifo <- Return{err: nil, msg: "up"}
-	for d.process.Pid == 0 {
+	for !d.Running() {
 		// wait for new pid
 	}
-	expect(t, true, sup.IsRunning(d.process.Pid))
+	expect(t, true, d.Running())
 
 	// run only one command at a time
 	d.Run()
 
 	d.Control.fifo <- Return{err: nil, msg: "t"}
-	for d.process.Pid != 0 {
+	for d.Running() {
 		// wait for process to stop
 	}
 
-	expect(t, false, sup.IsRunning(d.process.Pid))
+	expect(t, false, d.Running())
 	d.Control.fifo <- Return{err: nil, msg: "exit"}
 }

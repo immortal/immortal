@@ -51,9 +51,6 @@ func TestDaemonRun(t *testing.T) {
 	}
 	d.Run()
 	sup := new(Sup)
-	defer func() {
-		d.process.Kill()
-	}()
 	for {
 		select {
 		case err := <-d.Control.state:
@@ -61,7 +58,7 @@ func TestDaemonRun(t *testing.T) {
 				t.Error("Expecting error: signal: Killed")
 			}
 			return
-		case <-time.After(1 * time.Second):
+		case <-time.After(2 * time.Second):
 			if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
 				t.Error(err)
 			} else {
@@ -74,7 +71,6 @@ func TestDaemonRun(t *testing.T) {
 			}
 			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.Pid))
 			d.process.Kill()
-			expect(t, 2, int(time.Since(d.start).Seconds()))
 		}
 	}
 }

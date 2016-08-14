@@ -10,7 +10,7 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
-		if !self.IsRunning(d.process.Pid) {
+		if !d.Running() {
 			d.lock = 0
 			d.Control.state <- fmt.Errorf("UP")
 		}

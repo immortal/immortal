@@ -96,7 +96,7 @@ func TestSignalsFiFo(t *testing.T) {
 	sup := new(Sup)
 	go Supervise(sup, d)
 
-	for d.process.Pid == 0 {
+	for !d.Running() {
 		time.Sleep(time.Second)
 		// wait process to start up
 	}
@@ -139,7 +139,7 @@ func TestSignalsFiFo(t *testing.T) {
 
 	sup.HandleSignals("stop", d)
 	d.process.Kill()
-	for d.process.Pid != 0 {
+	for d.Running() {
 		// kill process and try to send signals
 	}
 

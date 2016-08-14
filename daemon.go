@@ -38,20 +38,12 @@ func (self *Daemon) WritePid(file string, pid int) error {
 
 func (self *Daemon) Run() {
 	if atomic.SwapUint32(&self.lock, uint32(1)) != 0 {
-		if self.process.Pid == 0 {
+		if self.process == nil {
 			log.Printf("Service down")
 		} else {
 			log.Printf("PID %d running", self.process.Pid)
 		}
 		return
-	}
-
-	// set start
-	self.start = time.Now()
-
-	// wait N seconds before starting
-	if self.Wait > 0 {
-		time.Sleep(time.Duration(self.Wait) * time.Second)
 	}
 
 	// Command to execute
@@ -125,16 +117,29 @@ func (self *Daemon) Run() {
 			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
 			atomic.StoreUint32(&self.lock, self.lock_defer)
 			if cmd.ProcessState != nil {
-				log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n", cmd.ProcessState.Pid(), cmd.ProcessState, cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), time.Since(self.start))
+				log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+					cmd.ProcessState.Pid(),
+					cmd.ProcessState,
+					cmd.ProcessState.UserTime(),
+					cmd.ProcessState.SystemTime(),
+					time.Since(self.start))
 			}
 			// reset process
 			self.process = &os.Process{}
 		}()
 
+		// wait N seconds before starting
+		if self.Wait > 0 {
+			time.Sleep(time.Duration(self.Wait) * time.Second)
+		}
+
 		if err := cmd.Start(); err != nil {
 			self.Control.state <- err
 			return
 		}
+
+		// set start
+		self.start = time.Now()
 
 		// store command process
 		self.process = cmd.Process
@@ -154,8 +159,11 @@ func (self *Daemon) Run() {
 		}
 
 		self.Control.state <- cmd.Wait()
-		return
 	}()
+}
+
+func (self *Daemon) Running() bool {
+	return self.process.Pid > 0
 }
 
 func New(cfg *Config) (*Daemon, error) {
