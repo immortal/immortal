@@ -94,7 +94,7 @@ func Supervise(s Supervisor, d *Daemon) {
 				}
 			}
 
-			// settle down, give time for writing the PID and avoid consuming CPU
+			// settle down, give time for writing the PID and avoid consuming CPU when looping
 			time.Sleep(time.Second)
 
 			// follow the new pid and stop running the command

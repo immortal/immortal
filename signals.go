@@ -10,7 +10,7 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
-		if !d.Running() {
+		if !d.IsRunning() {
 			d.lock = 0
 			d.Control.state <- fmt.Errorf("UP")
 		}
@@ -83,9 +83,9 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 
 	// k: Kill. Send the service a KILL signal.
 	case "k", "kill":
-		//to kill the entire process group.
+		// to kill the entire process group.
 		processGroup := 0 - d.process.Pid
-		if err := syscall.Kill(processGroup, 9); err != nil {
+		if err := syscall.Kill(processGroup, syscall.SIGKILL); err != nil {
 			log.Print(err)
 		}
 

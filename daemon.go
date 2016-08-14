@@ -9,12 +9,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
 
 type Daemon struct {
+	sync.Mutex
 	*Config
 	*Control
 	Forker
@@ -45,6 +47,7 @@ func (self *Daemon) Run() {
 		}
 		return
 	}
+	self.Lock()
 
 	// Command to execute
 	cmd := exec.Command(self.command[0], self.command[1:]...)
@@ -140,7 +143,7 @@ func (self *Daemon) Run() {
 	}
 
 	go func() {
-		err := cmd.Wait()
+		self.Control.state <- cmd.Wait()
 
 		if self.Logger.IsLogging() {
 			w.Close()
@@ -148,21 +151,20 @@ func (self *Daemon) Run() {
 
 		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
 		atomic.StoreUint32(&self.lock, self.lock_defer)
-		if cmd.ProcessState != nil {
-			log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
-				cmd.ProcessState.Pid(),
-				cmd.ProcessState,
-				cmd.ProcessState.UserTime(),
-				cmd.ProcessState.SystemTime(),
-				time.Since(self.start))
-		}
+		log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+			cmd.ProcessState.Pid(),
+			cmd.ProcessState,
+			cmd.ProcessState.UserTime(),
+			cmd.ProcessState.SystemTime(),
+			time.Since(self.start))
+
 		// reset process
 		self.process = &os.Process{}
-		self.Control.state <- err
+		self.Unlock()
 	}()
 }
 
-func (self *Daemon) Running() bool {
+func (self *Daemon) IsRunning() bool {
 	return self.process.Pid > 0
 }
 
