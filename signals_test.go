@@ -97,9 +97,9 @@ func TestSignalsFiFo(t *testing.T) {
 	go Supervise(sup, d)
 
 	for !d.Running() {
-		time.Sleep(time.Second)
 		// wait process to start up
 	}
+	time.Sleep(time.Second)
 
 	fifo, err := OpenFifo(filepath.Join(parentDir, "supervise/ok"))
 	if err != nil {
@@ -173,7 +173,7 @@ func waitSig(t *testing.T, fifo *os.File, sig string) {
 			if err == io.EOF {
 				continue
 			}
-			t.Error(err)
+			t.Fatal(err)
 		}
 		buf = buf[:n]
 		msg := strings.TrimSpace(string(buf))
