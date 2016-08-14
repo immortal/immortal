@@ -24,37 +24,30 @@ type Daemon struct {
 	lock       uint32
 	lock_defer uint32
 	start      time.Time
-	process    *os.Process
+	cmd        *exec.Cmd
 }
 
-func (self *Daemon) String() string {
-	return fmt.Sprintf("%d", self.process.Pid)
-}
-
-func (self *Daemon) WritePid(file string, pid int) error {
-	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
-		return err
-	}
-	return nil
+func (self *Daemon) Process() *os.Process {
+	return self.cmd.Process
 }
 
 func (self *Daemon) Run() {
 	if atomic.SwapUint32(&self.lock, uint32(1)) != 0 {
-		if self.process == nil {
+		if self.cmd == nil {
 			log.Printf("Service down")
 		} else {
-			log.Printf("PID %d running", self.process.Pid)
+			log.Printf("PID %d running", self.cmd.Process.Pid)
 		}
 		return
 	}
 	self.Lock()
 
 	// Command to execute
-	cmd := exec.Command(self.command[0], self.command[1:]...)
+	self.cmd = exec.Command(self.command[0], self.command[1:]...)
 
 	// change working directory
 	if self.Cwd != "" {
-		cmd.Dir = self.Cwd
+		self.cmd.Dir = self.Cwd
 	}
 
 	// set environment vars
@@ -63,7 +56,7 @@ func (self *Daemon) Run() {
 		for k, v := range self.Env {
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
-		cmd.Env = env
+		self.cmd.Env = env
 	}
 
 	sysProcAttr := new(syscall.SysProcAttr)
@@ -94,7 +87,7 @@ func (self *Daemon) Run() {
 	sysProcAttr.Pgid = 0
 
 	// set the attributes
-	cmd.SysProcAttr = sysProcAttr
+	self.cmd.SysProcAttr = sysProcAttr
 
 	// log only if are available loggers
 	var (
@@ -103,13 +96,13 @@ func (self *Daemon) Run() {
 	)
 	if self.Logger.IsLogging() {
 		r, w = io.Pipe()
-		cmd.Stdout = w
-		cmd.Stderr = w
+		self.cmd.Stdout = w
+		self.cmd.Stderr = w
 		go self.Logger.StdHandler(r)
 	} else {
-		cmd.Stdin = nil
-		cmd.Stdout = nil
-		cmd.Stderr = nil
+		self.cmd.Stdin = nil
+		self.cmd.Stdout = nil
+		self.cmd.Stderr = nil
 	}
 
 	// wait N seconds before starting
@@ -117,16 +110,13 @@ func (self *Daemon) Run() {
 		time.Sleep(time.Duration(self.Wait) * time.Second)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := self.cmd.Start(); err != nil {
 		self.Control.state <- err
 		return
 	}
 
 	// set start time
 	self.start = time.Now()
-
-	// store command process
-	self.process.Pid = cmd.Process.Pid
 
 	// write parent pid
 	if self.Pid.Parent != "" {
@@ -137,35 +127,43 @@ func (self *Daemon) Run() {
 
 	// write child pid
 	if self.Pid.Child != "" {
-		if err := self.WritePid(self.Pid.Child, self.process.Pid); err != nil {
+		if err := self.WritePid(self.Pid.Child, self.cmd.Process.Pid); err != nil {
 			log.Print(err)
 		}
 	}
 
 	go func() {
-		self.Control.state <- cmd.Wait()
-
-		if self.Logger.IsLogging() {
-			w.Close()
-		}
-
-		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
-		atomic.StoreUint32(&self.lock, self.lock_defer)
-		log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
-			cmd.ProcessState.Pid(),
-			cmd.ProcessState,
-			cmd.ProcessState.UserTime(),
-			cmd.ProcessState.SystemTime(),
-			time.Since(self.start))
-
-		// reset process
-		// self.process = &os.Process{}
-		self.Unlock()
+		defer func() {
+			if self.Logger.IsLogging() {
+				w.Close()
+			}
+			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+			atomic.StoreUint32(&self.lock, self.lock_defer)
+			log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+				self.cmd.ProcessState.Pid(),
+				self.cmd.ProcessState,
+				self.cmd.ProcessState.UserTime(),
+				self.cmd.ProcessState.SystemTime(),
+				time.Since(self.start))
+			//self.cmd = nil
+			fmt.Println("fin deferred ---------------")
+			self.Unlock()
+		}()
+		self.Control.state <- self.cmd.Wait()
 	}()
 }
 
 func (self *Daemon) IsRunning() bool {
-	return self.process.Pid > 0
+	return self.cmd != nil &&
+		self.cmd.ProcessState == nil &&
+		self.cmd.Process.Pid > 0
+}
+
+func (self *Daemon) WritePid(file string, pid int) error {
+	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
+		return err
+	}
+	return nil
 }
 
 func New(cfg *Config) (*Daemon, error) {
@@ -223,6 +221,5 @@ func New(cfg *Config) (*Daemon, error) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
-		process: &os.Process{},
 	}, nil
 }

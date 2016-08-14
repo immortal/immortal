@@ -67,10 +67,10 @@ func TestDaemonRun(t *testing.T) {
 			if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 				t.Error(err)
 			} else {
-				expect(t, d.process.Pid, pid)
+				expect(t, d.Process().Pid, pid)
 			}
-			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.process.Pid))
-			d.process.Kill()
+			expect(t, fmt.Sprintf("%s", d), fmt.Sprintf("%d", d.Process().Pid))
+			d.Process().Kill()
 		}
 	}
 }

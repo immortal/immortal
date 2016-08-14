@@ -138,7 +138,7 @@ func TestSignalsFiFo(t *testing.T) {
 	}
 
 	sup.HandleSignals("stop", d)
-	d.process.Kill()
+	d.Process().Kill()
 	for d.IsRunning() {
 		// kill process and try to send signals
 	}
