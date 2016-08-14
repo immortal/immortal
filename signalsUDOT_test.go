@@ -1,11 +1,13 @@
 package immortal
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -45,82 +47,21 @@ func TestSignalsUDOT(t *testing.T) {
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
 	}
-	d := &Daemon{
-		Config: cfg,
-		Control: &Control{
-			fifo:  make(chan Return),
-			quit:  make(chan struct{}),
-			state: make(chan error),
-		},
-		Forker: &myFork{},
-		Logger: &LogWriter{
-			logger: NewLogger(cfg),
-		},
-		process: &os.Process{},
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
 	d.Run()
-	sup := new(Sup)
-	go Supervise(sup, d)
+	//	sup := new(Sup)
 
-	for !d.Running() {
-		// wait for process to come up
-	}
+	fmt.Printf("d.process.Pid = %+v\n", d.process.Pid)
 
 	// test "k", process should restart and get a new pid
-	d.Control.fifo <- Return{err: nil, msg: "k"}
-	//expect(t, d.lock, uint32(1))
-	//expect(t, d.lock_defer, uint32(0))
-	for d.Running() {
-		// wait for process to die
+	//	sup.HandleSignals("k", d)
+	processGroup := 0 - d.process.Pid
+	if err := syscall.Kill(processGroup, 9); err != nil {
+		fmt.Printf("err = %+v\n", err)
 	}
-	for !d.Running() {
-		// wait for process to came up
-	}
-	expect(t, true, d.Running())
+	time.Sleep(time.Second)
 
-	// just to track using: watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
-	time.Sleep(500 * time.Millisecond)
-
-	// test "once", process should not restart after going down
-	d.Control.fifo <- Return{err: nil, msg: "o"}
-	d.Control.fifo <- Return{err: nil, msg: "k"}
-	// process shuld not start
-	for d.Running() {
-		// wait for process to restart and came up
-	}
-	expect(t, false, d.Running())
-
-	// test "u" bring up the service (new pid expected)
-	d.Control.fifo <- Return{err: nil, msg: "u"}
-	for !d.Running() {
-		// want it up
-	}
-	expect(t, true, d.Running())
-
-	time.Sleep(500 * time.Millisecond)
-
-	// test "down"
-	d.Control.fifo <- Return{err: nil, msg: "down"}
-	for d.Running() {
-		// want it down
-	}
-	expect(t, false, d.Running())
-
-	// test "up" bring up the service
-	d.Control.fifo <- Return{err: nil, msg: "up"}
-	for !d.Running() {
-		// want it up
-	}
-	expect(t, true, d.Running())
-
-	// run only one command at a time
-	d.Run()
-
-	d.Control.fifo <- Return{err: nil, msg: "t"}
-	for d.Running() {
-		// wait for process to stop
-	}
-
-	expect(t, false, d.Running())
-	d.Control.fifo <- Return{err: nil, msg: "exit"}
 }

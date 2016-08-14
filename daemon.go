@@ -140,24 +140,25 @@ func (self *Daemon) Run() {
 	}
 
 	go func() {
-		self.Control.state <- cmd.Wait()
-		defer func() {
-			if self.Logger.IsLogging() {
-				w.Close()
-			}
-			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
-			atomic.StoreUint32(&self.lock, self.lock_defer)
-			if cmd.ProcessState != nil {
-				log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
-					cmd.ProcessState.Pid(),
-					cmd.ProcessState,
-					cmd.ProcessState.UserTime(),
-					cmd.ProcessState.SystemTime(),
-					time.Since(self.start))
-			}
-			// reset process
-			self.process = &os.Process{}
-		}()
+		err := cmd.Wait()
+
+		if self.Logger.IsLogging() {
+			w.Close()
+		}
+
+		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+		atomic.StoreUint32(&self.lock, self.lock_defer)
+		if cmd.ProcessState != nil {
+			log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+				cmd.ProcessState.Pid(),
+				cmd.ProcessState,
+				cmd.ProcessState.UserTime(),
+				cmd.ProcessState.SystemTime(),
+				time.Since(self.start))
+		}
+		// reset process
+		self.process = &os.Process{}
+		self.Control.state <- err
 	}()
 }
 

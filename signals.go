@@ -83,17 +83,11 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 
 	// k: Kill. Send the service a KILL signal.
 	case "k", "kill":
-		if err := d.process.Kill(); err != nil {
+		//to kill the entire process group.
+		processGroup := 0 - d.process.Pid
+		if err := syscall.Kill(processGroup, 9); err != nil {
 			log.Print(err)
 		}
-		// to handle zombies
-		//var w syscall.WaitStatus
-		//pid, err := syscall.Wait4(-1, &w, 0, nil)
-		//if err != nil {
-		//log.Println(err)
-		//} else {
-		//log.Println("pid", pid, "exited", w.Exited(), "exit status", w.ExitStatus())
-		//}
 
 	// in: TTIN. Send the service a TTIN signal.
 	case "in", "TTIN":
