@@ -78,8 +78,19 @@ func Supervise(s Supervisor, d *Daemon) {
 		s.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
 	}
 
-	// loop until quit signal received
+	// run loop
 	run := make(chan struct{}, 1)
+	go func() {
+		for {
+			select {
+			case <-d.Control.quit:
+				return
+			case <-run:
+				d.Run()
+			}
+		}
+	}()
+	// supervisor loop
 	for {
 		select {
 		case <-d.Control.quit:
@@ -128,11 +139,6 @@ func Supervise(s Supervisor, d *Daemon) {
 				log.Printf("control error: %s", fifo.err)
 			}
 			go s.HandleSignals(fifo.msg, d)
-		}
-
-		select {
-		case <-run:
-			d.Run()
 		}
 	}
 }
