@@ -10,11 +10,9 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
-		if !d.IsRunning() {
-			d.lock = 0
-			d.Control.state <- fmt.Errorf("UP")
-		}
+		d.lock = 0
 		d.lock_defer = 0
+		d.Run()
 
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":

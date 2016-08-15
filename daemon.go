@@ -34,8 +34,8 @@ func (self *Daemon) Run() {
 		if self.cmd == nil {
 			log.Printf("Service down")
 		} else {
-			//	log.Printf("PID %d (WANT IT DOWN) FIX THIS", self.cmd.Process.Pid)
-			log.Println("FIX THIS")
+			log.Printf("PID %d (WANT IT DOWN) FIX THIS", self.cmd.Process.Pid)
+			//log.Println("FIX THIS")
 		}
 		return
 	}
@@ -131,14 +131,14 @@ func (self *Daemon) Run() {
 	}
 
 	go func() {
-		err := self.cmd.Wait()
-		if self.Logger.IsLogging() {
-			w.Close()
-		}
-		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
-		atomic.StoreUint32(&self.lock, self.lock_defer)
-		fmt.Println("fin  ---------------")
-		self.Control.state <- err
+		defer func() {
+			if self.Logger.IsLogging() {
+				w.Close()
+			}
+			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+			atomic.StoreUint32(&self.lock, self.lock_defer)
+		}()
+		self.Control.state <- self.cmd.Wait()
 	}()
 }
 

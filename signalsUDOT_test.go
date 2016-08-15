@@ -58,8 +58,8 @@ func TestSignalsUDOT(t *testing.T) {
 	//d.Control.fifo <- Return{err: nil, msg: "k"}
 	fmt.Printf("d.Process().Pid = %+v\n", d.Process().Pid)
 	sup.HandleSignals("k", d)
-	//expect(t, uint32(1), d.lock)
-	//	expect(t, d.lock_defer, uint32(0))
+	expect(t, uint32(1), d.lock)
+	expect(t, uint32(0), d.lock_defer)
 
 	done := make(chan struct{}, 1)
 	select {
@@ -72,7 +72,6 @@ func TestSignalsUDOT(t *testing.T) {
 				exitError.UserTime(),
 				exitError.SystemTime(),
 				time.Since(d.start))
-			fmt.Printf("d.lock = %+v\n", d.lock)
 		}
 		done <- struct{}{}
 	}
@@ -85,108 +84,54 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal("Expecting a new pid")
 	}
 
-	fmt.Printf("d.Process().Pid ????????= %+v\n", d.Process().Pid)
-	for {
-	}
+	fmt.Printf("d.Process().Pid %+v\n", d.Process().Pid)
+
 	// test "d", (keep it down and don't restart)
 	sup.HandleSignals("d", d)
 	select {
 	case <-d.Control.state:
-		fmt.Println("going to sleep...")
-		time.Sleep(5 * time.Second)
-		fmt.Println("XXX bBB YYY anything before returning", time.Now())
+		d.cmd.Process.Pid = 0
 		done <- struct{}{}
 	}
 	select {
 	case <-done:
 		d.Run()
 	}
-	d.Run()
+	expect(t, false, d.IsRunning())
+	expect(t, 0, d.Process().Pid)
 
-	fmt.Printf("d.Process().Pid = %+v\n", d.Process().Pid)
-	fmt.Printf("d.IsRunning() = %+v\n", d.IsRunning())
+	// test "u" more debug with: watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
+	sup.HandleSignals("u", d)
 
-	// test "u", (keep it down and don't restart) <------------------------------
-	if !d.IsRunning() {
-		d.lock = 0
+	// test "once", process should not restart after going down
+	sup.HandleSignals("o", d)
+	sup.HandleSignals("k", d)
+	select {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
 	}
-	d.lock_defer = 0
-	//sup.HandleSignals("u", d)
-	d.Run()
-	d.Run()
-
-	fmt.Printf("d.Process().Pid  sehr gut .-) = %+v\n", d.Process().Pid)
-	for {
+	select {
+	case <-done:
+		d.Run()
 	}
+	expect(t, false, d.IsRunning())
 
-	//	done := make(chan struct{}, 1)
-	for {
-		select {
-		case <-d.Control.state:
-			fmt.Printf("d.Process().Pid MUERTO = %+v %v\n", d.Process().Pid, d.IsRunning())
-			fmt.Printf("d.IsRunning() = %+v\n", d.IsRunning())
-			done <- struct{}{}
-		}
-
-		select {
-		case <-done:
-			fmt.Println("Done, starting a new process", d.IsRunning())
-			d.Run()
-		}
+	// test "up"
+	sup.HandleSignals("up", d)
+	sup.HandleSignals("stop", d)
+	sup.HandleSignals("cont", d)
+	sup.HandleSignals("t", d)
+	select {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
 	}
-
-	//# ----------------------------------------------------------------------------
-	// want it down
-	//	fmt.Printf("d.Process().Pid = %+v\n", d.Process().Pid)
-
-	//for d.Process().Pid == 0 {
-	//// wait for process to come  up
-	//}
-	//expect(t, true, sup.IsRunning(d.Process().Pid))
-
-	//// just to track using: watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
-	//time.Sleep(500 * time.Millisecond)
-
-	//// test "once", process should not restart after going down
-	//d.Control.fifo <- Return{err: nil, msg: "o"}
-	//d.Control.fifo <- Return{err: nil, msg: "k"}
-	//// process shuld not start
-	//for d.Process().Pid != 0 {
-	//// wait for process to restart and came up
-	//}
-	//expect(t, false, sup.IsRunning(d.Process().Pid))
-
-	//// test "u" bring up the service (new pid expected)
-	//d.Control.fifo <- Return{err: nil, msg: "u"}
-	//for d.Process().Pid == 0 {
-	//// wait for new pid
-	//}
-	//expect(t, true, sup.IsRunning(d.Process().Pid))
-
-	//time.Sleep(500 * time.Millisecond)
-
-	//// test "down"
-	//d.Control.fifo <- Return{err: nil, msg: "down"}
-	//for d.Process().Pid != 0 {
-	//// wait for new pid
-	//}
-	//expect(t, false, sup.IsRunning(d.Process().Pid))
-
-	//// test "up" bring up the service
-	//d.Control.fifo <- Return{err: nil, msg: "up"}
-	//for d.Process().Pid == 0 {
-	//// wait for new pid
-	//}
-	//expect(t, true, sup.IsRunning(d.Process().Pid))
-
-	//// run only one command at a time
-	//d.Run()
-
-	//d.Control.fifo <- Return{err: nil, msg: "t"}
-	//for d.Process().Pid != 0 {
-	//// wait for process to stop
-	//}
-
-	//expect(t, false, sup.IsRunning(d.Process().Pid))
-	//d.Control.fifo <- Return{err: nil, msg: "exit"}
+	select {
+	case <-done:
+		d.Run()
+	}
+	// after exiting will get a race cond
+	expect(t, true, d.IsRunning())
+	sup.HandleSignals("exit", d)
 }
