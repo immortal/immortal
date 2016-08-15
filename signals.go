@@ -3,7 +3,6 @@ package immortal
 import (
 	"fmt"
 	"log"
-	"sync/atomic"
 	"syscall"
 )
 
@@ -11,26 +10,26 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
-		atomic.StoreUint32(&d.lock, 0)
-		atomic.StoreUint32(&d.lock_defer, 0)
+		d.lock = 0
+		d.lock_defer = 0
 		d.Run()
 
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
-		atomic.StoreUint32(&d.lock_defer, 1)
-		if err := d.Process().Signal(syscall.SIGTERM); err != nil {
-			log.Print(err)
-		}
-
-	// t: Terminate. Send the service a TERM signal.
-	case "t", "term":
+		d.lock_defer = 1
 		if err := d.Process().Signal(syscall.SIGTERM); err != nil {
 			log.Print(err)
 		}
 
 	// o: Once. If the service is not running, start it. Do not restart it if it stops.
 	case "o", "once":
-		atomic.StoreUint32(&d.lock_defer, 1)
+		d.lock_defer = 1
+
+	// t: Terminate. Send the service a TERM signal.
+	case "t", "term":
+		if err := d.Process().Signal(syscall.SIGTERM); err != nil {
+			log.Print(err)
+		}
 
 	// p: Pause. Send the service a STOP signal.
 	case "p", "pause", "s", "stop":
