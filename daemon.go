@@ -9,14 +9,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
 
 type Daemon struct {
-	sync.Mutex
 	*Config
 	*Control
 	Forker
@@ -36,11 +34,11 @@ func (self *Daemon) Run() {
 		if self.cmd == nil {
 			log.Printf("Service down")
 		} else {
-			log.Printf("PID %d (WANT IT DOWN) FIX THIS", self.cmd.Process.Pid)
+			//	log.Printf("PID %d (WANT IT DOWN) FIX THIS", self.cmd.Process.Pid)
+			log.Println("FIX THIS")
 		}
 		return
 	}
-	self.Lock()
 
 	// Command to execute
 	self.cmd = exec.Command(self.command[0], self.command[1:]...)
@@ -133,23 +131,14 @@ func (self *Daemon) Run() {
 	}
 
 	go func() {
-		defer func() {
-			if self.Logger.IsLogging() {
-				w.Close()
-			}
-			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
-			atomic.StoreUint32(&self.lock, self.lock_defer)
-			log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
-				self.cmd.ProcessState.Pid(),
-				self.cmd.ProcessState,
-				self.cmd.ProcessState.UserTime(),
-				self.cmd.ProcessState.SystemTime(),
-				time.Since(self.start))
-			fmt.Println("fin deferred ---------------")
-			self.Unlock()
-		}()
-		self.Control.state <- self.cmd.Wait()
-		self.cmd.Process.Pid = 0
+		err := self.cmd.Wait()
+		if self.Logger.IsLogging() {
+			w.Close()
+		}
+		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+		atomic.StoreUint32(&self.lock, self.lock_defer)
+		fmt.Println("fin  ---------------")
+		self.Control.state <- err
 	}()
 }
 
