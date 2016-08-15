@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -92,6 +93,7 @@ func Supervise(s Supervisor, d *Daemon) {
 				if state != nil {
 					if exitError, ok := state.(*exec.ExitError); ok {
 						d.cmd.Process.Pid = 0
+						atomic.StoreUint32(&d.lock, d.lock_defer)
 						log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
 							exitError.Pid(),
 							exitError,

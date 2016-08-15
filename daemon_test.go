@@ -1,7 +1,6 @@
 package immortal
 
 import (
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -206,8 +205,6 @@ func TestSignalsUDOT(t *testing.T) {
 
 	old_pid := d.Process().Pid
 	// test "k", process should restart and get a new pid
-	//d.Control.fifo <- Return{err: nil, msg: "k"}
-	fmt.Printf("d.Process().Pid = %+v\n", d.Process().Pid)
 	sup.HandleSignals("k", d)
 	expect(t, uint32(1), d.lock)
 	expect(t, uint32(0), d.lock_defer)
@@ -237,7 +234,6 @@ func TestSignalsUDOT(t *testing.T) {
 	case <-done:
 		d.Run()
 	}
-	expect(t, false, d.IsRunning())
 	expect(t, 0, d.Process().Pid)
 
 	// test "u" more debug with: watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
@@ -255,7 +251,7 @@ func TestSignalsUDOT(t *testing.T) {
 	case <-done:
 		d.Run()
 	}
-	expect(t, false, d.IsRunning())
+	expect(t, 0, d.Process().Pid)
 
 	// test "up"
 	sup.HandleSignals("up", d)
@@ -272,6 +268,6 @@ func TestSignalsUDOT(t *testing.T) {
 		d.Run()
 	}
 	// after exiting will get a race cond
-	expect(t, true, d.IsRunning())
+	expect(t, true, d.Process().Pid > 0)
 	sup.HandleSignals("exit", d)
 }

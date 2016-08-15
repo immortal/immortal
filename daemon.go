@@ -142,12 +142,6 @@ func (self *Daemon) Run() {
 	}()
 }
 
-func (self *Daemon) IsRunning() bool {
-	return self.cmd != nil &&
-		self.cmd.ProcessState == nil &&
-		self.cmd.Process.Pid > 0
-}
-
 func (self *Daemon) WritePid(file string, pid int) error {
 	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
 		return err

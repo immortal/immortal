@@ -94,9 +94,43 @@ func TestSignalsFiFo(t *testing.T) {
 	}
 	d.Run()
 	sup := new(Sup)
-	go Supervise(sup, d)
 
+	// check pids
+	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
+		t.Error(err)
+	} else {
+		expect(t, os.Getpid(), pid)
+	}
+	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
+		t.Error(err)
+	} else {
+		expect(t, d.Process().Pid, pid)
+	}
+
+	old_pid := d.Process().Pid
+	// test "k", process should restart and get a new pid
+	sup.HandleSignals("k", d)
+	expect(t, uint32(1), d.lock)
+	expect(t, uint32(0), d.lock_defer)
+	done := make(chan struct{}, 1)
+	select {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
+	}
+	select {
+	case <-done:
+		d.Run()
+	}
+
+	if old_pid == d.Process().Pid {
+		t.Fatal("Expecting a new pid")
+	}
+
+	// wait "probably" for fifo to be ready (check this)
 	time.Sleep(time.Second)
+
+	sup.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
 
 	fifo, err := OpenFifo(filepath.Join(parentDir, "supervise/ok"))
 	if err != nil {
@@ -129,13 +163,31 @@ func TestSignalsFiFo(t *testing.T) {
 		{"winch", "--w"},
 	}
 
+	go func() {
+		for {
+			select {
+			case fifo := <-d.Control.fifo:
+				sup.HandleSignals(fifo.msg, d)
+			}
+		}
+	}()
+
 	for _, s := range testSignals {
 		sup.HandleSignals(s.signal, d)
 		waitSig(t, fifo, s.expected)
 	}
 
-	sup.HandleSignals("d", d)
-	time.Sleep(time.Second)
+	// test "d", (keep it down and don't restart)
+	sup.HandleSignals("down", d)
+	select {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
+	}
+	select {
+	case <-done:
+		d.Run()
+	}
 
 	// create error os: process not initialized
 	mylog.Reset()
@@ -145,8 +197,6 @@ func TestSignalsFiFo(t *testing.T) {
 		mylog.Reset()
 	}
 
-	//	sup.HandleSignals("k", d)
-	//	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
 	sup.HandleSignals("d", d)
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
 	sup.HandleSignals("t", d)
