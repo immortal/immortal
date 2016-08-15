@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -78,52 +79,62 @@ func Supervise(s Supervisor, d *Daemon) {
 		s.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
 	}
 
-	// loop until quit signal received
+	// run loop
+	run := make(chan struct{}, 1)
 	for {
 		select {
 		case <-d.Control.quit:
 			return
-		case state := <-d.Control.state:
-			if state != nil {
-				if exitError, ok := state.(*exec.ExitError); ok {
-					log.Print(exitError)
-				} else if state.Error() == "EXIT" {
-					log.Printf("PID: %d Exited", d.process.GetPid())
-				} else {
-					log.Print(state)
-				}
-			}
-
-			// settle down, give time for writing the PID and avoid consuming CPU
-			time.Sleep(time.Second)
-
-			// follow the new pid and stop running the command
-			// unless the new pid dies
-			if d.Pid.Follow != "" {
-				pid, err := s.ReadPidFile(d.Pid.Follow)
-				if err != nil {
-					log.Printf("Cannot read pidfile:%s,  %s", d.Pid.Follow, err.Error())
-					d.Run()
-				} else {
-					// check if pid in file is valid
-					if pid > 1 && pid != d.process.GetPid() && s.IsRunning(pid) {
-						// set pid to new pid in file
-						d.process.SetPid(pid)
-						log.Printf("Watching pid %d on file: %s", d.process.GetPid(), d.Pid.Follow)
-						go s.WatchPid(pid, d.Control.state)
+		case <-run:
+			d.Run()
+		default:
+			select {
+			case state := <-d.Control.state:
+				if state != nil {
+					if exitError, ok := state.(*exec.ExitError); ok {
+						d.cmd.Process.Pid = 0
+						atomic.StoreUint32(&d.lock, d.lock_defer)
+						log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+							exitError.Pid(),
+							exitError,
+							exitError.UserTime(),
+							exitError.SystemTime(),
+							time.Since(d.start))
+					} else if state.Error() == "EXIT" {
+						log.Printf("PID: %d Exited", d.Process().Pid)
 					} else {
-						// if cmd exits or process is kill
-						d.Run()
+						log.Print(state)
 					}
 				}
-			} else {
-				d.Run()
+
+				// follow the new pid and stop running the command
+				// unless the new pid dies
+				if d.Pid.Follow != "" {
+					pid, err := s.ReadPidFile(d.Pid.Follow)
+					if err != nil {
+						log.Printf("Cannot read pidfile:%s,  %s", d.Pid.Follow, err)
+						run <- struct{}{}
+					} else {
+						// check if pid in file is valid
+						if pid > 1 && pid != d.Process().Pid && s.IsRunning(pid) {
+							// set pid to new pid in file
+							d.Process().Pid = pid
+							log.Printf("Watching pid %d on file: %s", d.Process().Pid, d.Pid.Follow)
+							go s.WatchPid(pid, d.Control.state)
+						} else {
+							// if cmd exits or process is kill
+							run <- struct{}{}
+						}
+					}
+				} else {
+					run <- struct{}{}
+				}
+			case fifo := <-d.Control.fifo:
+				if fifo.err != nil {
+					log.Printf("control error: %s", fifo.err)
+				}
+				go s.HandleSignals(fifo.msg, d)
 			}
-		case fifo := <-d.Control.fifo:
-			if fifo.err != nil {
-				log.Printf("control error: %s", fifo.err)
-			}
-			go s.HandleSignals(fifo.msg, d)
 		}
 	}
 }

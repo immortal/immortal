@@ -19,38 +19,33 @@ type Daemon struct {
 	*Control
 	Forker
 	Logger
-	count       uint32
-	count_defer uint32
-	process     ProcessContainer
+	lock       uint32
+	lock_defer uint32
+	start      time.Time
+	cmd        *exec.Cmd
 }
 
-func (self *Daemon) String() string {
-	return fmt.Sprintf("%d", self.process.GetPid())
-}
-
-func (self *Daemon) WritePid(file string, pid int) error {
-	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
-		return err
-	}
-	return nil
+func (self *Daemon) Process() *os.Process {
+	return self.cmd.Process
 }
 
 func (self *Daemon) Run() {
-	if atomic.SwapUint32(&self.count, uint32(1)) != 0 {
-		log.Printf("PID: %d running", self.process.GetPid())
+	if atomic.SwapUint32(&self.lock, uint32(1)) != 0 {
+		if self.cmd == nil {
+			log.Printf("Service down")
+		} else {
+			log.Printf("PID %d (WANT IT DOWN) FIX THIS", self.cmd.Process.Pid)
+			//log.Println("FIX THIS")
+		}
 		return
 	}
 
-	if self.Wait > 0 {
-		time.Sleep(time.Duration(self.Wait) * time.Second)
-	}
-
 	// Command to execute
-	cmd := exec.Command(self.command[0], self.command[1:]...)
+	self.cmd = exec.Command(self.command[0], self.command[1:]...)
 
 	// change working directory
 	if self.Cwd != "" {
-		cmd.Dir = self.Cwd
+		self.cmd.Dir = self.Cwd
 	}
 
 	// set environment vars
@@ -59,7 +54,7 @@ func (self *Daemon) Run() {
 		for k, v := range self.Env {
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
-		cmd.Env = env
+		self.cmd.Env = env
 	}
 
 	sysProcAttr := new(syscall.SysProcAttr)
@@ -89,7 +84,8 @@ func (self *Daemon) Run() {
 	sysProcAttr.Setpgid = true
 	sysProcAttr.Pgid = 0
 
-	cmd.SysProcAttr = sysProcAttr
+	// set the attributes
+	self.cmd.SysProcAttr = sysProcAttr
 
 	// log only if are available loggers
 	var (
@@ -98,48 +94,59 @@ func (self *Daemon) Run() {
 	)
 	if self.Logger.IsLogging() {
 		r, w = io.Pipe()
-		cmd.Stdout = w
-		cmd.Stderr = w
+		self.cmd.Stdout = w
+		self.cmd.Stderr = w
 		go self.Logger.StdHandler(r)
 	} else {
-		cmd.Stdin = nil
-		cmd.Stdout = nil
-		cmd.Stderr = nil
+		self.cmd.Stdin = nil
+		self.cmd.Stdout = nil
+		self.cmd.Stderr = nil
+	}
+
+	// wait N seconds before starting
+	if self.Wait > 0 {
+		time.Sleep(time.Duration(self.Wait) * time.Second)
+	}
+
+	if err := self.cmd.Start(); err != nil {
+		self.Control.state <- err
+		return
+	}
+
+	// set start time
+	self.start = time.Now()
+
+	// write parent pid
+	if self.Pid.Parent != "" {
+		if err := self.WritePid(self.Pid.Parent, os.Getpid()); err != nil {
+			log.Print(err)
+		}
+	}
+
+	// write child pid
+	if self.Pid.Child != "" {
+		if err := self.WritePid(self.Pid.Child, self.cmd.Process.Pid); err != nil {
+			log.Print(err)
+		}
 	}
 
 	go func() {
-		// count_defer defaults to 0, 1 to run only once/down (don't restart)
 		defer func() {
-			atomic.StoreUint32(&self.count, self.count_defer)
+			if self.Logger.IsLogging() {
+				w.Close()
+			}
+			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+			atomic.StoreUint32(&self.lock, self.lock_defer)
 		}()
-
-		if self.Logger.IsLogging() {
-			defer w.Close()
-		}
-
-		if err := cmd.Start(); err != nil {
-			self.Control.state <- err
-			return
-		}
-
-		self.process.SetProcess(cmd.Process)
-
-		// write parent pid
-		if self.Pid.Parent != "" {
-			if err := self.WritePid(self.Pid.Parent, os.Getpid()); err != nil {
-				log.Print(err)
-			}
-		}
-
-		// write child pid
-		if self.Pid.Child != "" {
-			if err := self.WritePid(self.Pid.Child, self.process.GetPid()); err != nil {
-				log.Print(err)
-			}
-		}
-
-		self.Control.state <- cmd.Wait()
+		self.Control.state <- self.cmd.Wait()
 	}()
+}
+
+func (self *Daemon) WritePid(file string, pid int) error {
+	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
+		return err
+	}
+	return nil
 }
 
 func New(cfg *Config) (*Daemon, error) {
@@ -197,6 +204,5 @@ func New(cfg *Config) (*Daemon, error) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
-		process: &Process{&os.Process{}},
 	}, nil
 }

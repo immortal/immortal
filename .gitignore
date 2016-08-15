@@ -2,7 +2,7 @@ ir-scandir
 !*ir-scandir/
 immortal
 !*immortal/
-coverage.out
+coverage.*
 .goxc.local.json
 .goxc.json
 build

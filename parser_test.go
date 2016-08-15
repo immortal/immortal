@@ -253,3 +253,172 @@ func TestParseArgsTable(t *testing.T) {
 		}
 	}
 }
+
+func TestParseYamlCmd(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "TestParseYamlCmd")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	yaml := []byte(`
+cwd: /tmp/
+env:
+    DEBUG: 1
+    ENVIROMENT: production
+pid:
+    follow: /path/to/unicorn.pid
+    parent: /tmp/parent.pid
+    child: /tmp/child.pid
+log:
+    file: /var/log/app.log
+    age: 86400 # seconds
+    num: 7     # int
+    size: 1    # MegaBytes
+logger: logger -t unicorn
+user: www
+wait: 1`)
+	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", tmpfile.Name()}
+	parser := &Parse{
+		UserLookup: MockLookup,
+	}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsYaml", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	_, err = ParseArgs(parser, fs)
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	if err == nil {
+		t.Error("Expecting error: Missing command")
+	}
+}
+
+func TestParseYamlCwd(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "TestParseYamlCwd")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	yaml := []byte(`
+cmd: command
+cwd: /dev/null/nonexistent
+env:
+    DEBUG: 1
+    ENVIROMENT: production
+pid:
+    follow: /path/to/unicorn.pid
+    parent: /tmp/parent.pid
+    child: /tmp/child.pid
+log:
+    file: /var/log/app.log
+    age: 86400 # seconds
+    num: 7     # int
+    size: 1    # MegaBytes
+logger: logger -t unicorn
+user: www
+wait: 1`)
+	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", tmpfile.Name()}
+	parser := &Parse{
+		UserLookup: MockLookup,
+	}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsYamlCwd", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	_, err = ParseArgs(parser, fs)
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	if err == nil {
+		t.Error("Expecting error: Missing command")
+	}
+}
+
+func TestParseYamlUsrErr(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "TestParseYamlUsrErr")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	yaml := []byte(`
+cmd: command
+env:
+    DEBUG: 1
+    ENVIROMENT: production
+pid:
+    follow: /path/to/unicorn.pid
+    parent: /tmp/parent.pid
+    child: /tmp/child.pid
+log:
+    file: /var/log/app.log
+    age: 86400 # seconds
+    num: 7     # int
+    size: 1    # MegaBytes
+logger: logger -t unicorn
+user: nonexistent
+wait: 1`)
+	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", tmpfile.Name()}
+	parser := &Parse{
+		UserLookup: MockLookup,
+	}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsYamlUsrErr", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	_, err = ParseArgs(parser, fs)
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}
+
+func TestParseYamlErr(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "TestParseYamlErr")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	yaml := []byte(`
+    num: 7     # int
+    size: 1    # MegaBytes
+logger: logger -t unicorn
+user: nonexistent`)
+	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", tmpfile.Name()}
+	parser := &Parse{
+		UserLookup: MockLookup,
+	}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsYamlErr", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	_, err = ParseArgs(parser, fs)
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}

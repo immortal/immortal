@@ -1,32 +1,73 @@
 package immortal
 
 import (
-	"io/ioutil"
+	"bufio"
+	"bytes"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
 
-func TestHelperProcessSignals(*testing.T) {
+func TestHelperProcessSignalsFiFo(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, os.Kill)
-	select {
-	case <-c:
-		os.Exit(0)
-	case <-time.After(30 * time.Second):
-		os.Exit(1)
+	signal.Notify(c,
+		syscall.SIGALRM,
+		syscall.SIGCONT,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGQUIT,
+		syscall.SIGTTIN,
+		syscall.SIGTTOU,
+		syscall.SIGUSR1,
+		syscall.SIGUSR2,
+		syscall.SIGWINCH,
+	)
+	fifo, err := OpenFifo("supervise/control")
+	if err != nil {
+		panic(err)
+	}
+	defer fifo.Close()
+	for {
+		signalType := <-c
+		switch signalType {
+		case syscall.SIGALRM:
+			fmt.Fprintln(fifo, "--a")
+		case syscall.SIGCONT:
+			fmt.Fprintln(fifo, "--c")
+		case syscall.SIGHUP:
+			fmt.Fprintln(fifo, "--h")
+		case syscall.SIGINT:
+			fmt.Fprintln(fifo, "--i")
+		case syscall.SIGQUIT:
+			fmt.Fprintln(fifo, "--q")
+		case syscall.SIGTTIN:
+			fmt.Fprintln(fifo, "--in")
+		case syscall.SIGTTOU:
+			fmt.Fprintln(fifo, "--ou")
+		case syscall.SIGUSR1:
+			fmt.Fprintln(fifo, "--1")
+		case syscall.SIGUSR2:
+			fmt.Fprintln(fifo, "--2")
+		case syscall.SIGWINCH:
+			fmt.Fprintln(fifo, "--w")
+		}
 	}
 }
 
-func TestSignals(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+func TestSignalsFiFo(t *testing.T) {
+	var mylog bytes.Buffer
+	log.SetOutput(&mylog)
+	log.SetFlags(0)
 	base := filepath.Base(os.Args[0]) // "exec.test"
 	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
 	if dir == "." {
@@ -39,208 +80,150 @@ func TestSignals(t *testing.T) {
 	}
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignals"},
+		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsFiFo"},
 		Cwd:     parentDir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
+		ctrl: true,
 	}
-	c := make(chan os.Signal)
-	wait := make(chan struct{})
-	d := &Daemon{
-		Config: cfg,
-		Control: &Control{
-			fifo:  make(chan Return),
-			quit:  make(chan struct{}),
-			state: make(chan error),
-		},
-		Forker: &myFork{},
-		Logger: &LogWriter{
-			logger: NewLogger(cfg),
-		},
-		process: &catchSignals{&os.Process{}, c, wait},
+	d, err := New(cfg)
+	if err != nil {
+		t.Error(err)
 	}
 	d.Run()
 	sup := new(Sup)
-	go Supervise(sup, d)
 
-	// wait for process to startup
-	select {
-	case <-wait:
-	case <-time.After(1 * time.Second):
-		t.Fatal("timeout waiting for pid")
+	// check pids
+	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
+		t.Error(err)
+	} else {
+		expect(t, os.Getpid(), pid)
 	}
+	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
+		t.Error(err)
+	} else {
+		expect(t, d.Process().Pid, pid)
+	}
+
+	old_pid := d.Process().Pid
+	// test "k", process should restart and get a new pid
+	sup.HandleSignals("k", d)
+	expect(t, uint32(1), d.lock)
+	expect(t, uint32(0), d.lock_defer)
+	done := make(chan struct{}, 1)
+	select {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
+	}
+	select {
+	case <-done:
+		d.Run()
+	}
+
+	if old_pid == d.Process().Pid {
+		t.Fatal("Expecting a new pid")
+	}
+
+	// wait "probably" for fifo to be ready (check this)
+	time.Sleep(time.Second)
+
+	sup.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
+
+	fifo, err := OpenFifo(filepath.Join(parentDir, "supervise/ok"))
+	if err != nil {
+		t.Error(err)
+	}
+
 	var testSignals = []struct {
 		signal   string
-		expected os.Signal
+		expected string
 	}{
-		{"p", syscall.SIGSTOP},
-		{"pause", syscall.SIGSTOP},
-		{"s", syscall.SIGSTOP},
-		{"stop", syscall.SIGSTOP},
-		{"c", syscall.SIGCONT},
-		{"cont", syscall.SIGCONT},
-		{"h", syscall.SIGHUP},
-		{"hup", syscall.SIGHUP},
-		{"a", syscall.SIGALRM},
-		{"alrm", syscall.SIGALRM},
-		{"i", syscall.SIGINT},
-		{"int", syscall.SIGINT},
-		{"q", syscall.SIGQUIT},
-		{"quit", syscall.SIGQUIT},
-		{"1", syscall.SIGUSR1},
-		{"usr1", syscall.SIGUSR1},
-		{"2", syscall.SIGUSR2},
-		{"2", syscall.SIGUSR2},
-		{"t", syscall.SIGTERM},
-		{"term", syscall.SIGTERM},
-		{"in", syscall.SIGTTIN},
-		{"TTIN", syscall.SIGTTIN},
-		{"ou", syscall.SIGTTOU},
-		{"out", syscall.SIGTTOU},
-		{"TTOU", syscall.SIGTTOU},
-		{"w", syscall.SIGWINCH},
-		{"winch", syscall.SIGWINCH},
+		{"a", "--a"},
+		{"alrm", "--a"},
+		{"c", "--c"},
+		{"cont", "--c"},
+		{"h", "--h"},
+		{"hup", "--h"},
+		{"i", "--i"},
+		{"int", "--i"},
+		{"q", "--q"},
+		{"quit", "--q"},
+		{"in", "--in"},
+		{"TTIN", "--in"},
+		{"ou", "--ou"},
+		{"TTOU", "--ou"},
+		{"1", "--1"},
+		{"usr1", "--1"},
+		{"2", "--2"},
+		{"usr2", "--2"},
+		{"w", "--w"},
+		{"winch", "--w"},
 	}
+
+	go func() {
+		for {
+			select {
+			case fifo := <-d.Control.fifo:
+				sup.HandleSignals(fifo.msg, d)
+			}
+		}
+	}()
+
 	for _, s := range testSignals {
-		d.Control.fifo <- Return{err: nil, msg: s.signal}
-		waitSig(t, c, s.expected)
+		sup.HandleSignals(s.signal, d)
+		waitSig(t, fifo, s.expected)
 	}
 
-	// test kill process will restart
-	old_pid := d.process.GetPid()
-	d.Control.fifo <- Return{err: nil, msg: "k"}
-	expect(t, d.count, uint32(1), "in 114")
-	expect(t, d.count_defer, uint32(0), "in 115")
-
-	// wait for process to came up and then send signal "once"
-	d.Control.fifo <- Return{err: nil, msg: "o"}
-	for d.count_defer != 1 {
-	}
-	expect(t, d.count, uint32(1), "in 121")
-	expect(t, old_pid, d.process.GetPid())
-
-	// kill for test once (should re-sestart)
-	d.Control.fifo <- Return{err: nil, msg: "k"}
-	// process shuld not start and pids remains the same
-	expect(t, d.count, uint32(1), "in 127")
-	expect(t, d.count_defer, uint32(1), "in 128")
-	expect(t, old_pid, d.process.GetPid())
-
-	for sup.IsRunning(d.process.GetPid()) {
-		// wait for process to die
-	}
-
-	var testSignalsError = []struct {
-		signal   string
-		expected os.Signal
-	}{
-		{"p", syscall.SIGILL},
-		{"pause", syscall.SIGILL},
-		{"s", syscall.SIGILL},
-		{"stop", syscall.SIGILL},
-		{"c", syscall.SIGILL},
-		{"cont", syscall.SIGILL},
-		{"h", syscall.SIGILL},
-		{"hup", syscall.SIGILL},
-		{"a", syscall.SIGILL},
-		{"alrm", syscall.SIGILL},
-		{"i", syscall.SIGILL},
-		{"int", syscall.SIGILL},
-		{"q", syscall.SIGILL},
-		{"quit", syscall.SIGILL},
-		{"1", syscall.SIGILL},
-		{"usr1", syscall.SIGILL},
-		{"2", syscall.SIGILL},
-		{"2", syscall.SIGILL},
-		{"t", syscall.SIGILL},
-		{"term", syscall.SIGILL},
-		{"in", syscall.SIGILL},
-		{"TTIN", syscall.SIGILL},
-		{"ou", syscall.SIGILL},
-		{"out", syscall.SIGILL},
-		{"TTOU", syscall.SIGILL},
-		{"w", syscall.SIGILL},
-		{"winch", syscall.SIGILL},
-	}
-	for _, s := range testSignalsError {
-		d.Control.fifo <- Return{err: nil, msg: s.signal}
-		waitSig(t, c, s.expected)
-	}
-
-	// test u
-	// bring up the service (new pid expected)
-	d.Control.fifo <- Return{err: nil, msg: "u"}
+	// test "d", (keep it down and don't restart)
+	sup.HandleSignals("down", d)
 	select {
-	case <-wait:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for pid")
-	}
-	for old_pid == d.process.GetPid() {
-	}
-
-	// test down
-	d.Control.fifo <- Return{err: nil, msg: "down"}
-	for sup.IsRunning(d.process.GetPid()) {
-		// waiting for process to exit
-	}
-
-	// test up
-	// bring up the service (new pid expected)
-	d.Control.fifo <- Return{err: nil, msg: "up"}
-	for !sup.IsRunning(d.process.GetPid()) {
-	}
-	d.Control.fifo <- Return{err: nil, msg: "once"}
-	for d.count_defer != 1 {
-	}
-	expect(t, d.count, uint32(1), "in 197")
-	expect(t, d.count_defer, uint32(1), "in 198")
-
-	// save old pid
-	old_pid = d.process.GetPid()
-
-	// send kill (should not start)
-	d.Control.fifo <- Return{err: nil, msg: "k"}
-	for sup.IsRunning(d.process.GetPid()) {
-	}
-	expect(t, old_pid, d.process.GetPid(), "in 207")
-	expect(t, false, sup.IsRunning(d.process.GetPid()), "in 208")
-
-	// test up
-	// bring up the service (new pid expected)
-	d.Control.fifo <- Return{err: nil, msg: "up"}
-	for !sup.IsRunning(d.process.GetPid()) {
-	}
-	old_pid = d.process.GetPid()
-
-	// send kill (should re-start, and get new pid)
-	d.Control.fifo <- Return{err: nil, msg: "k"}
-	for sup.IsRunning(d.process.GetPid()) {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
 	}
 	select {
-	case <-wait:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for pid")
-	}
-	for old_pid == d.process.GetPid() {
+	case <-done:
+		d.Run()
 	}
 
-	// should be running
-	expect(t, true, sup.IsRunning(d.process.GetPid()))
+	// create error os: process not initialized
+	mylog.Reset()
+	for _, s := range testSignals {
+		sup.HandleSignals(s.signal, d)
+		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+		mylog.Reset()
+	}
 
-	// quit
-	d.Control.fifo <- Return{err: nil, msg: "k"}
-	d.Control.fifo <- Return{err: nil, msg: "exit"}
+	sup.HandleSignals("d", d)
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+	sup.HandleSignals("t", d)
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+	sup.HandleSignals("p", d)
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
 }
 
-func waitSig(t *testing.T, c <-chan os.Signal, sig os.Signal) {
-	select {
-	case s := <-c:
-		if s != sig {
-			t.Fatalf("signal was %v, want %v", s, sig)
+func waitSig(t *testing.T, fifo *os.File, sig string) {
+	buf := make([]byte, 0, 8)
+	r := bufio.NewReader(fifo)
+	for {
+		n, err := r.Read(buf[:cap(buf)])
+		if n == 0 {
+			if err == nil {
+				continue
+			}
+			if err == io.EOF {
+				continue
+			}
+			t.Fatal(err)
 		}
-	case <-time.After(1 * time.Second):
-		t.Fatalf("timeout waiting for %v", sig)
+		buf = buf[:n]
+		msg := strings.TrimSpace(string(buf))
+		if msg != sig {
+			expect(t, sig, msg)
+		}
+		return
 	}
 }
