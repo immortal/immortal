@@ -2,9 +2,7 @@ package immortal
 
 import (
 	"fmt"
-	"log"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"testing"
@@ -60,19 +58,10 @@ func TestSignalsUDOT(t *testing.T) {
 	sup.HandleSignals("k", d)
 	expect(t, uint32(1), d.lock)
 	expect(t, uint32(0), d.lock_defer)
-
 	done := make(chan struct{}, 1)
 	select {
-	case err := <-d.Control.state:
-		if exitError, ok := err.(*exec.ExitError); ok {
-			d.cmd.Process.Pid = 0
-			log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
-				exitError.Pid(),
-				exitError,
-				exitError.UserTime(),
-				exitError.SystemTime(),
-				time.Since(d.start))
-		}
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
 		done <- struct{}{}
 	}
 	select {
@@ -83,8 +72,6 @@ func TestSignalsUDOT(t *testing.T) {
 	if old_pid == d.Process().Pid {
 		t.Fatal("Expecting a new pid")
 	}
-
-	fmt.Printf("d.Process().Pid %+v\n", d.Process().Pid)
 
 	// test "d", (keep it down and don't restart)
 	sup.HandleSignals("d", d)

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type Supervisor interface {
@@ -86,7 +87,13 @@ func Supervise(s Supervisor, d *Daemon) {
 		case state := <-d.Control.state:
 			if state != nil {
 				if exitError, ok := state.(*exec.ExitError); ok {
-					log.Print(exitError)
+					d.cmd.Process.Pid = 0
+					log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+						exitError.Pid(),
+						exitError,
+						exitError.UserTime(),
+						exitError.SystemTime(),
+						time.Since(d.start))
 				} else if state.Error() == "EXIT" {
 					log.Printf("PID: %d Exited", d.Process().Pid)
 				} else {
