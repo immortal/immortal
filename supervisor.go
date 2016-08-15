@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 )
 
 type Supervisor interface {
@@ -79,6 +78,7 @@ func Supervise(s Supervisor, d *Daemon) {
 	}
 
 	// loop until quit signal received
+	run := make(chan struct{}, 1)
 	for {
 		select {
 		case <-d.Control.quit:
@@ -94,16 +94,13 @@ func Supervise(s Supervisor, d *Daemon) {
 				}
 			}
 
-			// settle down, give time for writing the PID and avoid consuming CPU when looping
-			time.Sleep(time.Second)
-
 			// follow the new pid and stop running the command
 			// unless the new pid dies
 			if d.Pid.Follow != "" {
 				pid, err := s.ReadPidFile(d.Pid.Follow)
 				if err != nil {
 					log.Printf("Cannot read pidfile:%s,  %s", d.Pid.Follow, err)
-					d.Run()
+					run <- struct{}{}
 				} else {
 					// check if pid in file is valid
 					if pid > 1 && pid != d.Process().Pid && s.IsRunning(pid) {
@@ -113,17 +110,22 @@ func Supervise(s Supervisor, d *Daemon) {
 						go s.WatchPid(pid, d.Control.state)
 					} else {
 						// if cmd exits or process is kill
-						d.Run()
+						run <- struct{}{}
 					}
 				}
 			} else {
-				d.Run()
+				run <- struct{}{}
 			}
 		case fifo := <-d.Control.fifo:
 			if fifo.err != nil {
 				log.Printf("control error: %s", fifo.err)
 			}
 			go s.HandleSignals(fifo.msg, d)
+		}
+
+		select {
+		case <-run:
+			d.Run()
 		}
 	}
 }

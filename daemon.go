@@ -36,7 +36,7 @@ func (self *Daemon) Run() {
 		if self.cmd == nil {
 			log.Printf("Service down")
 		} else {
-			log.Printf("PID %d running", self.cmd.Process.Pid)
+			log.Printf("PID %d (WANT IT DOWN) FIX THIS", self.cmd.Process.Pid)
 		}
 		return
 	}
@@ -145,11 +145,11 @@ func (self *Daemon) Run() {
 				self.cmd.ProcessState.UserTime(),
 				self.cmd.ProcessState.SystemTime(),
 				time.Since(self.start))
-			//self.cmd = nil
 			fmt.Println("fin deferred ---------------")
 			self.Unlock()
 		}()
 		self.Control.state <- self.cmd.Wait()
+		self.cmd.Process.Pid = 0
 	}()
 }
 

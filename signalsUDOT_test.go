@@ -50,15 +50,60 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 	d.Run()
 	sup := new(Sup)
-	//	go Supervise(sup, d)
 
+	old_pid := d.Process().Pid
 	// test "k", process should restart and get a new pid
 	//d.Control.fifo <- Return{err: nil, msg: "k"}
 	fmt.Printf("d.Process().Pid = %+v\n", d.Process().Pid)
 	sup.HandleSignals("k", d)
 	expect(t, d.lock, uint32(1))
 	expect(t, d.lock_defer, uint32(0))
+
 	done := make(chan struct{}, 1)
+	select {
+	case <-d.Control.state:
+		done <- struct{}{}
+	}
+	select {
+	case <-done:
+		d.Run()
+	}
+
+	if old_pid == d.Process().Pid {
+		t.Fatal("Expecting a new pid")
+	}
+
+	time.Sleep(time.Second)
+
+	// test "d", (keep it down and don't restart)
+	sup.HandleSignals("d", d)
+	select {
+	case <-d.Control.state:
+		done <- struct{}{}
+	}
+	select {
+	case <-done:
+		d.Run()
+	}
+	d.Run()
+
+	fmt.Printf("d.Process().Pid = %+v\n", d.Process().Pid)
+	fmt.Printf("d.IsRunning() = %+v\n", d.IsRunning())
+
+	// test "u", (keep it down and don't restart) <------------------------------
+	if !d.IsRunning() {
+		d.lock = 0
+	}
+	d.lock_defer = 0
+	//sup.HandleSignals("u", d)
+	d.Run()
+	d.Run()
+
+	fmt.Printf("d.Process().Pid  sehr gut .-) = %+v\n", d.Process().Pid)
+	for {
+	}
+
+	//	done := make(chan struct{}, 1)
 	for {
 		select {
 		case <-d.Control.state:
@@ -73,6 +118,8 @@ func TestSignalsUDOT(t *testing.T) {
 			d.Run()
 		}
 	}
+
+	//# ----------------------------------------------------------------------------
 	// want it down
 	//	fmt.Printf("d.Process().Pid = %+v\n", d.Process().Pid)
 
