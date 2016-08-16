@@ -31,12 +31,6 @@ func (self *Daemon) Process() *os.Process {
 
 func (self *Daemon) Run() {
 	if atomic.SwapUint32(&self.lock, uint32(1)) != 0 {
-		if self.cmd == nil {
-			log.Printf("Service down")
-		} else {
-			log.Printf("PID %d (WANT IT DOWN) FIX THIS", self.cmd.Process.Pid)
-			//log.Println("FIX THIS")
-		}
 		return
 	}
 
