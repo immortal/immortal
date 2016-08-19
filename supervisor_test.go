@@ -77,26 +77,28 @@ func TestSupervise(t *testing.T) {
 	if dir == "." {
 		t.Skip("skipping; running test at root somehow")
 	}
-	parentDir := filepath.Dir(dir) // "/tmp/go-buildNNNN/os/exec"
-	dirBase := filepath.Base(dir)  // "_test"
+	parentDir := filepath.Join(filepath.Dir(dir), "testSupervise") // "/tmp/go-buildNNNN/os/exec"
+	//	parentDir := filepath.Dir(dir)
+	dirBase := filepath.Base(dir) // "_test"
 	if dirBase == "." {
 		t.Skipf("skipping; unexpected shallow dir of %q", dir)
 	}
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSup"},
+		command: []string{filepath.Join(filepath.Dir(dir), filepath.Base(dir), base), "-test.run=TestHelperProcessSup"},
 		Cwd:     parentDir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
+		ctrl: true,
 	}
 	d, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.Run()
-	sup := new(Sup)
+	sup := &Sup{time.Now()}
 	go Supervise(sup, d)
 
 	// check pids
@@ -111,8 +113,5 @@ func TestSupervise(t *testing.T) {
 		expect(t, d.Process().Pid, pid)
 	}
 
-	select {
-	case <-time.After(1 * time.Second):
-		d.Control.fifo <- Return{err: nil, msg: "x"}
-	}
+	//sup.HandleSignals("x", d)
 }

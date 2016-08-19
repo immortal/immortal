@@ -203,6 +203,7 @@ func TestSignalsFiFo(t *testing.T) {
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
 	sup.HandleSignals("p", d)
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+	sup.HandleSignals("x", d)
 }
 
 func waitSig(t *testing.T, fifo *os.File, sig string) {
