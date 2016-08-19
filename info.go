@@ -12,18 +12,18 @@ func (self *Sup) Info(ch <-chan os.Signal, d *Daemon) {
 		select {
 		case <-ch:
 			status := `
-    Gorutines: %d
-    Alloc : %d
-    Total Alloc: %d
-    Sys: %d
-    Lookups: %d
-    Mallocs: %d
-    Frees: %d
-    Seconds in GC: %d
-    Started on: %v
-    Uptime: %v
-	Daemon uptime: %v
-	Daemon count: %d`
+Gorutines: %d
+Alloc : %d
+Total Alloc: %d
+Sys: %d
+Lookups: %d
+Mallocs: %d
+Frees: %d
+Seconds in GC: %d
+Started on: %v
+Uptime: %v
+Daemon uptime: %v
+Daemon count: %d`
 			runtime.NumGoroutine()
 			s := new(runtime.MemStats)
 			runtime.ReadMemStats(s)
