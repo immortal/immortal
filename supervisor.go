@@ -83,16 +83,12 @@ func Supervise(s Supervisor, d *Daemon) {
 
 	// info channel
 	info := make(chan os.Signal)
-	signal.Notify(info, syscall.SIGINFO)
-
-	// run loop
-	run := make(chan struct{}, 1)
-	for {
-		select {
-		case <-d.Control.quit:
-			return
-		case <-info:
-			status := `
+	signal.Notify(info, syscall.SIGUSR1, syscall.SIGUSR2, syscall.SIGINFO)
+	go func() {
+		for {
+			select {
+			case <-info:
+				status := `
     Gorutines: %d
     Alloc : %d
     Total Alloc: %d
@@ -104,21 +100,31 @@ func Supervise(s Supervisor, d *Daemon) {
     Started on: %v
     Uptime: %v
 	Count: %d`
-			runtime.NumGoroutine()
-			s := new(runtime.MemStats)
-			runtime.ReadMemStats(s)
-			log.Printf(status,
-				runtime.NumGoroutine(),
-				s.Alloc,
-				s.TotalAlloc,
-				s.Sys,
-				s.Lookups,
-				s.Mallocs,
-				s.Frees,
-				s.PauseTotalNs/1000000000,
-				d.start.Format(time.RFC3339),
-				time.Since(d.start),
-				d.count)
+				runtime.NumGoroutine()
+				s := new(runtime.MemStats)
+				runtime.ReadMemStats(s)
+				log.Printf(status,
+					runtime.NumGoroutine(),
+					s.Alloc,
+					s.TotalAlloc,
+					s.Sys,
+					s.Lookups,
+					s.Mallocs,
+					s.Frees,
+					s.PauseTotalNs/1000000000,
+					d.start.Format(time.RFC3339),
+					time.Since(d.start),
+					d.count)
+			}
+		}
+	}()
+
+	// run loop
+	run := make(chan struct{}, 1)
+	for {
+		select {
+		case <-d.Control.quit:
+			return
 		case <-run:
 			time.Sleep(time.Second)
 			d.Run()
