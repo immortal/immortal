@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -79,12 +81,44 @@ func Supervise(s Supervisor, d *Daemon) {
 		s.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
 	}
 
+	// info channel
+	info := make(chan os.Signal)
+	signal.Notify(info, syscall.SIGINFO)
+
 	// run loop
 	run := make(chan struct{}, 1)
 	for {
 		select {
 		case <-d.Control.quit:
 			return
+		case <-info:
+			status := `
+    Gorutines: %d
+    Alloc : %d
+    Total Alloc: %d
+    Sys: %d
+    Lookups: %d
+    Mallocs: %d
+    Frees: %d
+    Seconds in GC: %d
+    Started on: %v
+    Uptime: %v
+	Count: %d`
+			runtime.NumGoroutine()
+			s := new(runtime.MemStats)
+			runtime.ReadMemStats(s)
+			log.Printf(status,
+				runtime.NumGoroutine(),
+				s.Alloc,
+				s.TotalAlloc,
+				s.Sys,
+				s.Lookups,
+				s.Mallocs,
+				s.Frees,
+				s.PauseTotalNs/1000000000,
+				d.start.Format(time.RFC3339),
+				time.Since(d.start),
+				d.count)
 		case <-run:
 			time.Sleep(time.Second)
 			d.Run()

@@ -109,9 +109,6 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 	case "x", "exit":
 		close(d.Control.quit)
 
-	case "status", "info":
-		log.Print("status, info: ")
-
 	default:
 		log.Printf("unknown signal: %s", signal)
 		fmt.Fprintf(d.Control.fifo_ok, "%s\n", signal)
