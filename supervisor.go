@@ -83,7 +83,7 @@ func Supervise(s Supervisor, d *Daemon) {
 
 	// info channel
 	info := make(chan os.Signal)
-	signal.Notify(info, syscall.SIGUSR1, syscall.SIGUSR2, syscall.SIGINFO)
+	signal.Notify(info, syscall.SIGUSR1, syscall.SIGUSR2)
 	go func() {
 		for {
 			select {
