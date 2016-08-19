@@ -86,6 +86,7 @@ func Supervise(s Supervisor, d *Daemon) {
 		case <-d.Control.quit:
 			return
 		case <-run:
+			time.Sleep(time.Second)
 			d.Run()
 		default:
 			select {

@@ -19,10 +19,11 @@ type Daemon struct {
 	*Control
 	Forker
 	Logger
+	cmd        *exec.Cmd
+	count      uint64
 	lock       uint32
 	lock_defer uint32
 	start      time.Time
-	cmd        *exec.Cmd
 }
 
 func (self *Daemon) Process() *os.Process {
@@ -33,6 +34,9 @@ func (self *Daemon) Run() {
 	if atomic.SwapUint32(&self.lock, uint32(1)) != 0 {
 		return
 	}
+
+	// increment count by 1
+	atomic.AddUint64(&self.count, 1)
 
 	// Command to execute
 	self.cmd = exec.Command(self.command[0], self.command[1:]...)
