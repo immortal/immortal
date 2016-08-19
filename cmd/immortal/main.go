@@ -7,6 +7,7 @@ import (
 	"log/syslog"
 	"os"
 	"os/user"
+	"time"
 
 	"github.com/immortal/immortal"
 )
@@ -67,5 +68,5 @@ func main() {
 	log.Printf("%c  %d", immortal.Logo(), os.Getpid())
 
 	daemon.Run()
-	immortal.Supervise(&immortal.Sup{}, daemon)
+	immortal.Supervise(&immortal.Sup{time.Now()}, daemon)
 }

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -17,14 +16,17 @@ import (
 )
 
 type Supervisor interface {
+	HandleSignals(signal string, d *Daemon)
+	Info(ch <-chan os.Signal, d *Daemon)
 	IsRunning(pid int) bool
+	ReadFifoControl(fifo *os.File, ch chan<- Return)
 	ReadPidFile(pidfile string) (int, error)
 	WatchPid(pid int, ch chan<- error)
-	ReadFifoControl(fifo *os.File, ch chan<- Return)
-	HandleSignals(signal string, d *Daemon)
 }
 
-type Sup struct{}
+type Sup struct {
+	Start time.Time
+}
 
 func (self *Sup) IsRunning(pid int) bool {
 	process, _ := os.FindProcess(int(pid))
@@ -83,41 +85,8 @@ func Supervise(s Supervisor, d *Daemon) {
 
 	// info channel
 	info := make(chan os.Signal)
-	signal.Notify(info, syscall.SIGUSR1, syscall.SIGUSR2)
-	go func() {
-		for {
-			select {
-			case <-info:
-				status := `
-    Gorutines: %d
-    Alloc : %d
-    Total Alloc: %d
-    Sys: %d
-    Lookups: %d
-    Mallocs: %d
-    Frees: %d
-    Seconds in GC: %d
-    Started on: %v
-    Uptime: %v
-	Count: %d`
-				runtime.NumGoroutine()
-				s := new(runtime.MemStats)
-				runtime.ReadMemStats(s)
-				log.Printf(status,
-					runtime.NumGoroutine(),
-					s.Alloc,
-					s.TotalAlloc,
-					s.Sys,
-					s.Lookups,
-					s.Mallocs,
-					s.Frees,
-					s.PauseTotalNs/1000000000,
-					d.start.Format(time.RFC3339),
-					time.Since(d.start),
-					d.count)
-			}
-		}
-	}()
+	signal.Notify(info, syscall.SIGQUIT)
+	go s.Info(info, d)
 
 	// run loop
 	run := make(chan struct{}, 1)

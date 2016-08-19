@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (self *Sup) Info(ch chan<- os.Signal) {
+func (self *Sup) Info(ch <-chan os.Signal, d *Daemon) {
 	for {
 		select {
 		case <-ch:
@@ -22,7 +22,8 @@ func (self *Sup) Info(ch chan<- os.Signal) {
     Seconds in GC: %d
     Started on: %v
     Uptime: %v
-	Count: %d`
+	Daemon uptime: %v
+	Daemon count: %d`
 			runtime.NumGoroutine()
 			s := new(runtime.MemStats)
 			runtime.ReadMemStats(s)
@@ -35,7 +36,8 @@ func (self *Sup) Info(ch chan<- os.Signal) {
 				s.Mallocs,
 				s.Frees,
 				s.PauseTotalNs/1000000000,
-				d.start.Format(time.RFC3339),
+				self.Start.Format(time.RFC3339),
+				time.Since(self.Start),
 				time.Since(d.start),
 				d.count)
 		}
