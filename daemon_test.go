@@ -177,7 +177,7 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsUDOT"},
+		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsUDOT", "--"},
 		Cwd:     parentDir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
@@ -189,7 +189,7 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Run()
-	sup := new(Sup)
+	sup := &Sup{time.Now()}
 
 	// check pids
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
@@ -204,6 +204,9 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 
 	old_pid := d.Process().Pid
+	for d.start.IsZero() {
+		// wait process to start
+	}
 	// test "k", process should restart and get a new pid
 	sup.HandleSignals("k", d)
 	expect(t, uint32(1), d.lock)
@@ -212,6 +215,7 @@ func TestSignalsUDOT(t *testing.T) {
 	select {
 	case <-d.Control.state:
 		d.cmd.Process.Pid = 0
+		d.start = time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
 		done <- struct{}{}
 	}
 	select {
@@ -223,10 +227,15 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal("Expecting a new pid")
 	}
 
+	for d.start.IsZero() {
+		// wait process to start
+	}
+
 	// test "d", (keep it down and don't restart)
 	sup.HandleSignals("d", d)
 	select {
 	case <-d.Control.state:
+		d.start = time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
 		d.cmd.Process.Pid = 0
 		done <- struct{}{}
 	}
@@ -239,11 +248,16 @@ func TestSignalsUDOT(t *testing.T) {
 	// test "u" more debug with: watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
 	sup.HandleSignals("u", d)
 
+	for d.start.IsZero() {
+		// wait process to start
+	}
+
 	// test "once", process should not restart after going down
 	sup.HandleSignals("o", d)
 	sup.HandleSignals("k", d)
 	select {
 	case <-d.Control.state:
+		d.start = time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
 		d.cmd.Process.Pid = 0
 		done <- struct{}{}
 	}
@@ -260,6 +274,7 @@ func TestSignalsUDOT(t *testing.T) {
 	sup.HandleSignals("t", d)
 	select {
 	case <-d.Control.state:
+		d.start = time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
 		d.cmd.Process.Pid = 0
 		done <- struct{}{}
 	}

@@ -80,7 +80,7 @@ func TestSignalsFiFo(t *testing.T) {
 	}
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsFiFo"},
+		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsFiFo", "--"},
 		Cwd:     parentDir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
