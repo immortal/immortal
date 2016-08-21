@@ -17,7 +17,6 @@ type Daemon struct {
 	lock_defer uint32
 	count      uint64
 	running    chan struct{}
-	status     chan chan string
 }
 
 func (self *Daemon) Run() {
