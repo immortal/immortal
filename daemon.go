@@ -17,6 +17,7 @@ type Daemon struct {
 	lock_defer uint32
 	count      uint64
 	running    chan struct{}
+	status     chan chan string
 }
 
 func (self *Daemon) Run() {
@@ -31,10 +32,10 @@ func (self *Daemon) Run() {
 		time.Sleep(time.Duration(self.Wait) * time.Second)
 	}
 
-	// run the command
+	self.Process = NewProcess(self.Config)
 	self.running = make(chan struct{})
 	go func(done chan<- error, r chan<- struct{}) {
-		done <- self.Process.Start(self.Config, r)
+		done <- self.Process.Exec(self.Config, r)
 		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
 		atomic.StoreUint32(&self.lock, self.lock_defer)
 		close(r)
@@ -94,10 +95,5 @@ func New(cfg *Config) (*Daemon, error) {
 		Config:  cfg,
 		Control: control,
 		Forker:  &Fork{},
-		Process: &Proc{
-			Logger: &LogWriter{
-				logger: NewLogger(cfg),
-			},
-		},
 	}, nil
 }

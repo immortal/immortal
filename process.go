@@ -12,17 +12,26 @@ import (
 )
 
 type Process interface {
+	Exec(cfg *Config, r chan<- struct{}) error
 	Kill() error
 	Pid() int
 	Signal(sig os.Signal) error
-	Start(cfg *Config, r chan<- struct{}) error
 	Stop() error
 	Uptime() time.Duration
 }
 
+func NewProcess(cfg *Config) Process {
+	p := &Proc{
+		Logger: &LogWriter{
+			logger: NewLogger(cfg),
+		},
+	}
+	return p
+}
+
 type Proc struct {
+	cmd *exec.Cmd
 	Logger
-	cmd   *exec.Cmd
 	start time.Time
 }
 
@@ -42,8 +51,8 @@ func (self *Proc) Signal(sig os.Signal) error {
 	return self.cmd.Process.Signal(sig)
 }
 
-// Start creates a new process
-func (self *Proc) Start(cfg *Config, running chan<- struct{}) error {
+// exec runs the command
+func (self *Proc) Exec(cfg *Config, running chan<- struct{}) error {
 	self.cmd = exec.Command(cfg.command[0], cfg.command[1:]...)
 
 	// change working directory

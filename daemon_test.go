@@ -153,7 +153,7 @@ func TestSignalsUDOT(t *testing.T) {
 		expect(t, os.Getpid(), pid)
 	}
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
-		t.Error(err)
+		t.Error(err, pid)
 	} else {
 		expect(t, d.Process.Pid(), pid)
 	}
