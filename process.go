@@ -12,6 +12,7 @@ import (
 )
 
 type Process interface {
+	Kill() error
 	Pid() int
 	Signal(sig os.Signal) error
 	Start(cfg *Config, r chan<- struct{}) error
@@ -23,6 +24,12 @@ type Proc struct {
 	Logger
 	cmd   *exec.Cmd
 	start time.Time
+}
+
+func (self *Proc) Kill() error {
+	// to kill the entire process group.
+	processGroup := 0 - self.cmd.Process.Pid
+	return syscall.Kill(processGroup, syscall.SIGKILL)
 }
 
 // Pid return process PID

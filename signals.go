@@ -81,9 +81,7 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 
 	// k: Kill. Send the service a KILL signal.
 	case "k", "kill":
-		// to kill the entire process group.
-		processGroup := 0 - d.Process.Pid()
-		if err := syscall.Kill(processGroup, syscall.SIGKILL); err != nil {
+		if err := d.Process.Kill(); err != nil {
 			log.Print(err)
 		}
 
