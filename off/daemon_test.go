@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -101,6 +103,51 @@ func TestDaemonNewCtrlCwd(t *testing.T) {
 	}
 }
 
+func TestWritePid(t *testing.T) {
+	cfg := &Config{}
+	d, err := New(cfg)
+	if err != nil {
+		t.Error(err)
+	}
+	tmpfile, err := ioutil.TempFile("", "TestWritePid")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name()) // clean up
+	err = d.WritePid(tmpfile.Name(), 1234)
+	if err != nil {
+		t.Error(err)
+	}
+	content, err := ioutil.ReadFile(tmpfile.Name())
+	if err != nil {
+		t.Error(err)
+	}
+	lines := strings.Split(string(content), "\n")
+	pid, err := strconv.Atoi(lines[0])
+	if err != nil {
+		t.Error(err)
+	}
+	expect(t, pid, 1234)
+}
+
+func TestWritePidErr(t *testing.T) {
+	cfg := &Config{}
+	d, err := New(cfg)
+	if err != nil {
+		t.Error(err)
+	}
+	tmpfile, err := ioutil.TempFile("", "TestWritePid")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name()) // clean up
+	os.Chmod(tmpfile.Name(), 0444)
+	err = d.WritePid(tmpfile.Name(), 1234)
+	if err == nil {
+		t.Error("Expecting error: permission denied")
+	}
+}
+
 func TestHelperProcessSignalsUDOT(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -141,10 +188,11 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Run()
-
-	<-d.running
-
 	sup := &Sup{time.Now()}
+
+	select {
+	case <-d.running:
+	}
 
 	// check pids
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
@@ -155,86 +203,82 @@ func TestSignalsUDOT(t *testing.T) {
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 		t.Error(err)
 	} else {
-		expect(t, d.Process.Pid(), pid)
+		expect(t, d.Process().Pid, pid)
 	}
-	old_pid := d.Process.Pid()
+
+	old_pid := d.Process().Pid
 
 	// test "k", process should restart and get a new pid
 	sup.HandleSignals("k", d)
-	t.Log("testing k")
+	expect(t, uint32(1), d.lock)
+	expect(t, uint32(0), d.lock_defer)
+	done := make(chan struct{}, 1)
+	select {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
+	}
+	select {
+	case <-done:
+		d.Run()
+	}
 
-	// wait for process to finish
-	<-d.Control.done
-
-	d.Run()
-	<-d.running
-
-	if old_pid == d.Process.Pid() {
+	if old_pid == d.Process().Pid {
 		t.Fatal("Expecting a new pid")
 	}
-	old_pid = d.Process.Pid()
 
 	t.Log("testing d")
 	// test "d", (keep it down and don't restart)
 	sup.HandleSignals("d", d)
-
-	// wait for process to finish
-	<-d.Control.done
-
-	d.Run()
-	d.Run()
-	d.Run()
-	<-d.running
-	t.Log("testing up")
-	sup.HandleSignals("u", d)
-
-	d.Run()
-	<-d.running
-
-	if old_pid == d.Process.Pid() {
-		t.Fatal("Expecting a new pid")
+	select {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
 	}
-	old_pid = d.Process.Pid()
+	select {
+	case <-done:
+		d.Run()
+	}
+	expect(t, 0, d.Process().Pid)
+
+	t.Log("testing u")
+	// test "u" more debug with: watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
+	sup.HandleSignals("u", d)
 
 	t.Log("testing once")
 	// test "once", process should not restart after going down
 	sup.HandleSignals("o", d)
 	sup.HandleSignals("k", d)
-
-	// wait for process to finish
-	<-d.Control.done
-
-	d.Run()
-	d.Run()
-	d.Run()
-	<-d.running
-	if old_pid != d.Process.Pid() {
-		t.Fatal("Expecting same pid, process should not restart")
+	select {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
 	}
-
-	sup.HandleSignals("u", d)
-
-	d.Run()
-	<-d.running
-
-	if old_pid == d.Process.Pid() {
-		t.Fatal("Expecting a new pid")
+	select {
+	case <-done:
+		d.Run()
 	}
-	old_pid = d.Process.Pid()
+	expect(t, 0, d.Process().Pid)
 
-	t.Log("testing t")
+	t.Log("testing up")
+	// test "up"
+	sup.HandleSignals("up", d)
+
+	sup.HandleSignals("stop", d)
+	sup.HandleSignals("cont", d)
 	sup.HandleSignals("t", d)
-
-	// wait for process to finish
-	<-d.Control.done
-
-	d.Run()
-	<-d.running
-
-	if old_pid == d.Process.Pid() {
-		t.Fatal("Expecting a new pid")
+	select {
+	case <-d.Control.state:
+		d.cmd.Process.Pid = 0
+		done <- struct{}{}
+	}
+	select {
+	case <-done:
+		d.Run()
 	}
 
-	sup.HandleSignals("k", d)
+	// after exiting will get a race cond
+	expect(t, true, d.Process().Pid > 0)
+	t.Log("testing exit")
 	sup.HandleSignals("exit", d)
 }

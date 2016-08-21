@@ -22,8 +22,8 @@ Frees: %d
 Seconds in GC: %d
 Started on: %v
 Uptime: %v
-Daemon uptime: %v
-Daemon count: %d`
+Process uptime: %v
+Process count: %d`
 			runtime.NumGoroutine()
 			s := new(runtime.MemStats)
 			runtime.ReadMemStats(s)
@@ -38,7 +38,7 @@ Daemon count: %d`
 				s.PauseTotalNs/1000000000,
 				self.Start.Format(time.RFC3339),
 				time.Since(self.Start),
-				time.Since(d.start),
+				d.Process.Uptime(),
 				d.count)
 		}
 	}

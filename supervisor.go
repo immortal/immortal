@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -99,19 +98,17 @@ func Supervise(s Supervisor, d *Daemon) {
 			d.Run()
 		default:
 			select {
-			case state := <-d.Control.state:
+			case state := <-d.Control.done:
 				if state != nil {
 					if exitError, ok := state.(*exec.ExitError); ok {
-						d.cmd.Process.Pid = 0
-						atomic.StoreUint32(&d.lock, d.lock_defer)
 						log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
 							exitError.Pid(),
 							exitError,
 							exitError.UserTime(),
 							exitError.SystemTime(),
-							time.Since(d.start))
+							d.Process.Uptime())
 					} else if state.Error() == "EXIT" {
-						log.Printf("PID: %d Exited", d.Process().Pid)
+						log.Printf("PID: %d Exited", d.Process.Pid)
 					} else {
 						log.Print(state)
 					}
@@ -119,18 +116,18 @@ func Supervise(s Supervisor, d *Daemon) {
 
 				// follow the new pid and stop running the command
 				// unless the new pid dies
-				if d.Pid.Follow != "" {
-					pid, err := s.ReadPidFile(d.Pid.Follow)
+				if d.Config.Pid.Follow != "" {
+					pid, err := s.ReadPidFile(d.Config.Pid.Follow)
 					if err != nil {
-						log.Printf("Cannot read pidfile:%s,  %s", d.Pid.Follow, err)
+						log.Printf("Cannot read pidfile:%s,  %s", d.Config.Pid.Follow, err)
 						run <- struct{}{}
 					} else {
 						// check if pid in file is valid
-						if pid > 1 && pid != d.Process().Pid && s.IsRunning(pid) {
+						if pid > 1 && pid != d.Process.Pid() && s.IsRunning(pid) {
 							// set pid to new pid in file
-							d.Process().Pid = pid
-							log.Printf("Watching pid %d on file: %s", d.Process().Pid, d.Pid.Follow)
-							go s.WatchPid(pid, d.Control.state)
+							// -------> fix this d.Process.Pid = pid
+							log.Printf("Watching pid %d on file: %s", d.Process.Pid(), d.Config.Pid.Follow)
+							go s.WatchPid(pid, d.Control.done)
 						} else {
 							// if cmd exits or process is kill
 							run <- struct{}{}

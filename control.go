@@ -7,7 +7,7 @@ type Control struct {
 	fifo_control *os.File
 	fifo_ok      *os.File
 	quit         chan struct{}
-	state        chan error
+	done         chan error
 }
 
 type Return struct {
