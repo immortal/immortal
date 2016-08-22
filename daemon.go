@@ -8,15 +8,20 @@ import (
 	"time"
 )
 
+type procStatus struct {
+	uptime time.Duration
+	ch     chan<- procStatus
+}
+
 type Daemon struct {
 	*Config
 	*Control
-	Forker
 	Process
 	lock       uint32
 	lock_defer uint32
 	count      uint64
-	running    chan struct{}
+	start      time.Time
+	ctl        chan interface{}
 }
 
 func (self *Daemon) Run() {
@@ -27,19 +32,37 @@ func (self *Daemon) Run() {
 	// increment count by 1
 	atomic.AddUint64(&self.count, 1)
 
-	if self.Wait > 0 {
-		time.Sleep(time.Duration(self.Wait) * time.Second)
-	}
+	start := time.After(time.Duration(self.Wait) * time.Second)
 
-	self.Process = NewProcess(self.Config)
-	self.running = make(chan struct{})
-	go func(done chan<- error, r chan<- struct{}) {
-		done <- self.Process.Exec(self.Config, r)
-		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
-		atomic.StoreUint32(&self.lock, self.lock_defer)
-		close(r)
-		r = nil
-	}(self.Control.done, self.running)
+	for {
+		select {
+		case ctl := <-self.ctl:
+			switch c := ctl.(type) {
+			case procStatus:
+				c.ch <- self.status()
+			}
+		case <-start:
+			self.Process = NewProcess(self.Config)
+			go func(done chan<- error, r chan<- struct{}) {
+				done <- self.Process.Exec(self.Config, r)
+				// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+				atomic.StoreUint32(&self.lock, self.lock_defer)
+			}(self.Control.done, self.Control.running)
+		}
+	}
+}
+
+func (self *Daemon) Status() procStatus {
+	ch := make(chan procStatus, 1)
+	self.ctl <- procStatus{ch: ch}
+	return <-ch
+}
+
+func (self *Daemon) status() procStatus {
+	s := procStatus{
+		uptime: self.Process.Uptime(),
+	}
+	return s
 }
 
 func New(cfg *Config) (*Daemon, error) {
@@ -59,9 +82,10 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 
 	control := &Control{
-		fifo: make(chan Return),
-		quit: make(chan struct{}),
-		done: make(chan error),
+		fifo:    make(chan Return),
+		quit:    make(chan struct{}),
+		done:    make(chan error),
+		running: make(chan struct{}),
 	}
 
 	// if ctrl create supervise dir
@@ -90,9 +114,12 @@ func New(cfg *Config) (*Daemon, error) {
 		}
 	}
 
-	return &Daemon{
+	d := &Daemon{
 		Config:  cfg,
 		Control: control,
-		Forker:  &Fork{},
-	}, nil
+		start:   time.Now(),
+		ctl:     make(chan interface{}),
+	}
+	go d.Run()
+	return d, nil
 }

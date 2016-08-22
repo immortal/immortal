@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"os/signal"
@@ -140,11 +141,14 @@ func TestSignalsUDOT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d.Run()
+	<-d.Control.running
 
-	<-d.running
+	for {
+		fmt.Printf("s = %+v\n", d.Status().uptime)
+		time.Sleep(time.Second)
+	}
 
-	sup := &Sup{time.Now()}
+	sup := &Sup{}
 
 	// check pids
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {

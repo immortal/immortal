@@ -23,9 +23,7 @@ type Supervisor interface {
 	WatchPid(pid int, ch chan<- error)
 }
 
-type Sup struct {
-	Start time.Time
-}
+type Sup struct{}
 
 func (self *Sup) IsRunning(pid int) bool {
 	process, _ := os.FindProcess(int(pid))

@@ -30,8 +30,8 @@ func NewProcess(cfg *Config) Process {
 }
 
 type Proc struct {
-	cmd *exec.Cmd
 	Logger
+	cmd   *exec.Cmd
 	start time.Time
 }
 
@@ -43,6 +43,9 @@ func (self *Proc) Kill() error {
 
 // Pid return process PID
 func (self *Proc) Pid() int {
+	if self.cmd == nil || self.cmd.Process == nil {
+		return 0
+	}
 	return self.cmd.Process.Pid
 }
 

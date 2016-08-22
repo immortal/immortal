@@ -36,8 +36,8 @@ Process count: %d`
 				s.Mallocs,
 				s.Frees,
 				s.PauseTotalNs/1000000000,
-				self.Start.Format(time.RFC3339),
-				time.Since(self.Start),
+				d.start.Format(time.RFC3339),
+				time.Since(d.start),
 				d.Process.Uptime(),
 				d.count)
 		}
