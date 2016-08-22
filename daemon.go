@@ -17,11 +17,11 @@ type Daemon struct {
 	*Config
 	*Control
 	Process
+	count      uint64
+	ctl        chan interface{}
 	lock       uint32
 	lock_defer uint32
-	count      uint64
 	start      time.Time
-	ctl        chan interface{}
 }
 
 func (self *Daemon) Run() {
@@ -43,11 +43,9 @@ func (self *Daemon) Run() {
 			}
 		case <-start:
 			self.Process = NewProcess(self.Config)
-			go func(done chan<- error, r chan<- struct{}) {
-				done <- self.Process.Exec(self.Config, r)
-				// lock_defer defaults to 0, 1 to run only once/down (don't restart)
-				atomic.StoreUint32(&self.lock, self.lock_defer)
-			}(self.Control.done, self.Control.running)
+			self.Process.Start(self.Config)
+			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+			//atomic.StoreUint32(&self.lock, self.lock_defer)
 		}
 	}
 }
@@ -114,12 +112,10 @@ func New(cfg *Config) (*Daemon, error) {
 		}
 	}
 
-	d := &Daemon{
+	return &Daemon{
 		Config:  cfg,
 		Control: control,
 		start:   time.Now(),
 		ctl:     make(chan interface{}),
-	}
-	go d.Run()
-	return d, nil
+	}, nil
 }

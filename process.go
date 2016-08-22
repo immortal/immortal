@@ -11,17 +11,18 @@ import (
 	"time"
 )
 
+// Process interface
 type Process interface {
-	Exec(cfg *Config, r chan<- struct{}) error
 	Kill() error
 	Pid() int
 	Signal(sig os.Signal) error
+	Start(cfg *Config) (*exec.Cmd, error)
 	Stop() error
 	Uptime() time.Duration
 }
 
 func NewProcess(cfg *Config) Process {
-	p := &Proc{
+	p := &proc{
 		Logger: &LogWriter{
 			logger: NewLogger(cfg),
 		},
@@ -29,33 +30,35 @@ func NewProcess(cfg *Config) Process {
 	return p
 }
 
-type Proc struct {
+// proc implements the Process interface
+type proc struct {
 	Logger
 	cmd   *exec.Cmd
-	start time.Time
+	eTime time.Time
+	sTime time.Time
 }
 
-func (self *Proc) Kill() error {
+func (self *proc) Kill() error {
 	// to kill the entire process group.
 	processGroup := 0 - self.cmd.Process.Pid
 	return syscall.Kill(processGroup, syscall.SIGKILL)
 }
 
 // Pid return process PID
-func (self *Proc) Pid() int {
+func (self *proc) Pid() int {
 	if self.cmd == nil || self.cmd.Process == nil {
 		return 0
 	}
 	return self.cmd.Process.Pid
 }
 
-// Signal sends a signal to the Process
-func (self *Proc) Signal(sig os.Signal) error {
+// Signal sends a signal to the process
+func (self *proc) Signal(sig os.Signal) error {
 	return self.cmd.Process.Signal(sig)
 }
 
 // exec runs the command
-func (self *Proc) Exec(cfg *Config, running chan<- struct{}) error {
+func (self *proc) Start(cfg *Config) (*exec.Cmd, error) {
 	self.cmd = exec.Command(cfg.command[0], cfg.command[1:]...)
 
 	// change working directory
@@ -78,15 +81,15 @@ func (self *Proc) Exec(cfg *Config, running chan<- struct{}) error {
 	if cfg.user != nil {
 		uid, err := strconv.Atoi(cfg.user.Uid)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		gid, err := strconv.Atoi(cfg.user.Gid)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		// https://golang.org/pkg/syscall/#SysProcAttr
+		// https://golang.org/pkg/syscall/#SysprocAttr
 		sysProcAttr.Credential = &syscall.Credential{
 			Uid: uint32(uid),
 			Gid: uint32(gid),
@@ -120,42 +123,40 @@ func (self *Proc) Exec(cfg *Config, running chan<- struct{}) error {
 	}
 
 	if err := self.cmd.Start(); err != nil {
-		return err
+		return nil, err
 	}
 
-	// set start time
-	self.start = time.Now()
+	// sTime start time
+	self.sTime = time.Now()
 
-	// write parent pid
-	if cfg.Pid.Parent != "" {
-		if err := self.WritePid(cfg.Pid.Parent, os.Getpid()); err != nil {
-			return err
-		}
-	}
+	return self.cmd, nil
 
-	// write child pid
-	if cfg.Pid.Child != "" {
-		if err := self.WritePid(cfg.Pid.Child, self.cmd.Process.Pid); err != nil {
-			return err
-		}
-	}
+	/// move this out
+	//
+	//// write parent pid
+	//if cfg.Pid.Parent != "" {
+	//if err := self.WritePid(cfg.Pid.Parent, os.Getpid()); err != nil {
+	//return err
+	//}
+	//}
 
-	// after writing the pids confirm
-	running <- struct{}{}
-
-	// return after process has finished
-	return self.cmd.Wait()
+	//// write child pid
+	//if cfg.Pid.Child != "" {
+	//if err := self.WritePid(cfg.Pid.Child, self.cmd.Process.Pid); err != nil {
+	//return err
+	//}
+	//}
 }
 
-func (self *Proc) Stop() error {
+func (self *proc) Stop() error {
 	return nil
 }
-func (self *Proc) Uptime() time.Duration {
-	return time.Since(self.start)
+func (self *proc) Uptime() time.Duration {
+	return time.Since(self.sTime)
 }
 
 // WritePid write pid to file
-func (self *Proc) WritePid(file string, pid int) error {
+func (self *proc) WritePid(file string, pid int) error {
 	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
 		return err
 	}
