@@ -143,27 +143,29 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 
 	d.Run(NewProcess(cfg))
-	//	sup := &Sup{}
+	sup := &Sup{}
+
+	// check pids
+	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
+		t.Error(err)
+	} else {
+		expect(t, os.Getpid(), pid)
+	}
+	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
+		t.Error(err, pid)
+	} else {
+		expect(t, d.process.Pid(), pid)
+	}
+	old_pid := d.process.Pid()
+
+	fmt.Printf("dir = %+v\n", dir)
 
 	for {
-		fmt.Println("waiting...")
+		fmt.Println("waiting...", old_pid)
 		time.Sleep(time.Second)
 	}
 
 	/*
-		// check pids
-		if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
-			t.Error(err)
-		} else {
-			expect(t, os.Getpid(), pid)
-		}
-		if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
-			t.Error(err, pid)
-		} else {
-			expect(t, d.Process.Pid(), pid)
-		}
-		old_pid := d.Process.Pid()
-
 		// test "k", process should restart and get a new pid
 		sup.HandleSignals("k", d)
 		t.Log("testing k")

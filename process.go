@@ -3,7 +3,6 @@ package immortal
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strconv"
@@ -13,8 +12,10 @@ import (
 
 // Process interface
 type Process interface {
-	Start() (*process, error)
+	Kill() error
 	Pid() int
+	Signal(sig os.Signal) error
+	Start() (*process, error)
 }
 
 type process struct {
@@ -22,8 +23,8 @@ type process struct {
 	Logger
 	cmd   *exec.Cmd
 	eTime time.Time
+	errch chan error
 	sTime time.Time
-	err   chan error
 }
 
 // Start runs the command
@@ -52,12 +53,10 @@ func (p *process) Start() (*process, error) {
 		if err != nil {
 			return nil, err
 		}
-
 		gid, err := strconv.Atoi(p.user.Gid)
 		if err != nil {
 			return nil, err
 		}
-
 		sysProcAttr.Credential = &syscall.Credential{
 			Uid: uint32(uid),
 			Gid: uint32(gid),
@@ -90,22 +89,23 @@ func (p *process) Start() (*process, error) {
 		p.cmd.Stderr = nil
 	}
 
+	// Start the process
 	if err := p.cmd.Start(); err != nil {
 		return nil, err
 	}
 	p.sTime = time.Now()
 
-	p.err = make(chan error)
+	p.errch = make(chan error)
 	go func() {
 		err := p.cmd.Wait()
 		p.eTime = time.Now()
-		p.err <- err
+		p.errch <- err
 	}()
 	return p, nil
 }
 
+// Kill the entire Process group.
 func (p *process) Kill() error {
-	// to kill the entire Process group.
 	processGroup := 0 - p.cmd.Process.Pid
 	return syscall.Kill(processGroup, syscall.SIGKILL)
 }
@@ -118,33 +118,11 @@ func (p *process) Pid() int {
 	return p.cmd.Process.Pid
 }
 
-// WritePid write pid to file
-func (self *process) WritePid(file string, pid int) error {
-	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
-		return err
-	}
-	return nil
-}
-
+// Signal sends a signal to the Process
 func (self *process) Signal(sig os.Signal) error {
 	return self.cmd.Process.Signal(sig)
 }
 
-/// move this out
-//
-//// write parent pid
-//if cfg.Pid.Parent != "" {
-//if err := self.WritePid(cfg.Pid.Parent, os.Getpid()); err != nil {
-//return err
-//}
-//}
-
-//// write child pid
-//if cfg.Pid.Child != "" {
-//if err := self.WritePid(cfg.Pid.Child, self.cmd.Process.Pid); err != nil {
-//return err
-//}
-//}
 func NewProcess(cfg *Config) *process {
 	return &process{
 		Config: cfg,
