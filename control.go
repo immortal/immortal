@@ -8,7 +8,6 @@ type Control struct {
 	fifo_control *os.File
 	fifo_ok      *os.File
 	quit         chan struct{}
-	running      chan struct{}
 }
 
 type Return struct {

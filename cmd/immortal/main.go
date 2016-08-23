@@ -66,6 +66,6 @@ func main() {
 
 	log.Printf("%c  %d", immortal.Logo(), os.Getpid())
 
-	daemon.Run()
+	daemon.Run(immortal.NewProcess(cfg))
 	immortal.Supervise(&immortal.Sup{}, daemon)
 }

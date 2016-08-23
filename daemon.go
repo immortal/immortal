@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -8,59 +9,41 @@ import (
 	"time"
 )
 
-type procStatus struct {
-	uptime time.Duration
-	ch     chan<- procStatus
-}
-
 type Daemon struct {
 	*Config
 	*Control
-	Process
 	count      uint64
-	ctl        chan interface{}
 	lock       uint32
 	lock_defer uint32
-	start      time.Time
+	process    *process
+	sTime      time.Time
 }
 
-func (self *Daemon) Run() {
-	if atomic.SwapUint32(&self.lock, uint32(1)) != 0 {
+func (d *Daemon) Run(p Process) {
+	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
 		return
 	}
 
 	// increment count by 1
-	atomic.AddUint64(&self.count, 1)
+	atomic.AddUint64(&d.count, 1)
 
-	start := time.After(time.Duration(self.Wait) * time.Second)
+	start := time.After(time.Duration(d.Wait) * time.Second)
 
+	var err error
 	for {
 		select {
-		case ctl := <-self.ctl:
-			switch c := ctl.(type) {
-			case procStatus:
-				c.ch <- self.status()
-			}
 		case <-start:
-			self.Process = NewProcess(self.Config)
-			self.Process.Start(self.Config)
+			d.process, err = p.Start()
+			if err != nil {
+				return
+			}
+			fmt.Printf("d.process == nil = %+v\n", d.process == nil)
+			fmt.Printf("d.process.eTime = %+v\n", d.process.sTime)
+			//fmt.Printf("cmd = %+v\n", d.process)
 			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
 			//atomic.StoreUint32(&self.lock, self.lock_defer)
 		}
 	}
-}
-
-func (self *Daemon) Status() procStatus {
-	ch := make(chan procStatus, 1)
-	self.ctl <- procStatus{ch: ch}
-	return <-ch
-}
-
-func (self *Daemon) status() procStatus {
-	s := procStatus{
-		uptime: self.Process.Uptime(),
-	}
-	return s
 }
 
 func New(cfg *Config) (*Daemon, error) {
@@ -80,10 +63,9 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 
 	control := &Control{
-		fifo:    make(chan Return),
-		quit:    make(chan struct{}),
-		done:    make(chan error),
-		running: make(chan struct{}),
+		fifo: make(chan Return),
+		quit: make(chan struct{}),
+		done: make(chan error),
 	}
 
 	// if ctrl create supervise dir
@@ -115,7 +97,6 @@ func New(cfg *Config) (*Daemon, error) {
 	return &Daemon{
 		Config:  cfg,
 		Control: control,
-		start:   time.Now(),
-		ctl:     make(chan interface{}),
+		sTime:   time.Now(),
 	}, nil
 }

@@ -13,152 +13,139 @@ import (
 
 // Process interface
 type Process interface {
-	Kill() error
-	Pid() int
-	Signal(sig os.Signal) error
-	Start(cfg *Config) (*exec.Cmd, error)
-	Stop() error
-	Uptime() time.Duration
+	Start() (*process, error)
 }
 
-func NewProcess(cfg *Config) Process {
-	p := &proc{
-		Logger: &LogWriter{
-			logger: NewLogger(cfg),
-		},
-	}
-	return p
-}
-
-// proc implements the Process interface
-type proc struct {
+type process struct {
+	*Config
 	Logger
 	cmd   *exec.Cmd
 	eTime time.Time
 	sTime time.Time
 }
 
-func (self *proc) Kill() error {
-	// to kill the entire process group.
-	processGroup := 0 - self.cmd.Process.Pid
-	return syscall.Kill(processGroup, syscall.SIGKILL)
-}
-
-// Pid return process PID
-func (self *proc) Pid() int {
-	if self.cmd == nil || self.cmd.Process == nil {
-		return 0
-	}
-	return self.cmd.Process.Pid
-}
-
-// Signal sends a signal to the process
-func (self *proc) Signal(sig os.Signal) error {
-	return self.cmd.Process.Signal(sig)
-}
-
-// exec runs the command
-func (self *proc) Start(cfg *Config) (*exec.Cmd, error) {
-	self.cmd = exec.Command(cfg.command[0], cfg.command[1:]...)
+// Start runs the command
+func (p *process) Start() (*process, error) {
+	p.cmd = exec.Command(p.command[0], p.command[1:]...)
 
 	// change working directory
-	if cfg.Cwd != "" {
-		self.cmd.Dir = cfg.Cwd
+	if p.Cwd != "" {
+		p.cmd.Dir = p.Cwd
 	}
 
 	// set environment vars
-	if cfg.Env != nil {
+	if p.Env != nil {
 		env := os.Environ()
-		for k, v := range cfg.Env {
+		for k, v := range p.Env {
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
-		self.cmd.Env = env
+		p.cmd.Env = env
 	}
 
 	sysProcAttr := new(syscall.SysProcAttr)
 
 	// set owner
-	if cfg.user != nil {
-		uid, err := strconv.Atoi(cfg.user.Uid)
+	if p.user != nil {
+		uid, err := strconv.Atoi(p.user.Uid)
 		if err != nil {
 			return nil, err
 		}
 
-		gid, err := strconv.Atoi(cfg.user.Gid)
+		gid, err := strconv.Atoi(p.user.Gid)
 		if err != nil {
 			return nil, err
 		}
 
-		// https://golang.org/pkg/syscall/#SysprocAttr
 		sysProcAttr.Credential = &syscall.Credential{
 			Uid: uint32(uid),
 			Gid: uint32(gid),
 		}
 	}
 
-	// Set process group ID to Pgid, or, if Pgid == 0, to new pid
+	// Set Process group ID to Pgid, or, if Pgid == 0, to new pid
 	sysProcAttr.Setpgid = true
 	sysProcAttr.Pgid = 0
 
 	// set the attributes
-	self.cmd.SysProcAttr = sysProcAttr
+	p.cmd.SysProcAttr = sysProcAttr
 
 	// log only if are available loggers
 	var (
 		r *io.PipeReader
 		w *io.PipeWriter
 	)
-	if self.Logger.IsLogging() {
+	if p.Logger.IsLogging() {
 		defer func() {
 			w.Close()
 		}()
 		r, w = io.Pipe()
-		self.cmd.Stdout = w
-		self.cmd.Stderr = w
-		go self.Logger.StdHandler(r)
+		p.cmd.Stdout = w
+		p.cmd.Stderr = w
+		go p.Logger.StdHandler(r)
 	} else {
-		self.cmd.Stdin = nil
-		self.cmd.Stdout = nil
-		self.cmd.Stderr = nil
+		p.cmd.Stdin = nil
+		p.cmd.Stdout = nil
+		p.cmd.Stderr = nil
 	}
 
-	if err := self.cmd.Start(); err != nil {
+	if err := p.cmd.Start(); err != nil {
 		return nil, err
 	}
+	p.sTime = time.Now()
 
-	// sTime start time
-	self.sTime = time.Now()
-
-	return self.cmd, nil
-
-	/// move this out
-	//
-	//// write parent pid
-	//if cfg.Pid.Parent != "" {
-	//if err := self.WritePid(cfg.Pid.Parent, os.Getpid()); err != nil {
-	//return err
-	//}
-	//}
-
-	//// write child pid
-	//if cfg.Pid.Child != "" {
-	//if err := self.WritePid(cfg.Pid.Child, self.cmd.Process.Pid); err != nil {
-	//return err
-	//}
-	//}
+	go func() {
+		p.cmd.Wait()
+		p.eTime = time.Now()
+	}()
+	return p, nil
 }
 
-func (self *proc) Stop() error {
-	return nil
+func (p *process) Kill() error {
+	// to kill the entire Process group.
+	processGroup := 0 - p.cmd.Process.Pid
+	return syscall.Kill(processGroup, syscall.SIGKILL)
 }
-func (self *proc) Uptime() time.Duration {
-	return time.Since(self.sTime)
+
+// Pid return Process PID
+func (p *process) Pid() int {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
 }
 
 // WritePid write pid to file
-func (self *proc) WritePid(file string, pid int) error {
+func (self *process) WritePid(file string, pid int) error {
 	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (self *process) Signal(sig os.Signal) error {
+	return self.cmd.Process.Signal(sig)
+}
+
+/// move this out
+//
+//// write parent pid
+//if cfg.Pid.Parent != "" {
+//if err := self.WritePid(cfg.Pid.Parent, os.Getpid()); err != nil {
+//return err
+//}
+//}
+
+//// write child pid
+//if cfg.Pid.Child != "" {
+//if err := self.WritePid(cfg.Pid.Child, self.cmd.Process.Pid); err != nil {
+//return err
+//}
+//}
+func NewProcess(cfg *Config) *process {
+	return &process{
+		Config: cfg,
+		Logger: &LogWriter{
+			logger: NewLogger(cfg),
+		},
+	}
 }

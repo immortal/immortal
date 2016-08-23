@@ -93,7 +93,7 @@ func Supervise(s Supervisor, d *Daemon) {
 			return
 		case <-run:
 			time.Sleep(time.Second)
-			d.Run()
+			d.Run(NewProcess(d.Config))
 		default:
 			select {
 			case state := <-d.Control.done:
@@ -104,9 +104,9 @@ func Supervise(s Supervisor, d *Daemon) {
 							exitError,
 							exitError.UserTime(),
 							exitError.SystemTime(),
-							d.Process.Uptime())
+							"d.process.Uptime()")
 					} else if state.Error() == "EXIT" {
-						log.Printf("PID: %d Exited", d.Process.Pid)
+						log.Printf("PID: %d Exited", d.process.Pid())
 					} else {
 						log.Print(state)
 					}
@@ -121,10 +121,10 @@ func Supervise(s Supervisor, d *Daemon) {
 						run <- struct{}{}
 					} else {
 						// check if pid in file is valid
-						if pid > 1 && pid != d.Process.Pid() && s.IsRunning(pid) {
+						if pid > 1 && pid != d.process.Pid() && s.IsRunning(pid) {
 							// set pid to new pid in file
 							// -------> fix this d.Process.Pid = pid
-							log.Printf("Watching pid %d on file: %s", d.Process.Pid(), d.Config.Pid.Follow)
+							log.Printf("Watching pid %d on file: %s", d.process.Pid(), d.Config.Pid.Follow)
 							go s.WatchPid(pid, d.Control.done)
 						} else {
 							// if cmd exits or process is kill

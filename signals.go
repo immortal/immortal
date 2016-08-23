@@ -12,12 +12,12 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 	case "u", "up":
 		d.lock = 0
 		d.lock_defer = 0
-		d.Run()
+		//d.Run()
 
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
 		d.lock_defer = 1
-		if err := d.Process.Signal(syscall.SIGTERM); err != nil {
+		if err := d.process.Signal(syscall.SIGTERM); err != nil {
 			log.Print(err)
 		}
 
@@ -27,79 +27,79 @@ func (self *Sup) HandleSignals(signal string, d *Daemon) {
 
 	// t: Terminate. Send the service a TERM signal.
 	case "t", "term":
-		if err := d.Process.Signal(syscall.SIGTERM); err != nil {
+		if err := d.process.Signal(syscall.SIGTERM); err != nil {
 			log.Print(err)
 		}
 
 	// p: Pause. Send the service a STOP signal.
 	case "p", "pause", "s", "stop":
-		if err := d.Process.Signal(syscall.SIGSTOP); err != nil {
+		if err := d.process.Signal(syscall.SIGSTOP); err != nil {
 			log.Print(err)
 		}
 
 	// c: Continue. Send the service a CONT signal.
 	case "c", "cont":
-		if err := d.Process.Signal(syscall.SIGCONT); err != nil {
+		if err := d.process.Signal(syscall.SIGCONT); err != nil {
 			log.Print(err)
 		}
 
 	// h: Hangup. Send the service a HUP signal.
 	case "h", "hup":
-		if err := d.Process.Signal(syscall.SIGHUP); err != nil {
+		if err := d.process.Signal(syscall.SIGHUP); err != nil {
 			log.Print(err)
 		}
 
 	// a: Alarm. Send the service an ALRM signal.
 	case "a", "alrm":
-		if err := d.Process.Signal(syscall.SIGALRM); err != nil {
+		if err := d.process.Signal(syscall.SIGALRM); err != nil {
 			log.Print(err)
 		}
 
 	// i: Interrupt. Send the service an INT signal.
 	case "i", "int":
-		if err := d.Process.Signal(syscall.SIGINT); err != nil {
+		if err := d.process.Signal(syscall.SIGINT); err != nil {
 			log.Print(err)
 		}
 
 	// q: QUIT. Send the service a QUIT signal.
 	case "q", "quit":
-		if err := d.Process.Signal(syscall.SIGQUIT); err != nil {
+		if err := d.process.Signal(syscall.SIGQUIT); err != nil {
 			log.Print(err)
 		}
 
 	// 1: USR1. Send the service a USR1 signal.
 	case "1", "usr1":
-		if err := d.Process.Signal(syscall.SIGUSR1); err != nil {
+		if err := d.process.Signal(syscall.SIGUSR1); err != nil {
 			log.Print(err)
 		}
 
 	// 2: USR2. Send the service a USR2 signal.
 	case "2", "usr2":
-		if err := d.Process.Signal(syscall.SIGUSR2); err != nil {
+		if err := d.process.Signal(syscall.SIGUSR2); err != nil {
 			log.Print(err)
 		}
 
 	// k: Kill. Send the service a KILL signal.
 	case "k", "kill":
-		if err := d.Process.Kill(); err != nil {
+		if err := d.process.Kill(); err != nil {
 			log.Print(err)
 		}
 
 	// in: TTIN. Send the service a TTIN signal.
 	case "in", "TTIN":
-		if err := d.Process.Signal(syscall.SIGTTIN); err != nil {
+		if err := d.process.Signal(syscall.SIGTTIN); err != nil {
 			log.Print(err)
 		}
 
 	// ou: TTOU. Send the service a TTOU signal.
 	case "ou", "out", "TTOU":
-		if err := d.Process.Signal(syscall.SIGTTOU); err != nil {
+		if err := d.process.Signal(syscall.SIGTTOU); err != nil {
 			log.Print(err)
 		}
 
 	// w: WINCH. Send the service a WINCH signal.
 	case "w", "winch":
-		if err := d.Process.Signal(syscall.SIGWINCH); err != nil {
+		if err := d.process.Signal(syscall.SIGWINCH); err != nil {
 			log.Print(err)
 		}
 
