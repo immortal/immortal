@@ -37,8 +37,17 @@ func (d *Daemon) Run(p Process) {
 			if err != nil {
 				return
 			}
+			fmt.Printf("p.Pid() = %+v\n", p.Pid())
+			fmt.Printf("d.Pid() = %+v\n", d.process.Pid())
 			fmt.Printf("d.process == nil = %+v\n", d.process == nil)
-			fmt.Printf("d.process.eTime = %+v\n", d.process.sTime)
+			fmt.Printf("d.process.sTime = %+v\n", d.process.sTime)
+			select {
+			case <-d.process.err:
+				fmt.Printf("d.process.sTime = %+v\n", time.Since(d.process.sTime))
+				println(d.process.eTime.Sub(d.process.sTime))
+				time.Sleep(time.Second)
+				d.process = nil
+			}
 			//fmt.Printf("cmd = %+v\n", d.process)
 			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
 			//atomic.StoreUint32(&self.lock, self.lock_defer)

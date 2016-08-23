@@ -14,6 +14,7 @@ import (
 // Process interface
 type Process interface {
 	Start() (*process, error)
+	Pid() int
 }
 
 type process struct {
@@ -22,6 +23,7 @@ type process struct {
 	cmd   *exec.Cmd
 	eTime time.Time
 	sTime time.Time
+	err   chan error
 }
 
 // Start runs the command
@@ -93,9 +95,11 @@ func (p *process) Start() (*process, error) {
 	}
 	p.sTime = time.Now()
 
+	p.err = make(chan error)
 	go func() {
-		p.cmd.Wait()
+		err := p.cmd.Wait()
 		p.eTime = time.Now()
+		p.err <- err
 	}()
 	return p, nil
 }
