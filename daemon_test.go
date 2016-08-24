@@ -142,11 +142,10 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	go d.Run(NewProcess(cfg))
+	d.Run(NewProcess(cfg))
 
-	fmt.Printf("d.pong() = %+v\n", d.pong())
 	for {
-		fmt.Println(d.pong(), 333)
+		fmt.Printf("d.pong() = %+v\n", d.pong())
 		time.Sleep(2 * time.Second)
 	}
 

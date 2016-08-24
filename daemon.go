@@ -29,45 +29,48 @@ func (d *Daemon) Run(p Process) {
 	// increment count by 1
 	atomic.AddUint64(&d.count, 1)
 
-	start := time.After(time.Duration(d.Wait) * time.Second)
+	time.Sleep(time.Duration(d.Wait) * time.Second)
+	//start := time.After(time.Duration(d.Wait) * time.Second)
 
 	var err error
-	select {
-	case <-start:
-		d.process, err = p.Start()
-		if err != nil {
-			return
-		}
-		// write parent pid
-		if d.Pid.Parent != "" {
-			if err := d.WritePid(d.Pid.Parent, os.Getpid()); err != nil {
-				log.Println(err)
-			}
-		}
-		// write child pid
-		if d.Pid.Child != "" {
-			if err := d.WritePid(d.Pid.Child, p.Pid()); err != nil {
-				log.Println(err)
-			}
-		}
-		select {
-		case err := <-d.process.errch:
-			fmt.Printf("d.process.sTime = %+v\n", time.Since(d.process.sTime))
-			println(d.process.eTime.Sub(d.process.sTime))
-			d.process = nil
-			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
-			atomic.StoreUint32(&d.lock, d.lock_defer)
-			d.Control.done <- err
-			return
-		default:
-		}
-	case ctrl := <-d.control:
-		fmt.Println("eeeeee")
-		switch c := ctrl.(type) {
-		case pong:
-			c.ch <- "pong\n"
+	d.process, err = p.Start()
+	if err != nil {
+		return
+	}
+	// write parent pid
+	if d.Pid.Parent != "" {
+		if err := d.WritePid(d.Pid.Parent, os.Getpid()); err != nil {
+			log.Println(err)
 		}
 	}
+	// write child pid
+	if d.Pid.Child != "" {
+		if err := d.WritePid(d.Pid.Child, p.Pid()); err != nil {
+			log.Println(err)
+		}
+	}
+
+	go func() {
+		// loop
+		for {
+			select {
+			case err := <-d.process.errch:
+				fmt.Printf("d.process.sTime = %+v\n", time.Since(d.process.sTime))
+				println(d.process.eTime.Sub(d.process.sTime))
+				d.process = nil
+				// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+				atomic.StoreUint32(&d.lock, d.lock_defer)
+				d.control = nil
+				d.done <- err
+				return
+			case ctrl := <-d.control:
+				switch c := ctrl.(type) {
+				case pong:
+					c.ch <- "pong\n"
+				}
+			}
+		}
+	}()
 }
 
 type pong struct {
@@ -75,9 +78,13 @@ type pong struct {
 }
 
 func (d *Daemon) pong() string {
-	ch := make(chan string, 1)
-	d.control <- pong{ch}
-	return <-ch
+	if d.control != nil {
+		ch := make(chan string)
+		fmt.Println("send 2 ctrl")
+		d.control <- pong{ch}
+		return <-ch
+	}
+	return "0"
 }
 
 // WritePid write pid to file
