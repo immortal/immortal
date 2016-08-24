@@ -142,7 +142,14 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d.Run(NewProcess(cfg))
+	go d.Run(NewProcess(cfg))
+
+	fmt.Printf("d.pong() = %+v\n", d.pong())
+	for {
+		fmt.Println(d.pong(), 333)
+		time.Sleep(2 * time.Second)
+	}
+
 	sup := &Sup{}
 
 	// check pids
@@ -158,11 +165,9 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 	old_pid := d.process.Pid()
 
-	fmt.Printf("dir = %+v\n", dir)
-
 	for {
 		fmt.Println("waiting...", old_pid)
-		time.Sleep(time.Second)
+		time.Sleep(1 * time.Second)
 	}
 
 	/*

@@ -51,16 +51,33 @@ func (d *Daemon) Run(p Process) {
 			}
 		}
 		select {
-		case <-d.process.errch:
+		case err := <-d.process.errch:
 			fmt.Printf("d.process.sTime = %+v\n", time.Since(d.process.sTime))
 			println(d.process.eTime.Sub(d.process.sTime))
 			d.process = nil
+			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
+			atomic.StoreUint32(&d.lock, d.lock_defer)
+			d.Control.done <- err
+			return
 		default:
 		}
-		//fmt.Printf("cmd = %+v\n", d.process)
-		// lock_defer defaults to 0, 1 to run only once/down (don't restart)
-		//atomic.StoreUint32(&self.lock, self.lock_defer)
+	case ctrl := <-d.control:
+		fmt.Println("eeeeee")
+		switch c := ctrl.(type) {
+		case pong:
+			c.ch <- "pong\n"
+		}
 	}
+}
+
+type pong struct {
+	ch chan string
+}
+
+func (d *Daemon) pong() string {
+	ch := make(chan string, 1)
+	d.control <- pong{ch}
+	return <-ch
 }
 
 // WritePid write pid to file
@@ -88,9 +105,10 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 
 	control := &Control{
-		fifo: make(chan Return),
-		quit: make(chan struct{}),
-		done: make(chan error),
+		fifo:    make(chan Return),
+		quit:    make(chan struct{}),
+		done:    make(chan error),
+		control: make(chan interface{}),
 	}
 
 	// if ctrl create supervise dir
