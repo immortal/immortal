@@ -36,7 +36,7 @@ func TestDaemonNewCtrl(t *testing.T) {
 		t.Error(err)
 	}
 	expect(t, uint32(0), d.lock)
-	expect(t, uint32(0), d.lock_defer)
+	expect(t, uint32(0), d.lock_once)
 	// test lock
 	_, err = New(cfg)
 	if err == nil {
@@ -94,7 +94,7 @@ func TestDaemonNewCtrlCwd(t *testing.T) {
 		t.Error(err)
 	}
 	expect(t, uint32(0), d.lock)
-	expect(t, uint32(0), d.lock_defer)
+	expect(t, uint32(0), d.lock_once)
 	// test lock
 	_, err = New(cfg)
 	if err == nil {
@@ -144,11 +144,6 @@ func TestSignalsUDOT(t *testing.T) {
 
 	d.Run(NewProcess(cfg))
 
-	for {
-		fmt.Printf("d.pong() = %+v\n", d.pong())
-		time.Sleep(2 * time.Second)
-	}
-
 	sup := &Sup{}
 
 	// check pids
@@ -160,13 +155,30 @@ func TestSignalsUDOT(t *testing.T) {
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 		t.Error(err, pid)
 	} else {
-		expect(t, d.process.Pid(), pid)
+		expect(t, d.Pid(), pid)
 	}
-	old_pid := d.process.Pid()
+
+	for i := 0; i <= 3; i++ {
+		fmt.Printf("d.Pong() = %+v\n", d.Pid())
+		time.Sleep(1 * time.Second)
+	}
+
+	d.ctrl <- controlOnce{}
+
+	for i := 0; i <= 1; i++ {
+		fmt.Printf("d.Pong() = %+v\n", d.Pid())
+		time.Sleep(1 * time.Second)
+	}
+	d.ctrl <- controlKill{}
+
+	for _ = range d.done {
+		fmt.Println("waiting...", d.Pid(), d.lock, d.lock_once)
+		time.Sleep(1 * time.Second)
+	}
 
 	for {
-		fmt.Println("waiting...", old_pid)
 		time.Sleep(1 * time.Second)
+		fmt.Println("okok")
 	}
 
 	/*

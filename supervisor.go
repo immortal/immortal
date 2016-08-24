@@ -76,8 +76,8 @@ func (self *Sup) ReadFifoControl(fifo *os.File, ch chan<- Return) {
 
 func Supervise(s Supervisor, d *Daemon) {
 	// listen on control for signals
-	if d.ctrl {
-		s.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
+	if d.cfg.ctrl {
+		s.ReadFifoControl(d.fifo_control, d.fifo)
 	}
 
 	// info channel
@@ -89,14 +89,14 @@ func Supervise(s Supervisor, d *Daemon) {
 	run := make(chan struct{}, 1)
 	for {
 		select {
-		case <-d.Control.quit:
+		case <-d.quit:
 			return
 		case <-run:
 			time.Sleep(time.Second)
-			d.Run(NewProcess(d.Config))
+			d.Run(NewProcess(d.cfg))
 		default:
 			select {
-			case state := <-d.Control.done:
+			case state := <-d.done:
 				if state != nil {
 					if exitError, ok := state.(*exec.ExitError); ok {
 						log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
@@ -106,7 +106,7 @@ func Supervise(s Supervisor, d *Daemon) {
 							exitError.SystemTime(),
 							"d.process.Uptime()")
 					} else if state.Error() == "EXIT" {
-						log.Printf("PID: %d Exited", d.process.Pid())
+						log.Printf("PID: %d Exited", d.pid)
 					} else {
 						log.Print(state)
 					}
@@ -114,18 +114,18 @@ func Supervise(s Supervisor, d *Daemon) {
 
 				// follow the new pid and stop running the command
 				// unless the new pid dies
-				if d.Config.Pid.Follow != "" {
-					pid, err := s.ReadPidFile(d.Config.Pid.Follow)
+				if d.cfg.Pid.Follow != "" {
+					pid, err := s.ReadPidFile(d.cfg.Pid.Follow)
 					if err != nil {
-						log.Printf("Cannot read pidfile:%s,  %s", d.Config.Pid.Follow, err)
+						log.Printf("Cannot read pidfile:%s,  %s", d.cfg.Pid.Follow, err)
 						run <- struct{}{}
 					} else {
 						// check if pid in file is valid
-						if pid > 1 && pid != d.process.Pid() && s.IsRunning(pid) {
+						if pid > 1 && pid != d.pid && s.IsRunning(pid) {
 							// set pid to new pid in file
-							// -------> fix this d.Process.Pid = pid
-							log.Printf("Watching pid %d on file: %s", d.process.Pid(), d.Config.Pid.Follow)
-							go s.WatchPid(pid, d.Control.done)
+							d.pid = pid
+							log.Printf("Watching pid %d on file: %s", d.pid, d.cfg.Pid.Follow)
+							go s.WatchPid(pid, d.done)
 						} else {
 							// if cmd exits or process is kill
 							run <- struct{}{}
@@ -134,7 +134,7 @@ func Supervise(s Supervisor, d *Daemon) {
 				} else {
 					run <- struct{}{}
 				}
-			case fifo := <-d.Control.fifo:
+			case fifo := <-d.fifo:
 				if fifo.err != nil {
 					log.Printf("control error: %s", fifo.err)
 				}
