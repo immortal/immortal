@@ -19,10 +19,12 @@ type controlSignal struct {
 
 type controlKill struct{}
 
-func (d *Daemon) Pid() int {
+func (d *Daemon) Pid() (pid int) {
 	ch := make(chan int, 1)
 	d.ctrl <- controlPid{ch}
-	return <-ch
+	pid = <-ch
+	close(ch)
+	return
 }
 
 func (d *Daemon) control(p *process) {
