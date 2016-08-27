@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (self *Sup) Info(ch <-chan os.Signal, d *Daemon) {
+func (d *Daemon) Info(ch <-chan os.Signal) {
 	for {
 		select {
 		case <-ch:
@@ -22,23 +22,21 @@ Frees: %d
 Seconds in GC: %d
 Started on: %v
 Uptime: %v
-Process uptime: %v
 Process count: %d`
 			runtime.NumGoroutine()
-			s := new(runtime.MemStats)
-			runtime.ReadMemStats(s)
+			r := new(runtime.MemStats)
+			runtime.ReadMemStats(r)
 			log.Printf(status,
 				runtime.NumGoroutine(),
-				s.Alloc,
-				s.TotalAlloc,
-				s.Sys,
-				s.Lookups,
-				s.Mallocs,
-				s.Frees,
-				s.PauseTotalNs/1000000000,
+				r.Alloc,
+				r.TotalAlloc,
+				r.Sys,
+				r.Lookups,
+				r.Mallocs,
+				r.Frees,
+				r.PauseTotalNs/1000000000,
 				d.sTime.Format(time.RFC3339),
 				time.Since(d.sTime),
-				"d.Process.Uptime()",
 				d.count)
 		}
 	}

@@ -17,8 +17,8 @@ type Return struct {
 }
 
 type Daemon struct {
-	count        uint64
 	cfg          *Config
+	count        uint64
 	done         chan error
 	fifo         chan Return
 	fifo_control *os.File

@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -76,42 +78,59 @@ func (self *Sup) ReadFifoControl(fifo *os.File, ch chan<- Return) {
 	}()
 }
 
-func Supervise(s Supervisor, d *Daemon) {
+func Supervise(d *Daemon) {
+	p, err := d.Run(NewProcess(d.cfg))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Info
+	info := make(chan os.Signal)
+	signal.Notify(info, syscall.SIGQUIT)
+	go d.Info(info)
+
+	s := &Sup{p}
+
+	for {
+		time.Sleep(time.Second)
+		fmt.Println("waiting...")
+	}
+
 	// listen on control for signals
 	if d.cfg.ctrl {
 		s.ReadFifoControl(d.fifo_control, d.fifo)
 	}
 
-	// info channel
-	info := make(chan os.Signal)
-	signal.Notify(info, syscall.SIGQUIT)
-	go s.Info(info, d)
-
-	// run loop
+	//run
 	run := make(chan struct{}, 1)
+
 	for {
 		select {
 		case <-d.quit:
 			return
 		case <-run:
-			time.Sleep(time.Second)
-			d.Run(NewProcess(d.cfg))
+			p, err := d.Run(NewProcess(d.cfg))
+			if err != nil {
+				log.Print(err)
+			}
+			s = &Sup{p}
 		default:
 			select {
-			case state := <-d.done:
-				if state != nil {
-					if exitError, ok := state.(*exec.ExitError); ok {
+			case err := <-p.errch:
+				if err != nil {
+					if exitError, ok := err.(*exec.ExitError); ok {
+						atomic.StoreUint32(&d.lock, d.lock_once)
 						log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
 							exitError.Pid(),
 							exitError,
 							exitError.UserTime(),
 							exitError.SystemTime(),
-							"d.process.Uptime()")
-					} else if state.Error() == "EXIT" {
-						//log.Printf("PID: %d Exited", s.p.Pid())
-						println("fix this")
+							time.Since(p.sTime),
+						)
+					} else if err.Error() == "EXIT" {
+						log.Printf("PID: %d Exited", p.Pid())
 					} else {
-						log.Print(state)
+						log.Print(err)
 					}
 				}
 
@@ -124,11 +143,8 @@ func Supervise(s Supervisor, d *Daemon) {
 						run <- struct{}{}
 					} else {
 						// check if pid in file is valid
-						//	if pid > 1 && pid != p.Pid() && s.IsRunning(pid) {
-						if pid > 1 {
-							// set pid to new pid in file
-							// d.pid = pid fix this
-							// log.Printf("Watching pid %d on file: %s", d.pid, d.cfg.Pid.Follow)
+						if pid > 1 && pid != p.Pid() && s.IsRunning(pid) {
+							log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
 							go s.WatchPid(pid, d.done)
 						} else {
 							// if cmd exits or process is kill
@@ -142,7 +158,7 @@ func Supervise(s Supervisor, d *Daemon) {
 				if fifo.err != nil {
 					log.Printf("control error: %s", fifo.err)
 				}
-				go s.HandleSignals(fifo.msg, d)
+				s.HandleSignals(fifo.msg, d)
 			}
 		}
 	}
