@@ -158,107 +158,82 @@ func TestSignalsUDOT(t *testing.T) {
 		expect(t, d.Pid(), pid)
 	}
 
-	for i := 0; i <= 3; i++ {
-		fmt.Printf("d.Pong() = %+v\n", d.Pid())
-		time.Sleep(1 * time.Second)
+	// test "k", process should restart and get a new pid
+	old_pid := d.Pid()
+	sup.HandleSignals("k", d)
+	t.Log("testing k")
+	// wait for process to finish
+	<-d.done
+	d.Run(NewProcess(cfg))
+	if old_pid == d.Pid() {
+		t.Fatal("Expecting a new pid")
 	}
+	old_pid = d.Pid()
 
-	d.ctrl <- controlOnce{}
+	// test "d", (keep it down and don't restart)
+	t.Log("testing d")
+	sup.HandleSignals("d", d)
+	// wait for process to finish
+	<-d.done
+	d.Run(NewProcess(cfg))
+	d.Run(NewProcess(cfg))
 
-	for i := 0; i <= 1; i++ {
-		fmt.Printf("d.Pong() = %+v\n", d.Pid())
-		time.Sleep(1 * time.Second)
+	// test "u"
+	t.Log("testing up")
+	sup.HandleSignals("u", d)
+	d.Run(NewProcess(cfg))
+	if old_pid == d.Pid() {
+		t.Fatal("Expecting a new pid")
 	}
-	d.ctrl <- controlKill{}
-
-	for _ = range d.done {
-		fmt.Println("waiting...", d.Pid(), d.lock, d.lock_once)
-		time.Sleep(1 * time.Second)
-	}
-
+	old_pid = d.Pid()
+	//fmt.Println("okokok")
+	fmt.Printf("d.Pid() = %+v\n", d.Pid())
+	sup.HandleSignals("u", d)
 	for {
-		time.Sleep(1 * time.Second)
-		fmt.Println("okok")
+
 	}
 
 	/*
-		// test "k", process should restart and get a new pid
-		sup.HandleSignals("k", d)
-		t.Log("testing k")
-
-		// wait for process to finish
-		<-d.Control.done
-
-		d.Run()
-		<-d.running
-
-		if old_pid == d.Process.Pid() {
-			t.Fatal("Expecting a new pid")
-		}
-		old_pid = d.Process.Pid()
-
-		t.Log("testing d")
-		// test "d", (keep it down and don't restart)
-		sup.HandleSignals("d", d)
-
-		// wait for process to finish
-		<-d.Control.done
-
-		d.Run()
-		d.Run()
-		d.Run()
-		<-d.running
-		t.Log("testing up")
-		sup.HandleSignals("u", d)
-
-		d.Run()
-		<-d.running
-
-		if old_pid == d.Process.Pid() {
-			t.Fatal("Expecting a new pid")
-		}
-		old_pid = d.Process.Pid()
-
+			// test "once", process should not restart after going down
 		t.Log("testing once")
-		// test "once", process should not restart after going down
-		sup.HandleSignals("o", d)
-		sup.HandleSignals("k", d)
+			sup.HandleSignals("o", d)
+			sup.HandleSignals("k", d)
 
-		// wait for process to finish
-		<-d.Control.done
+			// wait for process to finish
+			<-d.Control.done
 
-		d.Run()
-		d.Run()
-		d.Run()
-		<-d.running
-		if old_pid != d.Process.Pid() {
-			t.Fatal("Expecting same pid, process should not restart")
-		}
+			d.Run()
+			d.Run()
+			d.Run()
+			<-d.running
+			if old_pid != d.Process.Pid() {
+				t.Fatal("Expecting same pid, process should not restart")
+			}
 
-		sup.HandleSignals("u", d)
+			sup.HandleSignals("u", d)
 
-		d.Run()
-		<-d.running
+			d.Run()
+			<-d.running
 
-		if old_pid == d.Process.Pid() {
-			t.Fatal("Expecting a new pid")
-		}
-		old_pid = d.Process.Pid()
+			if old_pid == d.Process.Pid() {
+				t.Fatal("Expecting a new pid")
+			}
+			old_pid = d.Process.Pid()
 
-		t.Log("testing t")
-		sup.HandleSignals("t", d)
+			t.Log("testing t")
+			sup.HandleSignals("t", d)
 
-		// wait for process to finish
-		<-d.Control.done
+			// wait for process to finish
+			<-d.Control.done
 
-		d.Run()
-		<-d.running
+			d.Run()
+			<-d.running
 
-		if old_pid == d.Process.Pid() {
-			t.Fatal("Expecting a new pid")
-		}
+			if old_pid == d.Process.Pid() {
+				t.Fatal("Expecting a new pid")
+			}
 
-		sup.HandleSignals("k", d)
-		sup.HandleSignals("exit", d)
+			sup.HandleSignals("k", d)
+			sup.HandleSignals("exit", d)
 	*/
 }

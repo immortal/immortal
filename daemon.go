@@ -60,6 +60,7 @@ func (d *Daemon) Run(p Process) {
 		}
 	}
 
+	d.ctrl = make(chan interface{})
 	// control process loop
 	go d.control(process)
 }
@@ -117,8 +118,8 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 
 	return &Daemon{
-		cfg:          cfg,
-		ctrl:         make(chan interface{}),
+		cfg: cfg,
+		//		ctrl:         make(chan interface{}),
 		done:         make(chan error),
 		fifo:         make(chan Return),
 		fifo_control: fifo_control,

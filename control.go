@@ -13,6 +13,8 @@ type controlPid struct {
 
 type controlOnce struct{}
 
+type controlUp struct{}
+
 type controlSignal struct {
 	signal os.Signal
 }
@@ -34,13 +36,17 @@ func (d *Daemon) control(p *process) {
 			// lock_once defaults to 0, 1 to run only once/down (don't restart)
 			atomic.StoreUint32(&d.lock, d.lock_once)
 			fmt.Printf("err = %+v\n", err)
+			close(d.ctrl)
 			d.done <- err
 			return
 		case ctrl := <-d.ctrl:
+			fmt.Printf("ctrl = %+v\n", ctrl)
 			switch c := ctrl.(type) {
 			case controlPid:
 				c.ch <- p.Pid()
-				println(d.lock, d.lock_once)
+			case controlUp:
+				d.lock = 0
+				d.lock_once = 0
 			case controlOnce:
 				d.lock_once = 1
 			case controlSignal:
