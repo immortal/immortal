@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"os/signal"
@@ -113,6 +114,15 @@ func TestHelperProcessSignalsUDOT(*testing.T) {
 		os.Exit(1)
 	case <-time.After(10 * time.Second):
 		os.Exit(0)
+	default:
+		for i := 1; i < 10; i++ {
+			if i%3 == 0 {
+				fmt.Fprintf(os.Stderr, "STDERR i: %d\n", i)
+			} else {
+				fmt.Printf("STDOUT i: %d\n", i)
+			}
+			time.Sleep(time.Second)
+		}
 	}
 }
 
@@ -136,6 +146,10 @@ func TestSignalsUDOT(t *testing.T) {
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
+		//Log: Log{
+		//File: "/tmp/test.log",
+		//},
+		Logger: "logger -t test",
 	}
 	d, err := New(cfg)
 	if err != nil {

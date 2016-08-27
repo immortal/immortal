@@ -76,9 +76,6 @@ func (p *process) Start() (*process, error) {
 		w *io.PipeWriter
 	)
 	if p.Logger.IsLogging() {
-		defer func() {
-			w.Close()
-		}()
 		r, w = io.Pipe()
 		p.cmd.Stdout = w
 		p.cmd.Stderr = w
@@ -96,11 +93,14 @@ func (p *process) Start() (*process, error) {
 	p.sTime = time.Now()
 
 	p.errch = make(chan error)
-	go func() {
+	go func(w *io.PipeWriter) {
 		err := p.cmd.Wait()
 		p.eTime = time.Now()
+		if w != nil {
+			w.Close()
+		}
 		p.errch <- err
-	}()
+	}(w)
 	return p, nil
 }
 

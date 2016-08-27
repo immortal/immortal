@@ -2,13 +2,14 @@ package immortal
 
 import (
 	"bufio"
-	"github.com/immortal/logrotate"
-	"github.com/immortal/multiwriter"
 	"io"
 	"log"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/immortal/logrotate"
+	"github.com/immortal/multiwriter"
 )
 
 type Logger interface {
@@ -84,14 +85,14 @@ func NewLogger(cfg *Config) *log.Logger {
 	return nil
 }
 
-func (self *LogWriter) StdHandler(input io.ReadCloser) {
+func (l *LogWriter) StdHandler(input io.ReadCloser) {
 	in := bufio.NewScanner(input)
 	for in.Scan() {
-		self.logger.Print(in.Text())
+		l.logger.Print(in.Text())
 	}
 	input.Close()
 }
 
-func (self *LogWriter) IsLogging() bool {
-	return self.logger != nil
+func (l *LogWriter) IsLogging() bool {
+	return l.logger != nil
 }

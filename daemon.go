@@ -59,8 +59,6 @@ func (d *Daemon) Run(p Process) (*process, error) {
 	}
 
 	return process, nil
-	// control process loop
-	//go d.control(process)
 }
 
 // WritePid write pid to file
