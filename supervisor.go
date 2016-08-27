@@ -23,7 +23,9 @@ type Supervisor interface {
 	WatchPid(pid int, ch chan<- error)
 }
 
-type Sup struct{}
+type Sup struct {
+	process *process
+}
 
 func (self *Sup) IsRunning(pid int) bool {
 	process, _ := os.FindProcess(int(pid))
@@ -106,7 +108,8 @@ func Supervise(s Supervisor, d *Daemon) {
 							exitError.SystemTime(),
 							"d.process.Uptime()")
 					} else if state.Error() == "EXIT" {
-						log.Printf("PID: %d Exited", d.pid)
+						//log.Printf("PID: %d Exited", s.p.Pid())
+						println("fix this")
 					} else {
 						log.Print(state)
 					}
@@ -121,10 +124,11 @@ func Supervise(s Supervisor, d *Daemon) {
 						run <- struct{}{}
 					} else {
 						// check if pid in file is valid
-						if pid > 1 && pid != d.pid && s.IsRunning(pid) {
+						//	if pid > 1 && pid != p.Pid() && s.IsRunning(pid) {
+						if pid > 1 {
 							// set pid to new pid in file
-							d.pid = pid
-							log.Printf("Watching pid %d on file: %s", d.pid, d.cfg.Pid.Follow)
+							// d.pid = pid fix this
+							// log.Printf("Watching pid %d on file: %s", d.pid, d.cfg.Pid.Follow)
 							go s.WatchPid(pid, d.done)
 						} else {
 							// if cmd exits or process is kill

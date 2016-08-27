@@ -6,73 +6,73 @@ import (
 	"syscall"
 )
 
-func (self *Sup) HandleSignals(signal string, d *Daemon) {
+func (s *Sup) HandleSignals(signal string, d *Daemon) {
 	switch signal {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
-		d.ctrl <- controlUp{}
-		//d.Run()
+		d.lock = 0
+		d.lock_once = 0
 
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
-		d.ctrl <- controlOnce{}
-		d.ctrl <- controlSignal{syscall.SIGTERM}
+		d.lock_once = 1
+		s.process.Signal(syscall.SIGTERM)
 
 	// o: Once. If the service is not running, start it. Do not restart it if it stops.
 	case "o", "once":
-		d.ctrl <- controlOnce{}
+		d.lock_once = 1
 
 	// t: Terminate. Send the service a TERM signal.
 	case "t", "term":
-		d.ctrl <- controlSignal{syscall.SIGTERM}
+		s.process.Signal(syscall.SIGTERM)
 
 	// p: Pause. Send the service a STOP signal.
 	case "p", "pause", "s", "stop":
-		d.ctrl <- controlSignal{syscall.SIGSTOP}
+		s.process.Signal(syscall.SIGSTOP)
 
 	// c: Continue. Send the service a CONT signal.
 	case "c", "cont":
-		d.ctrl <- controlSignal{syscall.SIGCONT}
+		s.process.Signal(syscall.SIGCONT)
 
 	// h: Hangup. Send the service a HUP signal.
 	case "h", "hup":
-		d.ctrl <- controlSignal{syscall.SIGHUP}
+		s.process.Signal(syscall.SIGHUP)
 
 	// a: Alarm. Send the service an ALRM signal.
 	case "a", "alrm":
-		d.ctrl <- controlSignal{syscall.SIGALRM}
+		s.process.Signal(syscall.SIGALRM)
 
 	// i: Interrupt. Send the service an INT signal.
 	case "i", "int":
-		d.ctrl <- controlSignal{syscall.SIGINT}
+		s.process.Signal(syscall.SIGINT)
 
 	// q: QUIT. Send the service a QUIT signal.
 	case "q", "quit":
-		d.ctrl <- controlSignal{syscall.SIGQUIT}
+		s.process.Signal(syscall.SIGQUIT)
 
 	// 1: USR1. Send the service a USR1 signal.
 	case "1", "usr1":
-		d.ctrl <- controlSignal{syscall.SIGUSR1}
+		s.process.Signal(syscall.SIGUSR1)
 
 	// 2: USR2. Send the service a USR2 signal.
 	case "2", "usr2":
-		d.ctrl <- controlSignal{syscall.SIGUSR2}
+		s.process.Signal(syscall.SIGUSR2)
 
 	// k: Kill. Send the service a KILL signal.
 	case "k", "kill":
-		d.ctrl <- controlKill{}
+		s.process.Kill()
 
 	// in: TTIN. Send the service a TTIN signal.
 	case "in", "TTIN":
-		d.ctrl <- controlSignal{syscall.SIGTTIN}
+		s.process.Signal(syscall.SIGTTIN)
 
 	// ou: TTOU. Send the service a TTOU signal.
 	case "ou", "out", "TTOU":
-		d.ctrl <- controlSignal{syscall.SIGTTOU}
+		s.process.Signal(syscall.SIGTTOU)
 
 	// w: WINCH. Send the service a WINCH signal.
 	case "w", "winch":
-		d.ctrl <- controlSignal{syscall.SIGWINCH}
+		s.process.Signal(syscall.SIGWINCH)
 
 	// x: Exit. supervise will exit as soon as the service is down. If you use this option on a stable system, you're doing something wrong; supervise is designed to run forever.
 	case "x", "exit":

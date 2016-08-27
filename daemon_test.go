@@ -1,11 +1,11 @@
 package immortal
 
 import (
-	"fmt"
 	"io/ioutil"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -142,9 +142,12 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d.Run(NewProcess(cfg))
+	p, err := d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
 
-	sup := &Sup{}
+	sup := &Sup{p}
 
 	// check pids
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
@@ -155,85 +158,88 @@ func TestSignalsUDOT(t *testing.T) {
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 		t.Error(err, pid)
 	} else {
-		expect(t, d.Pid(), pid)
+		expect(t, p.Pid(), pid)
 	}
 
 	// test "k", process should restart and get a new pid
-	old_pid := d.Pid()
-	sup.HandleSignals("k", d)
 	t.Log("testing k")
+	current_pid := p.Pid()
+	sup.HandleSignals("k", d)
 	// wait for process to finish
-	<-d.done
-	d.Run(NewProcess(cfg))
-	if old_pid == d.Pid() {
-		t.Fatal("Expecting a new pid")
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: killed", err.Error())
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
 	}
-	old_pid = d.Pid()
+	sup = &Sup{p}
+	if current_pid == p.Pid() {
+		t.Fatalf("Expecting a new pid")
+	}
 
 	// test "d", (keep it down and don't restart)
 	t.Log("testing d")
 	sup.HandleSignals("d", d)
 	// wait for process to finish
-	<-d.done
-	d.Run(NewProcess(cfg))
-	d.Run(NewProcess(cfg))
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: terminated", err.Error())
+	p, err = d.Run(NewProcess(cfg))
+	if err == nil {
+		t.Error("Expecting an error")
+	}
 
 	// test "u"
 	t.Log("testing up")
 	sup.HandleSignals("u", d)
-	d.Run(NewProcess(cfg))
-	if old_pid == d.Pid() {
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+	sup = &Sup{p}
+
+	// test "once", process should not restart after going down
+	t.Log("testing once")
+	sup.HandleSignals("o", d)
+	sup.HandleSignals("k", d)
+	// wait for process to finish
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: killed", err.Error())
+	p, err = d.Run(NewProcess(cfg))
+	if err == nil {
+		t.Error("Expecting an error")
+	}
+	sup = &Sup{p}
+
+	// test "u"
+	t.Log("testing u")
+	sup.HandleSignals("u", d)
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+	sup = &Sup{p}
+	old_pid := p.Pid()
+
+	// test "t"
+	t.Log("testing t")
+	sup.HandleSignals("t", d)
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: terminated", err.Error())
+	// restart to get new pid
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+	sup = &Sup{p}
+	if old_pid == p.Pid() {
 		t.Fatal("Expecting a new pid")
 	}
-	old_pid = d.Pid()
-	//fmt.Println("okokok")
-	fmt.Printf("d.Pid() = %+v\n", d.Pid())
-	sup.HandleSignals("u", d)
-	for {
-
-	}
-
-	/*
-			// test "once", process should not restart after going down
-		t.Log("testing once")
-			sup.HandleSignals("o", d)
-			sup.HandleSignals("k", d)
-
-			// wait for process to finish
-			<-d.Control.done
-
-			d.Run()
-			d.Run()
-			d.Run()
-			<-d.running
-			if old_pid != d.Process.Pid() {
-				t.Fatal("Expecting same pid, process should not restart")
-			}
-
-			sup.HandleSignals("u", d)
-
-			d.Run()
-			<-d.running
-
-			if old_pid == d.Process.Pid() {
-				t.Fatal("Expecting a new pid")
-			}
-			old_pid = d.Process.Pid()
-
-			t.Log("testing t")
-			sup.HandleSignals("t", d)
-
-			// wait for process to finish
-			<-d.Control.done
-
-			d.Run()
-			<-d.running
-
-			if old_pid == d.Process.Pid() {
-				t.Fatal("Expecting a new pid")
-			}
-
-			sup.HandleSignals("k", d)
-			sup.HandleSignals("exit", d)
-	*/
+	sup.HandleSignals("kill", d)
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: killed", err.Error())
 }

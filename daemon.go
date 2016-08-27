@@ -17,23 +17,21 @@ type Return struct {
 }
 
 type Daemon struct {
-	cfg          *Config
 	count        uint64
-	ctrl         chan interface{}
+	cfg          *Config
 	done         chan error
 	fifo         chan Return
 	fifo_control *os.File
 	fifo_ok      *os.File
 	lock         uint32
 	lock_once    uint32
-	pid          int
 	quit         chan struct{}
 	sTime        time.Time
 }
 
-func (d *Daemon) Run(p Process) {
+func (d *Daemon) Run(p Process) (*process, error) {
 	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
-		return
+		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lock_once)
 	}
 
 	// increment count by 1
@@ -43,7 +41,7 @@ func (d *Daemon) Run(p Process) {
 
 	process, err := p.Start()
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	// write parent pid
@@ -60,9 +58,9 @@ func (d *Daemon) Run(p Process) {
 		}
 	}
 
-	d.ctrl = make(chan interface{})
+	return process, nil
 	// control process loop
-	go d.control(process)
+	//go d.control(process)
 }
 
 // WritePid write pid to file
@@ -118,8 +116,7 @@ func New(cfg *Config) (*Daemon, error) {
 	}
 
 	return &Daemon{
-		cfg: cfg,
-		//		ctrl:         make(chan interface{}),
+		cfg:          cfg,
 		done:         make(chan error),
 		fifo:         make(chan Return),
 		fifo_control: fifo_control,

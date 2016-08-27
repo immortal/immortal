@@ -119,8 +119,8 @@ func (p *process) Pid() int {
 }
 
 // Signal sends a signal to the Process
-func (self *process) Signal(sig os.Signal) error {
-	return self.cmd.Process.Signal(sig)
+func (p *process) Signal(sig os.Signal) error {
+	return p.cmd.Process.Signal(sig)
 }
 
 func NewProcess(cfg *Config) *process {
