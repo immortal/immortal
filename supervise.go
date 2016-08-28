@@ -3,7 +3,6 @@ package immortal
 import (
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
 	"sync/atomic"
 	"syscall"
@@ -38,30 +37,24 @@ func Supervise(d *Daemon) {
 		case <-d.quit:
 			return
 		case <-run:
-			p, err := d.Run(NewProcess(d.cfg))
+			// create a new process
+			p, err = d.Run(NewProcess(d.cfg))
 			if err != nil {
 				log.Print(err)
 			}
 			s = &Sup{p}
 		default:
 			select {
-			case err := <-p.errch:
-				if err != nil {
-					if exitError, ok := err.(*exec.ExitError); ok {
-						atomic.StoreUint32(&d.lock, d.lock_once)
-						log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
-							exitError.Pid(),
-							exitError,
-							exitError.UserTime(),
-							exitError.SystemTime(),
-							time.Since(p.sTime),
-						)
-					} else if err.Error() == "EXIT" {
-						log.Printf("PID: %d Exited", p.Pid())
-					} else {
-						log.Print(err)
-					}
-				}
+			case <-p.errch:
+				// unlock, or lock once
+				atomic.StoreUint32(&d.lock, d.lock_once)
+				log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+					p.cmd.ProcessState.Pid(),
+					p.cmd.ProcessState,
+					p.cmd.ProcessState.UserTime(),
+					p.cmd.ProcessState.SystemTime(),
+					time.Since(p.sTime),
+				)
 
 				// follow the new pid and stop running the command
 				// unless the new pid dies
