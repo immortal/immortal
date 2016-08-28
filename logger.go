@@ -21,7 +21,7 @@ type LogWriter struct {
 	logger *log.Logger
 }
 
-func NewLogger(cfg *Config) *log.Logger {
+func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	var (
 		ch      chan error
 		err     error
@@ -66,6 +66,9 @@ func NewLogger(cfg *Config) *log.Logger {
 		go func() {
 			for {
 				select {
+				case <-quit:
+					w.Close()
+					return
 				case err = <-ch:
 					log.Print("logger exited ", err.Error())
 					m.Remove(w)

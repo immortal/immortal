@@ -24,6 +24,7 @@ type process struct {
 	cmd   *exec.Cmd
 	eTime time.Time
 	errch chan error
+	quit  chan struct{}
 	sTime time.Time
 }
 
@@ -98,6 +99,7 @@ func (p *process) Start() (*process, error) {
 		p.eTime = time.Now()
 		if w != nil {
 			w.Close()
+			close(p.quit)
 		}
 		p.errch <- err
 	}(w)
@@ -124,10 +126,12 @@ func (p *process) Signal(sig os.Signal) error {
 }
 
 func NewProcess(cfg *Config) *process {
+	quit := make(chan struct{})
 	return &process{
 		Config: cfg,
 		Logger: &LogWriter{
-			logger: NewLogger(cfg),
+			logger: NewLogger(cfg, quit),
 		},
+		quit: quit,
 	}
 }
