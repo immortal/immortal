@@ -10,14 +10,20 @@ import (
 )
 
 func Supervise(d *Daemon) {
+	var (
+		p    *process
+		err  error
+		info = make(chan os.Signal)
+		run  = make(chan struct{}, 1)
+	)
+
 	// start a new process
-	p, err := d.Run(NewProcess(d.cfg))
+	p, err = d.Run(NewProcess(d.cfg))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Info loop kill 3 pid get stats
-	info := make(chan os.Signal)
 	signal.Notify(info, syscall.SIGQUIT)
 	go d.Info(info)
 
@@ -28,9 +34,6 @@ func Supervise(d *Daemon) {
 	if d.cfg.ctrl {
 		s.ReadFifoControl(d.fifo_control, d.fifo)
 	}
-
-	//run
-	run := make(chan struct{}, 1)
 
 	for {
 		select {
