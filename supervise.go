@@ -64,13 +64,13 @@ func Supervise(d *Daemon) {
 				if d.cfg.Pid.Follow != "" {
 					pid, err := s.ReadPidFile(d.cfg.Pid.Follow)
 					if err != nil {
-						log.Printf("Cannot read pidfile:%s,  %s", d.cfg.Pid.Follow, err)
+						log.Printf("Cannot read pidfile:%s, %s", d.cfg.Pid.Follow, err)
 						run <- struct{}{}
 					} else {
 						// check if pid in file is valid
 						if pid > 1 && pid != p.Pid() && s.IsRunning(pid) {
 							log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
-							go s.WatchPid(pid, d.done)
+							s.WatchPid(pid, d.done)
 						} else {
 							// if cmd exits or process is kill
 							run <- struct{}{}
