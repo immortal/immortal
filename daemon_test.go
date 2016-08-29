@@ -1,13 +1,12 @@
 package immortal
 
 import (
+	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
-	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -38,7 +37,7 @@ func TestDaemonNewCtrl(t *testing.T) {
 		t.Error(err)
 	}
 	expect(t, uint32(0), d.lock)
-	expect(t, uint32(0), d.lock_defer)
+	expect(t, uint32(0), d.lock_once)
 	// test lock
 	_, err = New(cfg)
 	if err == nil {
@@ -96,56 +95,11 @@ func TestDaemonNewCtrlCwd(t *testing.T) {
 		t.Error(err)
 	}
 	expect(t, uint32(0), d.lock)
-	expect(t, uint32(0), d.lock_defer)
+	expect(t, uint32(0), d.lock_once)
 	// test lock
 	_, err = New(cfg)
 	if err == nil {
 		t.Error("Expecting error: resource temporarily unavailable")
-	}
-}
-
-func TestWritePid(t *testing.T) {
-	cfg := &Config{}
-	d, err := New(cfg)
-	if err != nil {
-		t.Error(err)
-	}
-	tmpfile, err := ioutil.TempFile("", "TestWritePid")
-	if err != nil {
-		t.Error(err)
-	}
-	defer os.Remove(tmpfile.Name()) // clean up
-	err = d.WritePid(tmpfile.Name(), 1234)
-	if err != nil {
-		t.Error(err)
-	}
-	content, err := ioutil.ReadFile(tmpfile.Name())
-	if err != nil {
-		t.Error(err)
-	}
-	lines := strings.Split(string(content), "\n")
-	pid, err := strconv.Atoi(lines[0])
-	if err != nil {
-		t.Error(err)
-	}
-	expect(t, pid, 1234)
-}
-
-func TestWritePidErr(t *testing.T) {
-	cfg := &Config{}
-	d, err := New(cfg)
-	if err != nil {
-		t.Error(err)
-	}
-	tmpfile, err := ioutil.TempFile("", "TestWritePid")
-	if err != nil {
-		t.Error(err)
-	}
-	defer os.Remove(tmpfile.Name()) // clean up
-	os.Chmod(tmpfile.Name(), 0444)
-	err = d.WritePid(tmpfile.Name(), 1234)
-	if err == nil {
-		t.Error("Expecting error: permission denied")
 	}
 }
 
@@ -160,11 +114,19 @@ func TestHelperProcessSignalsUDOT(*testing.T) {
 		os.Exit(1)
 	case <-time.After(10 * time.Second):
 		os.Exit(0)
+	default:
+		for i := 1; i < 10; i++ {
+			if i%3 == 0 {
+				fmt.Fprintf(os.Stderr, "STDERR i: %d\n", i)
+			} else {
+				fmt.Printf("STDOUT i: %d\n", i)
+			}
+			time.Sleep(time.Second)
+		}
 	}
 }
 
 func TestSignalsUDOT(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
 	base := filepath.Base(os.Args[0]) // "exec.test"
 	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
 	if dir == "." {
@@ -177,19 +139,28 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsUDOT"},
+		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsUDOT", "--"},
 		Cwd:     parentDir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
+		//Log: Log{
+		//File: "/tmp/test.log",
+		//},
+		Logger: "logger -t test",
 	}
 	d, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d.Run()
-	sup := new(Sup)
+
+	p, err := d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+
+	sup := &Sup{p}
 
 	// check pids
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
@@ -198,76 +169,103 @@ func TestSignalsUDOT(t *testing.T) {
 		expect(t, os.Getpid(), pid)
 	}
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
-		t.Error(err)
+		t.Error(err, pid)
 	} else {
-		expect(t, d.Process().Pid, pid)
+		expect(t, p.Pid(), pid)
 	}
 
-	old_pid := d.Process().Pid
 	// test "k", process should restart and get a new pid
+	t.Log("testing k")
+	current_pid := p.Pid()
 	sup.HandleSignals("k", d)
-	expect(t, uint32(1), d.lock)
-	expect(t, uint32(0), d.lock_defer)
-	done := make(chan struct{}, 1)
-	select {
-	case <-d.Control.state:
-		d.cmd.Process.Pid = 0
-		done <- struct{}{}
+	// wait for process to finish
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: killed", err.Error())
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
 	}
-	select {
-	case <-done:
-		d.Run()
-	}
-
-	if old_pid == d.Process().Pid {
-		t.Fatal("Expecting a new pid")
+	sup = &Sup{p}
+	if current_pid == p.Pid() {
+		t.Fatalf("Expecting a new pid")
 	}
 
 	// test "d", (keep it down and don't restart)
+	t.Log("testing d")
 	sup.HandleSignals("d", d)
-	select {
-	case <-d.Control.state:
-		d.cmd.Process.Pid = 0
-		done <- struct{}{}
+	// wait for process to finish
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: terminated", err.Error())
+	p, err = d.Run(NewProcess(cfg))
+	if err == nil {
+		t.Error("Expecting an error")
 	}
-	select {
-	case <-done:
-		d.Run()
-	}
-	expect(t, 0, d.Process().Pid)
 
-	// test "u" more debug with: watch -n 0.1 "pgrep -fl run=TestSignals | awk '{print $1}' | xargs -n1 pstree -p "
+	// test "u"
+	t.Log("testing up")
 	sup.HandleSignals("u", d)
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+	sup = &Sup{p}
 
 	// test "once", process should not restart after going down
+	t.Log("testing once")
 	sup.HandleSignals("o", d)
 	sup.HandleSignals("k", d)
-	select {
-	case <-d.Control.state:
-		d.cmd.Process.Pid = 0
-		done <- struct{}{}
+	// wait for process to finish
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: killed", err.Error())
+	p, err = d.Run(NewProcess(cfg))
+	if err == nil {
+		t.Error("Expecting an error")
 	}
-	select {
-	case <-done:
-		d.Run()
-	}
-	expect(t, 0, d.Process().Pid)
+	sup = &Sup{p}
 
-	// test "up"
-	sup.HandleSignals("up", d)
-	sup.HandleSignals("stop", d)
-	sup.HandleSignals("cont", d)
+	// test "u"
+	t.Log("testing u")
+	sup.HandleSignals("u", d)
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+	sup = &Sup{p}
+	old_pid := p.Pid()
+
+	// test "t"
+	t.Log("testing t")
 	sup.HandleSignals("t", d)
-	select {
-	case <-d.Control.state:
-		d.cmd.Process.Pid = 0
-		done <- struct{}{}
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: terminated", err.Error())
+	// restart to get new pid
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
 	}
-	select {
-	case <-done:
-		d.Run()
+	sup = &Sup{p}
+	if old_pid == p.Pid() {
+		t.Fatal("Expecting a new pid")
 	}
-	// after exiting will get a race cond
-	expect(t, true, d.Process().Pid > 0)
-	sup.HandleSignals("exit", d)
+	sup.HandleSignals("kill", d)
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: killed", err.Error())
+
+	// test after
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+	sup = &Sup{p}
+	select {
+	case err := <-p.errch:
+		expect(t, "signal: killed", err.Error())
+	case <-time.After(1 * time.Second):
+		sup.HandleSignals("kill", d)
+	}
 }

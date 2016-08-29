@@ -2,145 +2,66 @@ package immortal
 
 import (
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
 
+type Return struct {
+	err error
+	msg string
+}
+
 type Daemon struct {
-	*Config
-	*Control
-	Forker
-	Logger
-	cmd        *exec.Cmd
-	count      uint64
-	lock       uint32
-	lock_defer uint32
-	start      time.Time
+	cfg          *Config
+	count        uint64
+	fifo         chan Return
+	fifo_control *os.File
+	fifo_ok      *os.File
+	lock         uint32
+	lock_once    uint32
+	quit         chan struct{}
+	sTime        time.Time
 }
 
-func (self *Daemon) Process() *os.Process {
-	return self.cmd.Process
-}
-
-func (self *Daemon) Run() {
-	if atomic.SwapUint32(&self.lock, uint32(1)) != 0 {
-		return
+func (d *Daemon) Run(p Process) (*process, error) {
+	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
+		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lock_once)
 	}
 
 	// increment count by 1
-	atomic.AddUint64(&self.count, 1)
+	atomic.AddUint64(&d.count, 1)
 
-	// Command to execute
-	self.cmd = exec.Command(self.command[0], self.command[1:]...)
+	time.Sleep(time.Duration(d.cfg.Wait) * time.Second)
 
-	// change working directory
-	if self.Cwd != "" {
-		self.cmd.Dir = self.Cwd
+	process, err := p.Start()
+	if err != nil {
+		return nil, err
 	}
-
-	// set environment vars
-	if self.Env != nil {
-		env := os.Environ()
-		for k, v := range self.Env {
-			env = append(env, fmt.Sprintf("%s=%s", k, v))
-		}
-		self.cmd.Env = env
-	}
-
-	sysProcAttr := new(syscall.SysProcAttr)
-
-	// set owner
-	if self.user != nil {
-		uid, err := strconv.Atoi(self.user.Uid)
-		if err != nil {
-			self.Control.state <- err
-			return
-		}
-
-		gid, err := strconv.Atoi(self.user.Gid)
-		if err != nil {
-			self.Control.state <- err
-			return
-		}
-
-		// https://golang.org/pkg/syscall/#SysProcAttr
-		sysProcAttr.Credential = &syscall.Credential{
-			Uid: uint32(uid),
-			Gid: uint32(gid),
-		}
-	}
-
-	// Set process group ID to Pgid, or, if Pgid == 0, to new pid
-	sysProcAttr.Setpgid = true
-	sysProcAttr.Pgid = 0
-
-	// set the attributes
-	self.cmd.SysProcAttr = sysProcAttr
-
-	// log only if are available loggers
-	var (
-		r *io.PipeReader
-		w *io.PipeWriter
-	)
-	if self.Logger.IsLogging() {
-		r, w = io.Pipe()
-		self.cmd.Stdout = w
-		self.cmd.Stderr = w
-		go self.Logger.StdHandler(r)
-	} else {
-		self.cmd.Stdin = nil
-		self.cmd.Stdout = nil
-		self.cmd.Stderr = nil
-	}
-
-	// wait N seconds before starting
-	if self.Wait > 0 {
-		time.Sleep(time.Duration(self.Wait) * time.Second)
-	}
-
-	if err := self.cmd.Start(); err != nil {
-		self.Control.state <- err
-		return
-	}
-
-	// set start time
-	self.start = time.Now()
 
 	// write parent pid
-	if self.Pid.Parent != "" {
-		if err := self.WritePid(self.Pid.Parent, os.Getpid()); err != nil {
-			log.Print(err)
+	if d.cfg.Pid.Parent != "" {
+		if err := d.WritePid(d.cfg.Pid.Parent, os.Getpid()); err != nil {
+			log.Println(err)
 		}
 	}
 
 	// write child pid
-	if self.Pid.Child != "" {
-		if err := self.WritePid(self.Pid.Child, self.cmd.Process.Pid); err != nil {
-			log.Print(err)
+	if d.cfg.Pid.Child != "" {
+		if err := d.WritePid(d.cfg.Pid.Child, p.Pid()); err != nil {
+			log.Println(err)
 		}
 	}
 
-	go func() {
-		defer func() {
-			if self.Logger.IsLogging() {
-				w.Close()
-			}
-			// lock_defer defaults to 0, 1 to run only once/down (don't restart)
-			atomic.StoreUint32(&self.lock, self.lock_defer)
-		}()
-		self.Control.state <- self.cmd.Wait()
-	}()
+	return process, nil
 }
 
-func (self *Daemon) WritePid(file string, pid int) error {
+// WritePid write pid to file
+func (d *Daemon) WritePid(file string, pid int) error {
 	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
 		return err
 	}
@@ -149,8 +70,10 @@ func (self *Daemon) WritePid(file string, pid int) error {
 
 func New(cfg *Config) (*Daemon, error) {
 	var (
-		supDir string
-		err    error
+		err          error
+		fifo_control *os.File
+		fifo_ok      *os.File
+		supDir       string
 	)
 
 	if cfg.Cwd != "" {
@@ -161,12 +84,6 @@ func New(cfg *Config) (*Daemon, error) {
 			return nil, err
 		}
 		supDir = filepath.Join(d, "supervise")
-	}
-
-	control := &Control{
-		fifo:  make(chan Return),
-		quit:  make(chan struct{}),
-		state: make(chan error),
 	}
 
 	// if ctrl create supervise dir
@@ -187,20 +104,20 @@ func New(cfg *Config) (*Daemon, error) {
 		}
 
 		// read fifo
-		if control.fifo_control, err = OpenFifo(filepath.Join(supDir, "control")); err != nil {
+		if fifo_control, err = OpenFifo(filepath.Join(supDir, "control")); err != nil {
 			return nil, err
 		}
-		if control.fifo_ok, err = OpenFifo(filepath.Join(supDir, "ok")); err != nil {
+		if fifo_ok, err = OpenFifo(filepath.Join(supDir, "ok")); err != nil {
 			return nil, err
 		}
 	}
 
 	return &Daemon{
-		Config:  cfg,
-		Control: control,
-		Forker:  &Fork{},
-		Logger: &LogWriter{
-			logger: NewLogger(cfg),
-		},
+		cfg:          cfg,
+		fifo:         make(chan Return),
+		fifo_control: fifo_control,
+		fifo_ok:      fifo_ok,
+		quit:         make(chan struct{}),
+		sTime:        time.Now(),
 	}, nil
 }
