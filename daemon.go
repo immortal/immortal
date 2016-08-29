@@ -19,7 +19,6 @@ type Return struct {
 type Daemon struct {
 	cfg          *Config
 	count        uint64
-	done         chan error
 	fifo         chan Return
 	fifo_control *os.File
 	fifo_ok      *os.File
@@ -115,7 +114,6 @@ func New(cfg *Config) (*Daemon, error) {
 
 	return &Daemon{
 		cfg:          cfg,
-		done:         make(chan error),
 		fifo:         make(chan Return),
 		fifo_control: fifo_control,
 		fifo_ok:      fifo_ok,
