@@ -127,7 +127,6 @@ func TestHelperProcessSignalsUDOT(*testing.T) {
 }
 
 func TestSignalsUDOT(t *testing.T) {
-	//log.SetOutput(ioutil.Discard)
 	base := filepath.Base(os.Args[0]) // "exec.test"
 	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
 	if dir == "." {
