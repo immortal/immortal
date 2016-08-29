@@ -60,7 +60,9 @@ func (s *Sup) HandleSignals(signal string, d *Daemon) {
 
 	// k: Kill. Send the service a KILL signal.
 	case "k", "kill":
-		s.process.Kill()
+		if err := s.process.Kill(); err != nil {
+			log.Print(err)
+		}
 
 	// in: TTIN. Send the service a TTIN signal.
 	case "in", "TTIN":

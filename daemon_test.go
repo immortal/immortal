@@ -256,4 +256,17 @@ func TestSignalsUDOT(t *testing.T) {
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
 	expect(t, "signal: killed", err.Error())
+
+	// test after
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+	sup = &Sup{p}
+	select {
+	case err := <-p.errch:
+		expect(t, "signal: killed", err.Error())
+	case <-time.After(1 * time.Second):
+		sup.HandleSignals("kill", d)
+	}
 }
