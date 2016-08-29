@@ -15,8 +15,7 @@ func Fork() (int, error) {
 	cmd.Stderr = nil
 	cmd.ExtraFiles = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid:  true,
-		Setctty: true,
+		Setsid: true,
 	}
 	if err := cmd.Start(); err != nil {
 		return 0, err
