@@ -9,14 +9,6 @@ import (
 func (s *Sup) HandleSignals(signal string, d *Daemon) {
 	var err error
 	switch signal {
-	// 1: USR1. Send the service a USR1 signal.
-	case "1", "usr1":
-		err = s.process.Signal(syscall.SIGUSR1)
-
-	// 2: USR2. Send the service a USR2 signal.
-	case "2", "usr2":
-		err = s.process.Signal(syscall.SIGUSR2)
-
 	// a: Alarm. Send the service an ALRM signal.
 	case "a", "alrm":
 		err = s.process.Signal(syscall.SIGALRM)
@@ -70,6 +62,14 @@ func (s *Sup) HandleSignals(signal string, d *Daemon) {
 	case "u", "up":
 		d.lock = 0
 		d.lock_once = 0
+
+	// 1: USR1. Send the service a USR1 signal.
+	case "1", "usr1":
+		err = s.process.Signal(syscall.SIGUSR1)
+
+	// 2: USR2. Send the service a USR2 signal.
+	case "2", "usr2":
+		err = s.process.Signal(syscall.SIGUSR2)
 
 	// w: WINCH. Send the service a WINCH signal.
 	case "w", "winch":
