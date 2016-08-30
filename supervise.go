@@ -48,16 +48,20 @@ func Supervise(d *Daemon) {
 			s = &Sup{p}
 		default:
 			select {
-			case <-p.errch:
+			case err := <-p.errch:
 				// unlock, or lock once
 				atomic.StoreUint32(&d.lock, d.lock_once)
-				log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
-					p.cmd.ProcessState.Pid(),
-					p.cmd.ProcessState,
-					p.cmd.ProcessState.UserTime(),
-					p.cmd.ProcessState.SystemTime(),
-					time.Since(p.sTime),
-				)
+				if err != nil && err.Error() == "EXIT" {
+					log.Printf("PID: %d Exited", p.Pid())
+				} else {
+					log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+						p.cmd.ProcessState.Pid(),
+						p.cmd.ProcessState,
+						p.cmd.ProcessState.UserTime(),
+						p.cmd.ProcessState.SystemTime(),
+						time.Since(p.sTime),
+					)
+				}
 
 				// follow the new pid and stop running the command
 				// unless the new pid dies
@@ -70,7 +74,6 @@ func Supervise(d *Daemon) {
 						// check if pid in file is valid
 						if pid > 1 && pid != p.Pid() && s.IsRunning(pid) {
 							log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
-							// fix this
 							s.WatchPid(pid, p.errch)
 						} else {
 							// if cmd exits or process is kill
