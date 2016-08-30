@@ -13,7 +13,7 @@ import (
 )
 
 type Logger interface {
-	StdHandler(input io.ReadCloser)
+	Log(input io.ReadCloser)
 	IsLogging() bool
 }
 
@@ -88,7 +88,7 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	return nil
 }
 
-func (l *LogWriter) StdHandler(input io.ReadCloser) {
+func (l *LogWriter) Log(input io.ReadCloser) {
 	in := bufio.NewScanner(input)
 	for in.Scan() {
 		l.logger.Print(in.Text())

@@ -80,7 +80,7 @@ func (p *process) Start() (*process, error) {
 		r, w = io.Pipe()
 		p.cmd.Stdout = w
 		p.cmd.Stderr = w
-		go p.Logger.StdHandler(r)
+		go p.Logger.Log(r)
 	} else {
 		p.cmd.Stdin = nil
 		p.cmd.Stdout = nil
