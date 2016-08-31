@@ -58,7 +58,6 @@ func main() {
 			os.Exit(1)
 		} else {
 			if pid > 0 {
-				fmt.Printf("%c  %d\n", immortal.Logo(), pid)
 				os.Exit(0)
 			}
 		}

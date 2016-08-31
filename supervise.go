@@ -11,9 +11,10 @@ import (
 
 func Supervise(d *Daemon) {
 	var (
-		p    *process
 		err  error
 		info = make(chan os.Signal)
+		p    *process
+		pid  int
 		run  = make(chan struct{}, 1)
 	)
 
@@ -48,21 +49,25 @@ func Supervise(d *Daemon) {
 			s = &Sup{p}
 		default:
 			select {
-			case <-p.errch:
+			case err := <-p.errch:
 				// unlock, or lock once
 				atomic.StoreUint32(&d.lock, d.lock_once)
-				log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
-					p.cmd.ProcessState.Pid(),
-					p.cmd.ProcessState,
-					p.cmd.ProcessState.UserTime(),
-					p.cmd.ProcessState.SystemTime(),
-					time.Since(p.sTime),
-				)
+				if err != nil && err.Error() == "EXIT" {
+					log.Printf("PID: %d Exited", pid)
+				} else {
+					log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+						p.cmd.ProcessState.Pid(),
+						p.cmd.ProcessState,
+						p.cmd.ProcessState.UserTime(),
+						p.cmd.ProcessState.SystemTime(),
+						time.Since(p.sTime),
+					)
+				}
 
 				// follow the new pid and stop running the command
 				// unless the new pid dies
 				if d.cfg.Pid.Follow != "" {
-					pid, err := s.ReadPidFile(d.cfg.Pid.Follow)
+					pid, err = s.ReadPidFile(d.cfg.Pid.Follow)
 					if err != nil {
 						log.Printf("Cannot read pidfile:%s, %s", d.cfg.Pid.Follow, err)
 						run <- struct{}{}
@@ -70,7 +75,6 @@ func Supervise(d *Daemon) {
 						// check if pid in file is valid
 						if pid > 1 && pid != p.Pid() && s.IsRunning(pid) {
 							log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
-							// fix this
 							s.WatchPid(pid, p.errch)
 						} else {
 							// if cmd exits or process is kill

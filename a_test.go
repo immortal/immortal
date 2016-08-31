@@ -14,8 +14,8 @@ func expect(t *testing.T, a interface{}, b interface{}) {
 	}
 }
 
-type myFork struct{}
+type mockProcess struct {
+}
 
-func (self myFork) Fork() (int, error) {
-	return 0, nil
+func (m *mockProcess) Start() {
 }
