@@ -15,7 +15,8 @@ func Supervise(d *Daemon) {
 		info = make(chan os.Signal)
 		p    *process
 		pid  int
-		run  = make(chan struct{}, 1)
+		run                = make(chan struct{}, 1)
+		wait time.Duration = 0 * time.Second
 	)
 
 	// start a new process
@@ -41,6 +42,7 @@ func Supervise(d *Daemon) {
 		case <-d.quit:
 			return
 		case <-run:
+			time.Sleep(wait)
 			// create a new process
 			p, err = d.Run(NewProcess(d.cfg))
 			if err != nil {
@@ -62,6 +64,12 @@ func Supervise(d *Daemon) {
 						p.cmd.ProcessState.SystemTime(),
 						time.Since(p.sTime),
 					)
+					// calculate time for next reboot to avoid looping & consuming CPU in case can't restart
+					uptime := p.eTime.Sub(p.sTime)
+					wait = 0 * time.Second
+					if uptime < time.Second {
+						wait = time.Second - uptime
+					}
 				}
 
 				// follow the new pid and stop running the command
