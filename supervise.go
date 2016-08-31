@@ -15,8 +15,8 @@ func Supervise(d *Daemon) {
 		info = make(chan os.Signal)
 		p    *process
 		pid  int
-		run                = make(chan struct{}, 1)
-		wait time.Duration = 0 * time.Second
+		run  = make(chan struct{}, 1)
+		wait time.Duration
 	)
 
 	// start a new process
