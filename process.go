@@ -93,7 +93,7 @@ func (p *process) Start() (*process, error) {
 	}
 	p.sTime = time.Now()
 
-	p.errch = make(chan error)
+	p.errch = make(chan error, 1)
 	go func(w *io.PipeWriter) {
 		err := p.cmd.Wait()
 		p.eTime = time.Now()

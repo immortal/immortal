@@ -75,7 +75,7 @@ func Supervise(d *Daemon) {
 						// check if pid in file is valid
 						if pid > 1 && pid != p.Pid() && s.IsRunning(pid) {
 							log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
-							go s.WatchPid(pid, p.errch)
+							s.WatchPid(pid, p.errch)
 						} else {
 							// if cmd exits or process is kill
 							run <- struct{}{}
