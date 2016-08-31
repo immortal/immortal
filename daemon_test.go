@@ -148,7 +148,7 @@ func TestSignalsUDOT(t *testing.T) {
 		//Log: Log{
 		//File: "/tmp/test.log",
 		//},
-		Logger: "logger -t test",
+		//Logger: "logger -t test",
 	}
 	d, err := New(cfg)
 	if err != nil {
