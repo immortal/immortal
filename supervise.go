@@ -47,6 +47,8 @@ func Supervise(d *Daemon) {
 			p, err = d.Run(NewProcess(d.cfg))
 			if err != nil {
 				log.Print(err)
+				time.Sleep(time.Second)
+				run <- struct{}{}
 			}
 			s = &Sup{p}
 		default:
@@ -64,7 +66,7 @@ func Supervise(d *Daemon) {
 						p.cmd.ProcessState.SystemTime(),
 						time.Since(p.sTime),
 					)
-					// calculate time for next reboot to avoid looping & consuming CPU in case can't restart
+					// calculate time for next reboot (avoids high CPU usage)
 					uptime := p.eTime.Sub(p.sTime)
 					wait = 0 * time.Second
 					if uptime < time.Second {

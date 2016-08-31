@@ -40,6 +40,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 
 	process, err := p.Start()
 	if err != nil {
+		atomic.StoreUint32(&d.lock, d.lock_once)
 		return nil, err
 	}
 
