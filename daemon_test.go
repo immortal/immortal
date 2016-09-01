@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -359,12 +358,12 @@ func TestSignalsUDOT(t *testing.T) {
 	sup = &Sup{p}
 	select {
 	case err := <-p.errch:
-		log, err := ioutil.ReadFile(tmpfile.Name())
+		content, err := ioutil.ReadFile(tmpfile.Name())
 		if err != nil {
 			t.Error(err)
 		}
-		re := regexp.MustCompile("5D675098-45D7-4089-A72C-3628713EA5BA")
-		expect(t, "5D675098-45D7-4089-A72C-3628713EA5BA", string(re.Find(log)))
+		lines := strings.Split(string(content), "\n")
+		expect(t, true, strings.HasSuffix(lines[0], "5D675098-45D7-4089-A72C-3628713EA5BA"))
 	case <-time.After(1 * time.Second):
 		sup.HandleSignals("kill", d)
 	}
