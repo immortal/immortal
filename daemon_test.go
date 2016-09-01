@@ -1,11 +1,16 @@
 package immortal
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -103,6 +108,93 @@ func TestDaemonNewCtrlCwd(t *testing.T) {
 	}
 }
 
+func TestBadUid(t *testing.T) {
+	cfg := &Config{
+		command: []string{"--"},
+		user:    &user.User{Uid: "uid", Gid: "0"},
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.Run(NewProcess(cfg))
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}
+
+func TestBadGid(t *testing.T) {
+	cfg := &Config{
+		command: []string{"--"},
+		user:    &user.User{Uid: "0", Gid: "gid"},
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.Run(NewProcess(cfg))
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}
+
+func TestUser(t *testing.T) {
+	cfg := &Config{
+		command: []string{"go"},
+		user:    &user.User{Uid: "0", Gid: "0"},
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.Run(NewProcess(cfg))
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}
+
+func TestBadWritePidParent(t *testing.T) {
+	var mylog bytes.Buffer
+	log.SetOutput(&mylog)
+	log.SetFlags(0)
+	cfg := &Config{
+		command: []string{"go"},
+		Pid: Pid{
+			Parent: "/dev/null/parent.pid",
+		},
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, "open /dev/null/parent.pid: not a directory", strings.TrimSpace(mylog.String()))
+}
+
+func TestBadWritePidChild(t *testing.T) {
+	var mylog bytes.Buffer
+	log.SetOutput(&mylog)
+	log.SetFlags(0)
+	cfg := &Config{
+		command: []string{"go"},
+		Pid: Pid{
+			Child: "/dev/null/child.pid",
+		},
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, "open /dev/null/child.pid: not a directory", strings.TrimSpace(mylog.String()))
+}
+
 func TestHelperProcessSignalsUDOT(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -115,14 +207,7 @@ func TestHelperProcessSignalsUDOT(*testing.T) {
 	case <-time.After(10 * time.Second):
 		os.Exit(0)
 	default:
-		for i := 1; i < 10; i++ {
-			if i%3 == 0 {
-				fmt.Fprintf(os.Stderr, "STDERR i: %d\n", i)
-			} else {
-				fmt.Printf("STDOUT i: %d\n", i)
-			}
-			time.Sleep(time.Second)
-		}
+		fmt.Println("5D675098-45D7-4089-A72C-3628713EA5BA")
 	}
 }
 
@@ -137,6 +222,11 @@ func TestSignalsUDOT(t *testing.T) {
 	if dirBase == "." {
 		t.Skipf("skipping; unexpected shallow dir of %q", dir)
 	}
+	tmpfile, err := ioutil.TempFile("", "TestLogFile")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name()) // clean up
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsUDOT", "--"},
@@ -146,9 +236,8 @@ func TestSignalsUDOT(t *testing.T) {
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
 		Log: Log{
-			File: "/tmp/test.log",
+			File: tmpfile.Name(),
 		},
-		Logger: "logger -t testImmortal",
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -262,7 +351,7 @@ func TestSignalsUDOT(t *testing.T) {
 	atomic.StoreUint32(&d.lock, d.lock_once)
 	expect(t, "signal: killed", err.Error())
 
-	// test after
+	// test log content
 	p, err = d.Run(NewProcess(cfg))
 	if err != nil {
 		t.Error(err)
@@ -270,7 +359,12 @@ func TestSignalsUDOT(t *testing.T) {
 	sup = &Sup{p}
 	select {
 	case err := <-p.errch:
-		expect(t, "signal: killed", err.Error())
+		log, err := ioutil.ReadFile(tmpfile.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		re := regexp.MustCompile("5D675098-45D7-4089-A72C-3628713EA5BA")
+		expect(t, "5D675098-45D7-4089-A72C-3628713EA5BA", string(re.Find(log)))
 	case <-time.After(1 * time.Second):
 		sup.HandleSignals("kill", d)
 	}

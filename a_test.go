@@ -13,9 +13,3 @@ func expect(t *testing.T, a interface{}, b interface{}) {
 		t.Fatalf("Expected: %v (type %v)  Got: %v (type %v)  in %s:%d", a, reflect.TypeOf(a), b, reflect.TypeOf(b), fn, line)
 	}
 }
-
-type mockProcess struct {
-}
-
-func (m *mockProcess) Start() {
-}

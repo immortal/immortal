@@ -114,9 +114,6 @@ func (p *process) Kill() error {
 
 // Pid return Process PID
 func (p *process) Pid() int {
-	if p.cmd == nil || p.cmd.Process == nil {
-		return 0
-	}
 	return p.cmd.Process.Pid
 }
 
