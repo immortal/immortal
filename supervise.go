@@ -44,8 +44,10 @@ func Supervise(d *Daemon) {
 		case <-run:
 			time.Sleep(wait)
 			// create a new process
-			p, err = d.Run(NewProcess(d.cfg))
+			np := NewProcess(d.cfg)
+			p, err = d.Run(np)
 			if err != nil {
+				close(np.quit)
 				log.Print(err)
 				time.Sleep(time.Second)
 				run <- struct{}{}

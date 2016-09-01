@@ -145,10 +145,10 @@ func TestSignalsUDOT(t *testing.T) {
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
-		//Log: Log{
-		//File: "/tmp/test.log",
-		//},
-		//Logger: "logger -t test",
+		Log: Log{
+			File: "/tmp/test.log",
+		},
+		Logger: "logger -t testImmortal",
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -198,9 +198,12 @@ func TestSignalsUDOT(t *testing.T) {
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
 	expect(t, "signal: terminated", err.Error())
-	p, err = d.Run(NewProcess(cfg))
+	np := NewProcess(cfg)
+	p, err = d.Run(np)
 	if err == nil {
 		t.Error("Expecting an error")
+	} else {
+		close(np.quit)
 	}
 
 	// test "u"
@@ -220,9 +223,12 @@ func TestSignalsUDOT(t *testing.T) {
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
 	expect(t, "signal: killed", err.Error())
-	p, err = d.Run(NewProcess(cfg))
+	np = NewProcess(cfg)
+	p, err = d.Run(np)
 	if err == nil {
 		t.Error("Expecting an error")
+	} else {
+		close(np.quit)
 	}
 	sup = &Sup{p}
 
