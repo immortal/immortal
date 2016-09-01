@@ -28,8 +28,6 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 		file, w io.WriteCloser
 	)
 
-	ch = make(chan error)
-
 	// create a multiwriter
 	multi := multiwriter.New()
 	var m *multiwriter.MultiWriter = multi.(*multiwriter.MultiWriter)
@@ -43,18 +41,19 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 		}
 	}
 
+	ch = make(chan error)
 	runLogger := func() {
 		command := strings.Fields(cfg.Logger)
 		cmd := exec.Command(command[0], command[1:]...)
 		w, err = cmd.StdinPipe()
 		if err != nil {
-			log.Printf("logger PIPE error: %s", err)
-			ch <- err
+			log.Printf("logger pipe error: %s", err)
 			return
 		}
 		go func() {
 			if err := cmd.Start(); err != nil {
-				ch <- err
+				log.Printf("logger error: %s", err)
+				return
 			}
 			ch <- cmd.Wait()
 		}()
@@ -63,21 +62,23 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	if cfg.Logger != "" {
 		runLogger()
 
-		go func() {
+		// keep logger up and running
+		go func(quit chan struct{}) {
 			for {
 				select {
 				case <-quit:
 					w.Close()
 					return
-				case err = <-ch:
-					log.Print("logger exited ", err.Error())
+				case err := <-ch:
+					log.Printf("logger %s %v", err, time.Now())
 					m.Remove(w)
 					time.Sleep(time.Second)
 					runLogger()
 					m.Append(w)
 				}
 			}
-		}()
+		}(quit)
+
 		m.Append(w)
 	}
 
