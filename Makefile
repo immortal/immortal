@@ -14,7 +14,7 @@ get:
 
 build: get
 #	${GO} get -u gopkg.in/yaml.v2;
-	${GO} build -race -ldflags "-X main.version=${VERSION}" -o ${BIN_NAME} cmd/immortal/main.go;
+	${GO} build -ldflags "-X main.version=${VERSION}" -o ${BIN_NAME} cmd/immortal/main.go;
 
 clean:
 	@rm -rf ir-* ${BIN_NAME} ${BIN_NAME}.debug *.out build debian

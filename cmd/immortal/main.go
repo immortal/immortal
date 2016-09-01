@@ -53,12 +53,11 @@ func main() {
 
 	// fork
 	if os.Getppid() > 1 {
-		if pid, err := daemon.Fork(); err != nil {
+		if pid, err := immortal.Fork(); err != nil {
 			log.Printf("Error while forking: %s", err)
 			os.Exit(1)
 		} else {
 			if pid > 0 {
-				fmt.Printf("%c  %d\n", immortal.Logo(), pid)
 				os.Exit(0)
 			}
 		}
@@ -66,6 +65,5 @@ func main() {
 
 	log.Printf("%c  %d", immortal.Logo(), os.Getpid())
 
-	daemon.Run()
-	immortal.Supervise(&immortal.Sup{}, daemon)
+	immortal.Supervise(daemon)
 }

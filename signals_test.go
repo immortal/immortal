@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -80,7 +81,7 @@ func TestSignalsFiFo(t *testing.T) {
 	}
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsFiFo"},
+		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsFiFo", "--"},
 		Cwd:     parentDir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
@@ -92,8 +93,13 @@ func TestSignalsFiFo(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	d.Run()
-	sup := new(Sup)
+
+	p, err := d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+
+	sup := &Sup{p}
 
 	// check pids
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
@@ -104,34 +110,15 @@ func TestSignalsFiFo(t *testing.T) {
 	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 		t.Error(err)
 	} else {
-		expect(t, d.Process().Pid, pid)
-	}
-
-	old_pid := d.Process().Pid
-	// test "k", process should restart and get a new pid
-	sup.HandleSignals("k", d)
-	expect(t, uint32(1), d.lock)
-	expect(t, uint32(0), d.lock_defer)
-	done := make(chan struct{}, 1)
-	select {
-	case <-d.Control.state:
-		d.cmd.Process.Pid = 0
-		done <- struct{}{}
-	}
-	select {
-	case <-done:
-		d.Run()
-	}
-
-	if old_pid == d.Process().Pid {
-		t.Fatal("Expecting a new pid")
+		expect(t, p.Pid(), pid)
 	}
 
 	// wait "probably" for fifo to be ready (check this)
 	time.Sleep(time.Second)
 
-	sup.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
+	sup.ReadFifoControl(d.fifo_control, d.fifo)
 
+	// open fifo for reading
 	fifo, err := OpenFifo(filepath.Join(parentDir, "supervise/ok"))
 	if err != nil {
 		t.Error(err)
@@ -162,11 +149,10 @@ func TestSignalsFiFo(t *testing.T) {
 		{"w", "--w"},
 		{"winch", "--w"},
 	}
-
 	go func() {
 		for {
 			select {
-			case fifo := <-d.Control.fifo:
+			case fifo := <-d.fifo:
 				sup.HandleSignals(fifo.msg, d)
 			}
 		}
@@ -179,30 +165,29 @@ func TestSignalsFiFo(t *testing.T) {
 
 	// test "d", (keep it down and don't restart)
 	sup.HandleSignals("down", d)
-	select {
-	case <-d.Control.state:
-		d.cmd.Process.Pid = 0
-		done <- struct{}{}
-	}
-	select {
-	case <-done:
-		d.Run()
-	}
+	// wait for process to finish
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: terminated", err.Error())
 
-	// create error os: process not initialized
+	// create error os: process already finished
 	mylog.Reset()
 	for _, s := range testSignals {
 		sup.HandleSignals(s.signal, d)
-		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 		mylog.Reset()
 	}
 
 	sup.HandleSignals("d", d)
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 	sup.HandleSignals("t", d)
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 	sup.HandleSignals("p", d)
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process not initialized"))
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
+
+	//exit
+	sup.HandleSignals("x", d)
+	<-d.quit
 }
 
 func waitSig(t *testing.T, fifo *os.File, sig string) {

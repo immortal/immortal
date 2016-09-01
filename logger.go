@@ -2,17 +2,18 @@ package immortal
 
 import (
 	"bufio"
-	"github.com/immortal/logrotate"
-	"github.com/immortal/multiwriter"
 	"io"
 	"log"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/immortal/logrotate"
+	"github.com/immortal/multiwriter"
 )
 
 type Logger interface {
-	StdHandler(input io.ReadCloser)
+	Log(input io.ReadCloser)
 	IsLogging() bool
 }
 
@@ -20,14 +21,11 @@ type LogWriter struct {
 	logger *log.Logger
 }
 
-func NewLogger(cfg *Config) *log.Logger {
+func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	var (
-		ch      chan error
 		err     error
 		file, w io.WriteCloser
 	)
-
-	ch = make(chan error)
 
 	// create a multiwriter
 	multi := multiwriter.New()
@@ -42,39 +40,50 @@ func NewLogger(cfg *Config) *log.Logger {
 		}
 	}
 
-	runLogger := func() {
-		command := strings.Fields(cfg.Logger)
-		cmd := exec.Command(command[0], command[1:]...)
-		w, err = cmd.StdinPipe()
-		if err != nil {
-			log.Printf("logger PIPE error: %s", err)
-			ch <- err
-			return
-		}
-		go func() {
-			if err := cmd.Start(); err != nil {
-				ch <- err
-			}
-			ch <- cmd.Wait()
-		}()
-	}
-
 	if cfg.Logger != "" {
-		runLogger()
 
-		go func() {
-			for {
-				select {
-				case err = <-ch:
-					log.Print("logger exited ", err.Error())
-					m.Remove(w)
-					time.Sleep(time.Second)
-					runLogger()
-					m.Append(w)
-				}
+		ch := make(chan error)
+
+		runLogger := func() error {
+			command := strings.Fields(cfg.Logger)
+			cmd := exec.Command(command[0], command[1:]...)
+			w, err = cmd.StdinPipe()
+			if err != nil {
+				return err
 			}
-		}()
-		m.Append(w)
+			if err := cmd.Start(); err != nil {
+				return err
+			}
+			go func() {
+				ch <- cmd.Wait()
+			}()
+			return nil
+		}
+
+		if err := runLogger(); err != nil {
+			log.Printf("logger error: %s", err)
+		} else {
+
+			// keep logger up
+			go func() {
+				for {
+					select {
+					case <-quit:
+						w.Close()
+						return
+					case err := <-ch:
+						log.Printf("logger %s", err)
+						m.Remove(w)
+						time.Sleep(time.Second)
+						if err := runLogger(); err == nil {
+							m.Append(w)
+						}
+					}
+				}
+			}()
+
+			m.Append(w)
+		}
 	}
 
 	// create the logger
@@ -84,14 +93,14 @@ func NewLogger(cfg *Config) *log.Logger {
 	return nil
 }
 
-func (self *LogWriter) StdHandler(input io.ReadCloser) {
+func (l *LogWriter) Log(input io.ReadCloser) {
 	in := bufio.NewScanner(input)
 	for in.Scan() {
-		self.logger.Print(in.Text())
+		l.logger.Print(in.Text())
 	}
 	input.Close()
 }
 
-func (self *LogWriter) IsLogging() bool {
-	return self.logger != nil
+func (l *LogWriter) IsLogging() bool {
+	return l.logger != nil
 }

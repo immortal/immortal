@@ -4,25 +4,24 @@ import (
 	"bufio"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
-	"time"
 )
 
 type Supervisor interface {
+	HandleSignals(signal string, d *Daemon)
+	Info(ch <-chan os.Signal, d *Daemon)
 	IsRunning(pid int) bool
+	ReadFifoControl(fifo *os.File, ch chan<- Return)
 	ReadPidFile(pidfile string) (int, error)
 	WatchPid(pid int, ch chan<- error)
-	ReadFifoControl(fifo *os.File, ch chan<- Return)
-	HandleSignals(signal string, d *Daemon)
 }
 
-type Sup struct{}
+type Sup struct {
+	process *process
+}
 
 func (self *Sup) IsRunning(pid int) bool {
 	process, _ := os.FindProcess(int(pid))
@@ -71,70 +70,4 @@ func (self *Sup) ReadFifoControl(fifo *os.File, ch chan<- Return) {
 			}
 		}
 	}()
-}
-
-func Supervise(s Supervisor, d *Daemon) {
-	// listen on control for signals
-	if d.ctrl {
-		s.ReadFifoControl(d.Control.fifo_control, d.Control.fifo)
-	}
-
-	// run loop
-	run := make(chan struct{}, 1)
-	for {
-		select {
-		case <-d.Control.quit:
-			return
-		case <-run:
-			d.Run()
-		default:
-			select {
-			case state := <-d.Control.state:
-				if state != nil {
-					if exitError, ok := state.(*exec.ExitError); ok {
-						d.cmd.Process.Pid = 0
-						atomic.StoreUint32(&d.lock, d.lock_defer)
-						log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
-							exitError.Pid(),
-							exitError,
-							exitError.UserTime(),
-							exitError.SystemTime(),
-							time.Since(d.start))
-					} else if state.Error() == "EXIT" {
-						log.Printf("PID: %d Exited", d.Process().Pid)
-					} else {
-						log.Print(state)
-					}
-				}
-
-				// follow the new pid and stop running the command
-				// unless the new pid dies
-				if d.Pid.Follow != "" {
-					pid, err := s.ReadPidFile(d.Pid.Follow)
-					if err != nil {
-						log.Printf("Cannot read pidfile:%s,  %s", d.Pid.Follow, err)
-						run <- struct{}{}
-					} else {
-						// check if pid in file is valid
-						if pid > 1 && pid != d.Process().Pid && s.IsRunning(pid) {
-							// set pid to new pid in file
-							d.Process().Pid = pid
-							log.Printf("Watching pid %d on file: %s", d.Process().Pid, d.Pid.Follow)
-							go s.WatchPid(pid, d.Control.state)
-						} else {
-							// if cmd exits or process is kill
-							run <- struct{}{}
-						}
-					}
-				} else {
-					run <- struct{}{}
-				}
-			case fifo := <-d.Control.fifo:
-				if fifo.err != nil {
-					log.Printf("control error: %s", fifo.err)
-				}
-				go s.HandleSignals(fifo.msg, d)
-			}
-		}
-	}
 }
