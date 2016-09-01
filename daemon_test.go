@@ -361,7 +361,7 @@ func TestSignalsUDOT(t *testing.T) {
 	case err := <-p.errch:
 		log, err := ioutil.ReadFile(tmpfile.Name())
 		if err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 		re := regexp.MustCompile("5D675098-45D7-4089-A72C-3628713EA5BA")
 		expect(t, "5D675098-45D7-4089-A72C-3628713EA5BA", string(re.Find(log)))
