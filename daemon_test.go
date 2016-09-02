@@ -198,6 +198,7 @@ func TestHelperProcessSignalsUDOT(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
+	fmt.Println("5D675098-45D7-4089-A72C-3628713EA5BA")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)
 	select {
@@ -205,8 +206,6 @@ func TestHelperProcessSignalsUDOT(*testing.T) {
 		os.Exit(1)
 	case <-time.After(10 * time.Second):
 		os.Exit(0)
-	default:
-		fmt.Println("5D675098-45D7-4089-A72C-3628713EA5BA")
 	}
 }
 
@@ -271,9 +270,7 @@ func TestSignalsUDOT(t *testing.T) {
 	// wait for process to finish
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
-	if "signal: killed" != err.Error() {
-		t.Error("Expecting an error")
-	}
+	expect(t, "signal: killed", err.Error())
 	p, err = d.Run(NewProcess(cfg))
 	if err != nil {
 		t.Error(err)
@@ -289,9 +286,7 @@ func TestSignalsUDOT(t *testing.T) {
 	// wait for process to finish
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
-	if "signal: terminated" != err.Error() {
-		t.Error("Expecting an error")
-	}
+	expect(t, "signal: terminated", err.Error())
 	np = NewProcess(cfg)
 	p, err = d.Run(np)
 	if err == nil {
@@ -351,12 +346,24 @@ func TestSignalsUDOT(t *testing.T) {
 	if old_pid == p.Pid() {
 		t.Fatal("Expecting a new pid")
 	}
-
-	time.Sleep(time.Second)
-
 	sup.HandleSignals("kill", d)
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
+	expect(t, "signal: killed", err.Error())
+
+	// test after
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+	sup = &Sup{p}
+
+	select {
+	case err := <-p.errch:
+		expect(t, "signal: killed", err.Error())
+	case <-time.After(1 * time.Second):
+		sup.HandleSignals("kill", d)
+	}
 
 	// test log content
 	t.Log("testing logfile")
