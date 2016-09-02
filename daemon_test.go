@@ -353,7 +353,6 @@ func TestSignalsUDOT(t *testing.T) {
 	sup.HandleSignals("kill", d)
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
-	expect(t, "signal: killed", err.Error())
 
 	// test log content
 	t.Log("testing logfile")
