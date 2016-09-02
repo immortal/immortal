@@ -271,7 +271,9 @@ func TestSignalsUDOT(t *testing.T) {
 	// wait for process to finish
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
-	expect(t, "signal: killed", err.Error())
+	if "signal: killed" != err.Error() {
+		t.Error("Expecting an error")
+	}
 	p, err = d.Run(NewProcess(cfg))
 	if err != nil {
 		t.Error(err)
