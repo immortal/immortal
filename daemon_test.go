@@ -243,7 +243,9 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := d.Run(NewProcess(cfg))
+	np := NewProcess(cfg)
+	expect(t, 0, np.Pid())
+	p, err := d.Run(np)
 	if err != nil {
 		t.Error(err)
 	}
@@ -286,7 +288,7 @@ func TestSignalsUDOT(t *testing.T) {
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
 	expect(t, "signal: terminated", err.Error())
-	np := NewProcess(cfg)
+	np = NewProcess(cfg)
 	p, err = d.Run(np)
 	if err == nil {
 		t.Error("Expecting an error")
@@ -345,26 +347,20 @@ func TestSignalsUDOT(t *testing.T) {
 	if old_pid == p.Pid() {
 		t.Fatal("Expecting a new pid")
 	}
+
+	time.Sleep(time.Second)
+
 	sup.HandleSignals("kill", d)
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lock_once)
 	expect(t, "signal: killed", err.Error())
 
 	// test log content
-	p, err = d.Run(NewProcess(cfg))
+	t.Log("testing logfile")
+	content, err := ioutil.ReadFile(tmpfile.Name())
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
-	sup = &Sup{p}
-	select {
-	case err := <-p.errch:
-		content, err := ioutil.ReadFile(tmpfile.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		lines := strings.Split(string(content), "\n")
-		expect(t, true, strings.HasSuffix(lines[0], "5D675098-45D7-4089-A72C-3628713EA5BA"))
-	case <-time.After(1 * time.Second):
-		sup.HandleSignals("kill", d)
-	}
+	lines := strings.Split(string(content), "\n")
+	expect(t, true, strings.HasSuffix(lines[0], "5D675098-45D7-4089-A72C-3628713EA5BA"))
 }
