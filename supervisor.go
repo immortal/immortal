@@ -2,7 +2,6 @@ package immortal
 
 import (
 	"bufio"
-	"io"
 	"io/ioutil"
 	"os"
 	"strconv"
@@ -24,7 +23,7 @@ type Sup struct {
 }
 
 func (self *Sup) IsRunning(pid int) bool {
-	process, _ := os.FindProcess(int(pid))
+	process, _ := os.FindProcess(pid)
 	if err := process.Signal(syscall.Signal(0)); err != nil {
 		return false
 	}
@@ -48,25 +47,17 @@ func (self *Sup) ReadPidFile(pidfile string) (int, error) {
 func (self *Sup) ReadFifoControl(fifo *os.File, ch chan<- Return) {
 	r := bufio.NewReader(fifo)
 
-	buf := make([]byte, 0, 8)
-
 	go func() {
 		defer fifo.Close()
 		for {
-			n, err := r.Read(buf[:cap(buf)])
-			if n == 0 {
-				if err == nil {
-					continue
-				}
-				if err == io.EOF {
-					continue
-				}
+			s, err := r.ReadString('\n')
+			if err != nil {
 				ch <- Return{err: err, msg: ""}
-			}
-			buf = buf[:n]
-			ch <- Return{
-				err: nil,
-				msg: strings.ToLower(strings.TrimSpace(string(buf))),
+			} else {
+				ch <- Return{
+					err: nil,
+					msg: strings.ToLower(strings.TrimSpace(s)),
+				}
 			}
 		}
 	}()

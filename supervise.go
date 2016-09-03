@@ -25,9 +25,8 @@ func Supervise(d *Daemon) {
 		log.Fatal(err)
 	}
 
-	// Info loop kill 3 pid get stats
+	// Info loop, kill 3 PPID get stats
 	signal.Notify(info, syscall.SIGQUIT)
-	go d.Info(info)
 
 	// create a supervisor
 	s := &Sup{p}
@@ -41,6 +40,8 @@ func Supervise(d *Daemon) {
 		select {
 		case <-d.quit:
 			return
+		case <-info:
+			d.Info()
 		case <-run:
 			time.Sleep(wait)
 			// create a new process
