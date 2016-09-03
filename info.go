@@ -7,13 +7,10 @@ import (
 	"time"
 )
 
-func (d *Daemon) Info(ch <-chan os.Signal) {
+func (d *Daemon) Info() {
 	var m runtime.MemStats
-	for {
-		select {
-		case <-ch:
-			runtime.ReadMemStats(&m)
-			status := `PID: %d
+	runtime.ReadMemStats(&m)
+	status := `PID: %d
 Gorutines: %d
 Alloc : %d
 Total Alloc: %d
@@ -25,19 +22,17 @@ Seconds in GC: %d
 Started on: %v
 Uptime: %v
 Process count: %d`
-			log.Printf(status,
-				os.Getpid(),
-				runtime.NumGoroutine(),
-				m.Alloc,
-				m.TotalAlloc,
-				m.Sys,
-				m.Lookups,
-				m.Mallocs,
-				m.Frees,
-				m.PauseTotalNs/1000000000,
-				d.sTime.Format(time.RFC3339),
-				time.Since(d.sTime),
-				d.count)
-		}
-	}
+	log.Printf(status,
+		os.Getpid(),
+		runtime.NumGoroutine(),
+		m.Alloc,
+		m.TotalAlloc,
+		m.Sys,
+		m.Lookups,
+		m.Mallocs,
+		m.Frees,
+		m.PauseTotalNs/1000000000,
+		d.sTime.Format(time.RFC3339),
+		time.Since(d.sTime),
+		d.count)
 }
