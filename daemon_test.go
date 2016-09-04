@@ -265,7 +265,7 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "k", process should restart and get a new pid
 	t.Log("testing k")
-	current_pid := p.Pid()
+	currentPid := p.Pid()
 	sup.HandleSignals("k", d)
 	// wait for process to finish
 	err = <-p.errch
@@ -276,7 +276,7 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Error(err)
 	}
 	sup = &Sup{p}
-	if current_pid == p.Pid() {
+	if currentPid == p.Pid() {
 		t.Fatalf("Expecting a new pid")
 	}
 
@@ -329,7 +329,7 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Error(err)
 	}
 	sup = &Sup{p}
-	old_pid := p.Pid()
+	oldPid := p.Pid()
 
 	// test "t"
 	t.Log("testing t")
@@ -343,7 +343,7 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Error(err)
 	}
 	sup = &Sup{p}
-	if old_pid == p.Pid() {
+	if oldPid == p.Pid() {
 		t.Fatal("Expecting a new pid")
 	}
 	sup.HandleSignals("kill", d)

@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// Parser interface
 type Parser interface {
 	Parse(fs *flag.FlagSet) (*Flags, error)
 	isDir(path string) bool
@@ -25,11 +26,13 @@ type Parser interface {
 	checkUser(username string) (*user.User, error)
 }
 
+// Parse implements parser
 type Parse struct {
 	Flags
 	UserLookup func(username string) (*user.User, error)
 }
 
+// Parse parse the command line flags
 func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.BoolVar(&self.Flags.Ctrl, "ctrl", false, "Create supervise directory")
 	fs.BoolVar(&self.Flags.Version, "v", false, "Print version")
@@ -135,6 +138,7 @@ func (self *Parse) checkUser(u string) (usr *user.User, err error) {
 	return
 }
 
+// Usage prints to standard error a usage message
 func (self *Parse) Usage(fs *flag.FlagSet) func() {
 	return func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
@@ -161,6 +165,7 @@ func (self *Parse) Usage(fs *flag.FlagSet) func() {
 	}
 }
 
+// ParseArgs parse command arguments
 func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	flags, err := p.Parse(fs)
 	if err != nil {

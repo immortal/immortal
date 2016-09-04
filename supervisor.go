@@ -9,6 +9,7 @@ import (
 	"syscall"
 )
 
+// Supervisor interface
 type Supervisor interface {
 	HandleSignals(signal string, d *Daemon)
 	Info(ch <-chan os.Signal, d *Daemon)
@@ -18,10 +19,12 @@ type Supervisor interface {
 	WatchPid(pid int, ch chan<- error)
 }
 
+// Sup implements Supervisor
 type Sup struct {
 	process *process
 }
 
+// IsRunning check if process is running
 func (self *Sup) IsRunning(pid int) bool {
 	process, _ := os.FindProcess(pid)
 	if err := process.Signal(syscall.Signal(0)); err != nil {
@@ -44,6 +47,7 @@ func (self *Sup) ReadPidFile(pidfile string) (int, error) {
 	return pid, nil
 }
 
+// ReadFifoControl read from fifo and handled by signals
 func (self *Sup) ReadFifoControl(fifo *os.File, ch chan<- Return) {
 	r := bufio.NewReader(fifo)
 

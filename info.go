@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// Info log current daemon status after receiving a QUIT signal "kill -3 PID"
 func (d *Daemon) Info() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)

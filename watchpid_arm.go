@@ -9,6 +9,7 @@ import (
 	"syscall"
 )
 
+// WatchPid check pid changes
 func (s *Sup) WatchPid(pid int, ch chan<- error) {
 	if !s.IsRunning(pid) {
 		ch <- fmt.Errorf("PID NOT FOUND")

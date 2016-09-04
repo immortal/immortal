@@ -6,6 +6,7 @@ import (
 	"syscall"
 )
 
+// HandleSignals send signals to the current process
 func (s *Sup) HandleSignals(signal string, d *Daemon) {
 	var err error
 	switch signal {
@@ -81,7 +82,7 @@ func (s *Sup) HandleSignals(signal string, d *Daemon) {
 
 	default:
 		log.Printf("Unknown signal: %s", signal)
-		fmt.Fprintf(d.fifo_ok, "%s\n", signal)
+		fmt.Fprintf(d.fifoOk, "%s\n", signal)
 	}
 
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// Supervise keep daemon process up and running
 func Supervise(d *Daemon) {
 	var (
 		err  error
@@ -33,7 +34,7 @@ func Supervise(d *Daemon) {
 
 	// listen on control for signals
 	if d.cfg.ctrl {
-		s.ReadFifoControl(d.fifo_control, d.fifo)
+		s.ReadFifoControl(d.fifoControl, d.fifo)
 	}
 
 	for {

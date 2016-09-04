@@ -12,15 +12,18 @@ import (
 	"github.com/immortal/multiwriter"
 )
 
+// Logger interface
 type Logger interface {
 	Log(input io.ReadCloser)
 	IsLogging() bool
 }
 
+// LogWriter implements Logger
 type LogWriter struct {
 	logger *log.Logger
 }
 
+// NewLogger return a Logger instance
 func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	var (
 		err     error
@@ -93,6 +96,7 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	return nil
 }
 
+// Log write to the logger
 func (l *LogWriter) Log(input io.ReadCloser) {
 	in := bufio.NewScanner(input)
 	for in.Scan() {
@@ -101,6 +105,7 @@ func (l *LogWriter) Log(input io.ReadCloser) {
 	input.Close()
 }
 
+// IsLogging return true if an availale logger exists
 func (l *LogWriter) IsLogging() bool {
 	return l.logger != nil
 }

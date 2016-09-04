@@ -1,5 +1,6 @@
 package immortal
 
+// Flags available command flags
 type Flags struct {
 	Ctrl       bool
 	Version    bool

@@ -11,23 +11,24 @@ import (
 	"time"
 )
 
+// Return struct used for fifo channel
 type Return struct {
 	err error
 	msg string
 }
 
+// Daemon struct
 type Daemon struct {
-	cfg          *Config
-	count        uint64
-	fifo         chan Return
-	fifo_control *os.File
-	fifo_ok      *os.File
-	lock         uint32
-	lock_once    uint32
-	quit         chan struct{}
-	sTime        time.Time
+	cfg                 *Config
+	count               uint64
+	fifo                chan Return
+	fifoControl, fifoOk *os.File
+	lock, lock_once     uint32
+	quit                chan struct{}
+	sTime               time.Time
 }
 
+// Run returns a process instance
 func (d *Daemon) Run(p Process) (*process, error) {
 	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
 		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lock_once)
@@ -69,12 +70,12 @@ func (d *Daemon) WritePid(file string, pid int) error {
 	return nil
 }
 
+// New creates a new daemon
 func New(cfg *Config) (*Daemon, error) {
 	var (
-		err          error
-		fifo_control *os.File
-		fifo_ok      *os.File
-		supDir       string
+		err                 error
+		fifoControl, fifoOk *os.File
+		supDir              string
 	)
 
 	if cfg.Cwd != "" {
@@ -105,20 +106,20 @@ func New(cfg *Config) (*Daemon, error) {
 		}
 
 		// read fifo
-		if fifo_control, err = OpenFifo(filepath.Join(supDir, "control")); err != nil {
+		if fifoControl, err = OpenFifo(filepath.Join(supDir, "control")); err != nil {
 			return nil, err
 		}
-		if fifo_ok, err = OpenFifo(filepath.Join(supDir, "ok")); err != nil {
+		if fifoOk, err = OpenFifo(filepath.Join(supDir, "ok")); err != nil {
 			return nil, err
 		}
 	}
 
 	return &Daemon{
-		cfg:          cfg,
-		fifo:         make(chan Return),
-		fifo_control: fifo_control,
-		fifo_ok:      fifo_ok,
-		quit:         make(chan struct{}),
-		sTime:        time.Now(),
+		cfg:         cfg,
+		fifo:        make(chan Return),
+		fifoControl: fifoControl,
+		fifoOk:      fifoOk,
+		quit:        make(chan struct{}),
+		sTime:       time.Now(),
 	}, nil
 }

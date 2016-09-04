@@ -6,6 +6,7 @@ import (
 	"syscall"
 )
 
+// MakeFifo creates a fifo file
 func MakeFifo(path string) error {
 	err := os.MkdirAll(filepath.Dir(path), os.ModePerm)
 	if err != nil {
@@ -19,6 +20,7 @@ func MakeFifo(path string) error {
 	return nil
 }
 
+// OpenFifo open fifo and returns its file descriptor
 func OpenFifo(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, os.ModeNamedPipe)
 	if err != nil {

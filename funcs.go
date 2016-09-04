@@ -8,6 +8,7 @@ const (
 	logo = "2B55"
 )
 
+// Logo print ⭕
 func Logo() rune {
 	return Icon(logo)
 }

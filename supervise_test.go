@@ -87,29 +87,29 @@ func TestSupervise(t *testing.T) {
 	time.Sleep(time.Second)
 
 	// check pids
-	parent_pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid"))
+	parentPid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid"))
 	if err != nil {
 		t.Error(err)
 	}
-	expect(t, os.Getpid(), parent_pid)
-	child_pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
+	expect(t, os.Getpid(), parentPid)
+	childPid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
 	if err != nil {
 		t.Error(err)
 	}
-	expect(t, true, child_pid > 0)
+	expect(t, true, childPid > 0)
 
 	fmt.Fprintln(fctrl, "t")
 	time.Sleep(time.Second)
-	newchild_pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
+	newchildPid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
 	if err != nil {
 		t.Error(err)
 	}
-	if child_pid == newchild_pid {
+	if childPid == newchildPid {
 		t.Error("Expecting new child pid")
 	}
 
 	// test info
-	syscall.Kill(parent_pid, syscall.SIGQUIT)
+	syscall.Kill(parentPid, syscall.SIGQUIT)
 	time.Sleep(time.Second)
 
 	// fake watch pid with other process
@@ -136,11 +136,11 @@ func TestSupervise(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 		}
 		time.Sleep(500 * time.Millisecond)
-		newchild_pid_after, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
+		newchildPidAfter, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
 		if err != nil {
 			t.Error(err)
 		}
-		if newchild_pid == newchild_pid_after {
+		if newchildPid == newchildPidAfter {
 			t.Error("Expecting different pids")
 		}
 	}

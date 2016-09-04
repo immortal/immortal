@@ -125,6 +125,7 @@ func (p *process) Signal(sig os.Signal) error {
 	return p.cmd.Process.Signal(sig)
 }
 
+// NewProcess return process instance
 func NewProcess(cfg *Config) *process {
 	quit := make(chan struct{})
 	return &process{

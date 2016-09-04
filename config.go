@@ -4,6 +4,7 @@ import (
 	"os/user"
 )
 
+// Config yaml/command line configuration
 type Config struct {
 	Cmd     string            `yaml:"cmd" json:"cmd"`
 	Cwd     string            `yaml:",omitempty" json:",omitempty"`
@@ -19,12 +20,14 @@ type Config struct {
 	user    *user.User
 }
 
+// Pid struct run.yml
 type Pid struct {
 	Follow string `yaml:",omitempty"`
 	Parent string `yaml:",omitempty"`
 	Child  string `yaml:",omitempty"`
 }
 
+// Log struct run.yml
 type Log struct {
 	File string `yaml:",omitempty"`
 	Age  int    `yaml:",omitempty"`

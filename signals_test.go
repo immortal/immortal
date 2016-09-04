@@ -116,7 +116,7 @@ func TestSignalsFiFo(t *testing.T) {
 	// wait "probably" for fifo to be ready (check this)
 	time.Sleep(time.Second)
 
-	sup.ReadFifoControl(d.fifo_control, d.fifo)
+	sup.ReadFifoControl(d.fifoControl, d.fifo)
 
 	// open fifo for reading
 	fifo, err := OpenFifo(filepath.Join(parentDir, "supervise/ok"))
