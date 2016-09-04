@@ -264,7 +264,7 @@ func TestParseYamlCmd(t *testing.T) {
 cwd: /tmp/
 env:
     DEBUG: 1
-    ENVIROMENT: production
+    ENVIRONMENT: production
 pid:
     follow: /path/to/unicorn.pid
     parent: /tmp/parent.pid
@@ -310,7 +310,7 @@ cmd: command
 cwd: /dev/null/nonexistent
 env:
     DEBUG: 1
-    ENVIROMENT: production
+    ENVIRONMENT: production
 pid:
     follow: /path/to/unicorn.pid
     parent: /tmp/parent.pid
@@ -355,7 +355,7 @@ func TestParseYamlUsrErr(t *testing.T) {
 cmd: command
 env:
     DEBUG: 1
-    ENVIROMENT: production
+    ENVIRONMENT: production
 pid:
     follow: /path/to/unicorn.pid
     parent: /tmp/parent.pid

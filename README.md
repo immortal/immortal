@@ -2,6 +2,7 @@
 
 [![Build Status](https://travis-ci.org/immortal/immortal.svg?branch=develop)](https://travis-ci.org/immortal/immortal)
 [![Coverage Status](https://coveralls.io/repos/github/immortal/immortal/badge.svg?branch=develop)](https://coveralls.io/github/immortal/immortal?branch=develop)
+[![Go Report Card](https://goreportcard.com/badge/github.com/immortal/immortal)](https://goreportcard.com/report/github.com/immortal/immortal)
 
 A *nix cross-platform (OS agnostic) supervisor
 
