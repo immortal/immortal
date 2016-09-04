@@ -190,9 +190,8 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		if cfg.Cmd == "" {
 			err = fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
 			return
-		} else {
-			cfg.command = strings.Fields(cfg.Cmd)
 		}
+		cfg.command = strings.Fields(cfg.Cmd)
 		if cfg.Cwd != "" {
 			if err = p.checkWrkdir(cfg.Cwd); err != nil {
 				return

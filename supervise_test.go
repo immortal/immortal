@@ -126,23 +126,17 @@ func TestSupervise(t *testing.T) {
 
 	// reset
 	fmt.Fprintln(fctrl, "t")
-
-	select {
-	case <-time.After(5 * time.Second):
-		t.Error("time out")
-	default:
-		for sup.IsRunning(watchPid) {
-			// wait mock watchpid to finish
-			time.Sleep(500 * time.Millisecond)
-		}
+	for sup.IsRunning(watchPid) {
+		// wait mock watchpid to finish
 		time.Sleep(500 * time.Millisecond)
-		newchildPidAfter, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
-		if err != nil {
-			t.Error(err)
-		}
-		if newchildPid == newchildPidAfter {
-			t.Error("Expecting different pids")
-		}
+	}
+	time.Sleep(time.Second)
+	newchildPidAfter, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
+	if err != nil {
+		t.Error(err)
+	}
+	if newchildPid == newchildPidAfter {
+		t.Error("Expecting different pids")
 	}
 }
 

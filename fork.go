@@ -6,6 +6,7 @@ import (
 	"syscall"
 )
 
+// Fork crete a new process
 func Fork() (int, error) {
 	args := os.Args[1:]
 	cmd := exec.Command(os.Args[0], args...)
