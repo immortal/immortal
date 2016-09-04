@@ -133,7 +133,7 @@ func TestSupervise(t *testing.T) {
 	default:
 		for sup.IsRunning(watchPid) {
 			// wait mock watchpid to finish
-			time.Sleep(1500 * time.Millisecond)
+			time.Sleep(2100 * time.Millisecond)
 		}
 		newchild_pid_after, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
 		if err != nil {
