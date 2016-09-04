@@ -167,7 +167,7 @@ func TestSignalsFiFo(t *testing.T) {
 	sup.HandleSignals("down", d)
 	// wait for process to finish
 	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lock_once)
+	atomic.StoreUint32(&d.lock, d.lockOnce)
 	expect(t, "signal: terminated", err.Error())
 
 	// create error os: process already finished

@@ -33,28 +33,28 @@ type Parse struct {
 }
 
 // Parse parse the command line flags
-func (self *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
-	fs.BoolVar(&self.Flags.Ctrl, "ctrl", false, "Create supervise directory")
-	fs.BoolVar(&self.Flags.Version, "v", false, "Print version")
-	fs.StringVar(&self.Flags.Configfile, "c", "", "`run.yml` configuration file")
-	fs.StringVar(&self.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
-	fs.StringVar(&self.Flags.Envdir, "e", "", "Set environment variables specified by files in the `dir`")
-	fs.StringVar(&self.Flags.FollowPid, "f", "", "Follow PID in `pidfile`")
-	fs.StringVar(&self.Flags.Logfile, "l", "", "Write stdout/stderr to `logfile`")
-	fs.StringVar(&self.Flags.Logger, "logger", "", "A `command` to pipe stdout/stderr to stdin")
-	fs.StringVar(&self.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
-	fs.StringVar(&self.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
-	fs.IntVar(&self.Flags.Seconds, "s", 0, "`seconds` to wait before starting")
-	fs.StringVar(&self.Flags.User, "u", "", "Execute command on behalf `user`")
+func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
+	fs.BoolVar(&p.Flags.Ctrl, "ctrl", false, "Create supervise directory")
+	fs.BoolVar(&p.Flags.Version, "v", false, "Print version")
+	fs.StringVar(&p.Flags.Configfile, "c", "", "`run.yml` configuration file")
+	fs.StringVar(&p.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
+	fs.StringVar(&p.Flags.Envdir, "e", "", "Set environment variables specified by files in the `dir`")
+	fs.StringVar(&p.Flags.FollowPid, "f", "", "Follow PID in `pidfile`")
+	fs.StringVar(&p.Flags.Logfile, "l", "", "Write stdout/stderr to `logfile`")
+	fs.StringVar(&p.Flags.Logger, "logger", "", "A `command` to pipe stdout/stderr to stdin")
+	fs.StringVar(&p.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
+	fs.StringVar(&p.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
+	fs.IntVar(&p.Flags.Seconds, "s", 0, "`seconds` to wait before starting")
+	fs.StringVar(&p.Flags.User, "u", "", "Execute command on behalf `user`")
 
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		return nil, err
 	}
-	return &self.Flags, nil
+	return &p.Flags, nil
 }
 
-func (self *Parse) isDir(path string) bool {
+func (p *Parse) isDir(path string) bool {
 	f, err := os.Stat(path)
 	if err != nil {
 		return false
@@ -65,7 +65,7 @@ func (self *Parse) isDir(path string) bool {
 	return false
 }
 
-func (self *Parse) isFile(path string) bool {
+func (p *Parse) isFile(path string) bool {
 	f, err := os.Stat(path)
 	if err != nil {
 		return false
@@ -76,7 +76,7 @@ func (self *Parse) isFile(path string) bool {
 	return false
 }
 
-func (self *Parse) parseYml(file string) (*Config, error) {
+func (p *Parse) parseYml(file string) (*Config, error) {
 	f, err := ioutil.ReadFile(file)
 	if err != nil {
 		return nil, err
@@ -88,15 +88,15 @@ func (self *Parse) parseYml(file string) (*Config, error) {
 	return &cfg, nil
 }
 
-func (self *Parse) checkWrkdir(dir string) (err error) {
-	if !self.isDir(dir) {
+func (p *Parse) checkWrkdir(dir string) (err error) {
+	if !p.isDir(dir) {
 		err = fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", dir, os.Args[0])
 	}
 	return
 }
 
-func (self *Parse) parseEnvdir(dir string) (map[string]string, error) {
-	if !self.isDir(dir) {
+func (p *Parse) parseEnvdir(dir string) (map[string]string, error) {
+	if !p.isDir(dir) {
 		return nil, fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help.", dir, os.Args[0])
 	}
 	files, err := ioutil.ReadDir(dir)
@@ -125,8 +125,8 @@ func (self *Parse) parseEnvdir(dir string) (map[string]string, error) {
 	return env, nil
 }
 
-func (self *Parse) checkUser(u string) (usr *user.User, err error) {
-	usr, err = self.UserLookup(u)
+func (p *Parse) checkUser(u string) (usr *user.User, err error) {
+	usr, err = p.UserLookup(u)
 	if err != nil {
 		if _, ok := err.(user.UnknownUserError); ok {
 			err = fmt.Errorf("User %q does not exist.", u)
@@ -139,7 +139,7 @@ func (self *Parse) checkUser(u string) (usr *user.User, err error) {
 }
 
 // Usage prints to standard error a usage message
-func (self *Parse) Usage(fs *flag.FlagSet) func() {
+func (p *Parse) Usage(fs *flag.FlagSet) func() {
 	return func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
 		var flags []string

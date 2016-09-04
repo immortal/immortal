@@ -25,7 +25,7 @@ type Sup struct {
 }
 
 // IsRunning check if process is running
-func (self *Sup) IsRunning(pid int) bool {
+func (s *Sup) IsRunning(pid int) bool {
 	process, _ := os.FindProcess(pid)
 	if err := process.Signal(syscall.Signal(0)); err != nil {
 		return false
@@ -33,8 +33,8 @@ func (self *Sup) IsRunning(pid int) bool {
 	return true
 }
 
-// ReadPidfile read pid from file if error returns pid 0
-func (self *Sup) ReadPidFile(pidfile string) (int, error) {
+// ReadPidFile read pid from file if error returns pid 0
+func (s *Sup) ReadPidFile(pidfile string) (int, error) {
 	content, err := ioutil.ReadFile(pidfile)
 	if err != nil {
 		return 0, err
@@ -48,19 +48,19 @@ func (self *Sup) ReadPidFile(pidfile string) (int, error) {
 }
 
 // ReadFifoControl read from fifo and handled by signals
-func (self *Sup) ReadFifoControl(fifo *os.File, ch chan<- Return) {
+func (s *Sup) ReadFifoControl(fifo *os.File, ch chan<- Return) {
 	r := bufio.NewReader(fifo)
 
 	go func() {
 		defer fifo.Close()
 		for {
-			s, err := r.ReadString('\n')
+			line, err := r.ReadString('\n')
 			if err != nil {
 				ch <- Return{err: err, msg: ""}
 			} else {
 				ch <- Return{
 					err: nil,
-					msg: strings.ToLower(strings.TrimSpace(s)),
+					msg: strings.ToLower(strings.TrimSpace(line)),
 				}
 			}
 		}

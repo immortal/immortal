@@ -20,7 +20,7 @@ func (s *Sup) HandleSignals(signal string, d *Daemon) {
 
 	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
 	case "d", "down":
-		d.lock_once = 1
+		d.lockOnce = 1
 		err = s.process.Signal(syscall.SIGTERM)
 
 	// h: Hangup. Send the service a HUP signal.
@@ -41,7 +41,7 @@ func (s *Sup) HandleSignals(signal string, d *Daemon) {
 
 	// o: Once. If the service is not running, start it. Do not restart it if it stops.
 	case "o", "once":
-		d.lock_once = 1
+		d.lockOnce = 1
 
 	// ou: TTOU. Send the service a TTOU signal.
 	case "ou", "out", "TTOU":
@@ -62,7 +62,7 @@ func (s *Sup) HandleSignals(signal string, d *Daemon) {
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
 		d.lock = 0
-		d.lock_once = 0
+		d.lockOnce = 0
 
 	// 1: USR1. Send the service a USR1 signal.
 	case "1", "usr1":

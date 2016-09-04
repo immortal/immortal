@@ -23,7 +23,7 @@ type Daemon struct {
 	count               uint64
 	fifo                chan Return
 	fifoControl, fifoOk *os.File
-	lock, lock_once     uint32
+	lock, lockOnce      uint32
 	quit                chan struct{}
 	sTime               time.Time
 }
@@ -31,7 +31,7 @@ type Daemon struct {
 // Run returns a process instance
 func (d *Daemon) Run(p Process) (*process, error) {
 	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
-		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lock_once)
+		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lockOnce)
 	}
 
 	// increment count by 1
@@ -41,7 +41,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 
 	process, err := p.Start()
 	if err != nil {
-		atomic.StoreUint32(&d.lock, d.lock_once)
+		atomic.StoreUint32(&d.lock, d.lockOnce)
 		return nil, err
 	}
 

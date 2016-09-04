@@ -57,7 +57,7 @@ func Supervise(d *Daemon) {
 			s = &Sup{p}
 		case err := <-p.errch:
 			// unlock, or lock once
-			atomic.StoreUint32(&d.lock, d.lock_once)
+			atomic.StoreUint32(&d.lock, d.lockOnce)
 			if err != nil && err.Error() == "EXIT" {
 				log.Printf("PID: %d Exited", pid)
 			} else {

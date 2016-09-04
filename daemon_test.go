@@ -41,7 +41,7 @@ func TestDaemonNewCtrl(t *testing.T) {
 		t.Error(err)
 	}
 	expect(t, uint32(0), d.lock)
-	expect(t, uint32(0), d.lock_once)
+	expect(t, uint32(0), d.lockOnce)
 	// test lock
 	_, err = New(cfg)
 	if err == nil {
@@ -99,7 +99,7 @@ func TestDaemonNewCtrlCwd(t *testing.T) {
 		t.Error(err)
 	}
 	expect(t, uint32(0), d.lock)
-	expect(t, uint32(0), d.lock_once)
+	expect(t, uint32(0), d.lockOnce)
 	// test lock
 	_, err = New(cfg)
 	if err == nil {
@@ -269,7 +269,7 @@ func TestSignalsUDOT(t *testing.T) {
 	sup.HandleSignals("k", d)
 	// wait for process to finish
 	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lock_once)
+	atomic.StoreUint32(&d.lock, d.lockOnce)
 	expect(t, "signal: killed", err.Error())
 	p, err = d.Run(NewProcess(cfg))
 	if err != nil {
@@ -285,7 +285,7 @@ func TestSignalsUDOT(t *testing.T) {
 	sup.HandleSignals("d", d)
 	// wait for process to finish
 	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lock_once)
+	atomic.StoreUint32(&d.lock, d.lockOnce)
 	expect(t, "signal: terminated", err.Error())
 	np = NewProcess(cfg)
 	p, err = d.Run(np)
@@ -310,7 +310,7 @@ func TestSignalsUDOT(t *testing.T) {
 	sup.HandleSignals("k", d)
 	// wait for process to finish
 	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lock_once)
+	atomic.StoreUint32(&d.lock, d.lockOnce)
 	expect(t, "signal: killed", err.Error())
 	np = NewProcess(cfg)
 	p, err = d.Run(np)
@@ -335,7 +335,7 @@ func TestSignalsUDOT(t *testing.T) {
 	t.Log("testing t")
 	sup.HandleSignals("t", d)
 	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lock_once)
+	atomic.StoreUint32(&d.lock, d.lockOnce)
 	expect(t, "signal: terminated", err.Error())
 	// restart to get new pid
 	p, err = d.Run(NewProcess(cfg))
@@ -348,7 +348,7 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 	sup.HandleSignals("kill", d)
 	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lock_once)
+	atomic.StoreUint32(&d.lock, d.lockOnce)
 	expect(t, "signal: killed", err.Error())
 
 	// test after
