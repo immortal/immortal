@@ -35,7 +35,7 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	var m *multiwriter.MultiWriter = multi.(*multiwriter.MultiWriter)
 
 	if cfg.Log.File != "" {
-		file, err = logrotate.New(cfg.Log.File)
+		file, err = logrotate.New(cfg.Log.File, cfg.Log.Age, cfg.Log.Num, cfg.Log.Size)
 		if err != nil {
 			log.Printf("Failed to open log file %q: %s\n", cfg.Log.File, err)
 		} else {
