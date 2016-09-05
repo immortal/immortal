@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"io"
 	"log"
+	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/immortal/logrotate"
@@ -35,10 +38,20 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	var m *multiwriter.MultiWriter = multi.(*multiwriter.MultiWriter)
 
 	if cfg.Log.File != "" {
-		file, err = logrotate.New(cfg.Log.File, cfg.Log.Age, cfg.Log.Num, cfg.Log.Size)
+		lr, err := logrotate.New(cfg.Log.File, cfg.Log.Age, cfg.Log.Num, cfg.Log.Size)
 		if err != nil {
 			log.Printf("Failed to open log file %q: %s\n", cfg.Log.File, err)
 		} else {
+			// rotate logs when receiving an USR1
+			c := make(chan os.Signal, 1)
+			signal.Notify(c, syscall.SIGUSR1)
+			go func() {
+				for {
+					<-c
+					lr.Rotate()
+				}
+			}()
+			file = lr
 			m.Append(file)
 		}
 	}
