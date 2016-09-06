@@ -214,6 +214,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	// create new cfg if not using run.yml
 	cfg = new(Config)
 	cfg.command = fs.Args()
+	cfg.Log.Size = 1
 
 	// if -ctrl
 	if flags.Ctrl {
