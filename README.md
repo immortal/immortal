@@ -9,3 +9,16 @@ A *nix cross-platform (OS agnostic) supervisor
 https://immortal.run/
 
 [ ![Download](https://api.bintray.com/packages/nbari/immortal/immortal/images/download.svg) ](https://bintray.com/nbari/immortal/immortal/_latestVersion)
+
+
+ /immortal
+    |--service-name-1
+    |  `--run.yml
+    |--service-name-2
+    |  `--run.yml
+    |--service-name-3
+    |  `--run.yml
+    |--service-name-3.yml
+    |--service-name-4.yml
+    |--run.yml
+    `--xyz.yml
