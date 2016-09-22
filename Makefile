@@ -14,7 +14,7 @@ get:
 
 build: get
 	${GO} get -u gopkg.in/yaml.v2;
-	${GO} build -ldflags "-X main.version=${VERSION}" -o ir-scandir cmd/ir-scandir/main.go;
+	${GO} build -ldflags "-X main.version=${VERSION}" -o immortal-dir cmd/immortal-dir/main.go;
 	${GO} build -ldflags "-X main.version=${VERSION}" -o ${BIN_NAME} cmd/immortal/main.go;
 
 clean:
