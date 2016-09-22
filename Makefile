@@ -18,7 +18,7 @@ build: get
 	${GO} build -ldflags "-X main.version=${VERSION}" -o ${BIN_NAME} cmd/immortal/main.go;
 
 clean:
-	@rm -rf ir-* ${BIN_NAME} ${BIN_NAME}.debug *.out build debian
+	@rm -rf immortal-* ${BIN_NAME} ${BIN_NAME}.debug *.out build debian
 
 test: get
 	${GO} test -race -v

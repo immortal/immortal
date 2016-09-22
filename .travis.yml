@@ -6,6 +6,7 @@ go:
 
 before_install:
   - go get gopkg.in/yaml.v2
+  - go get github.com/immortal/scandir
   - go get github.com/immortal/logrotate
   - go get github.com/immortal/multiwriter
   - go get github.com/immortal/natcasesort
