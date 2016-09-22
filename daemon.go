@@ -19,13 +19,13 @@ type Return struct {
 
 // Daemon struct
 type Daemon struct {
-	cfg                 *Config
-	count               uint64
-	fifo                chan Return
-	fifoControl, fifoOk *os.File
-	lock, lockOnce      uint32
-	quit                chan struct{}
-	sTime               time.Time
+	cfg            *Config
+	count          uint64
+	fifo           chan Return
+	supDir         string
+	lock, lockOnce uint32
+	quit           chan struct{}
+	sTime          time.Time
 }
 
 // Run returns a process instance
@@ -72,11 +72,7 @@ func (d *Daemon) WritePid(file string, pid int) error {
 
 // New creates a new daemon
 func New(cfg *Config) (*Daemon, error) {
-	var (
-		err                 error
-		fifoControl, fifoOk *os.File
-		supDir              string
-	)
+	var supDir string
 
 	if cfg.Cwd != "" {
 		supDir = filepath.Join(cfg.Cwd, "supervise")
@@ -86,18 +82,14 @@ func New(cfg *Config) (*Daemon, error) {
 			return nil, err
 		}
 		supDir = filepath.Join(d, "supervise")
+		err = os.MkdirAll(supDir, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// if ctrl create supervise dir
 	if cfg.ctrl {
-		// create fifo
-		var ctrl = []string{"control", "ok"}
-		for _, v := range ctrl {
-			if err := MakeFifo(filepath.Join(supDir, v)); err != nil {
-				return nil, err
-			}
-		}
-
 		// lock
 		if lock, err := os.Create(filepath.Join(supDir, "lock")); err != nil {
 			return nil, err
@@ -105,21 +97,15 @@ func New(cfg *Config) (*Daemon, error) {
 			return nil, err
 		}
 
-		// read fifo
-		if fifoControl, err = OpenFifo(filepath.Join(supDir, "control")); err != nil {
-			return nil, err
-		}
-		if fifoOk, err = OpenFifo(filepath.Join(supDir, "ok")); err != nil {
-			return nil, err
-		}
+		// clean supdir
+		os.Remove(filepath.Join(supDir, "immortal.sock"))
 	}
 
 	return &Daemon{
-		cfg:         cfg,
-		fifo:        make(chan Return),
-		fifoControl: fifoControl,
-		fifoOk:      fifoOk,
-		quit:        make(chan struct{}),
-		sTime:       time.Now(),
+		cfg:    cfg,
+		fifo:   make(chan Return),
+		supDir: supDir,
+		quit:   make(chan struct{}),
+		sTime:  time.Now(),
 	}, nil
 }

@@ -1,7 +1,6 @@
 package immortal
 
 import (
-	"fmt"
 	"log"
 	"syscall"
 )
@@ -82,7 +81,7 @@ func (s *Sup) HandleSignals(signal string, d *Daemon) {
 
 	default:
 		log.Printf("Unknown signal: %s", signal)
-		fmt.Fprintf(d.fifoOk, "%s\n", signal)
+		//fmt.Fprintf(d.fifoOk, "%s\n", signal)
 	}
 
 	if err != nil {

@@ -34,7 +34,8 @@ func Supervise(d *Daemon) {
 
 	// listen on control for signals
 	if d.cfg.ctrl {
-		s.ReadFifoControl(d.fifoControl, d.fifo)
+		//s.ReadFifoControl(d.fifoControl, d.fifo)
+		s.ReadSocket(d.supDir, d.fifo)
 	}
 
 	for {

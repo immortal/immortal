@@ -3,7 +3,10 @@ package immortal
 import (
 	"bufio"
 	"io/ioutil"
+	"log"
+	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -65,4 +68,33 @@ func (s *Sup) ReadFifoControl(fifo *os.File, ch chan<- Return) {
 			}
 		}
 	}()
+}
+
+// ReadSocket read from socket and handled by signals
+func (s *Sup) ReadSocket(supDir string, ch chan<- Return) {
+	l, err := net.Listen("unix", filepath.Join(supDir, "immortal.sock"))
+	if err != nil {
+		log.Println(err)
+	}
+	// wait for connections
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			log.Println(err)
+		}
+		go func(c net.Conn) {
+			r := bufio.NewReader(c)
+			for {
+				line, err := r.ReadString('\n')
+				if err != nil {
+					ch <- Return{err: err, msg: ""}
+				} else {
+					ch <- Return{
+						err: nil,
+						msg: strings.ToLower(strings.TrimSpace(line)),
+					}
+				}
+			}
+		}(conn)
+	}
 }
