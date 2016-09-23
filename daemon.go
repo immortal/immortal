@@ -1,11 +1,14 @@
 package immortal
 
 import (
+	"crypto/md5"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -74,32 +77,41 @@ func (d *Daemon) WritePid(file string, pid int) error {
 func New(cfg *Config) (*Daemon, error) {
 	var supDir string
 
-	if cfg.Cwd != "" {
-		supDir = filepath.Join(cfg.Cwd, "supervise")
-	} else {
+	if cfg.ctl {
 		d, err := os.Getwd()
 		if err != nil {
 			return nil, err
 		}
 		supDir = filepath.Join(d, "supervise")
-		err = os.MkdirAll(supDir, os.ModePerm)
+	} else {
+		// create an .immotal dir on HOME user when calling immortal directly
+		// and not using immortal-dir, this helps to run immortal-ctl and
+		// check status of all daemons
+		usr, err := user.Current()
 		if err != nil {
 			return nil, err
 		}
+		supDir = filepath.Join(usr.HomeDir,
+			".immortal",
+			fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(cfg.command, "")))),
+			"supervise")
 	}
 
-	// if ctrl create supervise dir
-	if cfg.ctrl {
-		// lock
-		if lock, err := os.Create(filepath.Join(supDir, "lock")); err != nil {
-			return nil, err
-		} else if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX+syscall.LOCK_NB); err != nil {
-			return nil, err
-		}
-
-		// clean supdir
-		os.Remove(filepath.Join(supDir, "immortal.sock"))
+	// create supervise dir
+	err := os.MkdirAll(supDir, os.ModePerm)
+	if err != nil {
+		return nil, err
 	}
+
+	// lock
+	if lock, err := os.Create(filepath.Join(supDir, "lock")); err != nil {
+		return nil, err
+	} else if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX+syscall.LOCK_NB); err != nil {
+		return nil, err
+	}
+
+	// remove previous socket in case exists
+	os.Remove(filepath.Join(supDir, "immortal.sock"))
 
 	return &Daemon{
 		cfg:    cfg,
