@@ -20,7 +20,6 @@ type Supervisor interface {
 	HandleSignals(signal string, d *Daemon)
 	Info(ch <-chan os.Signal, d *Daemon)
 	IsRunning(pid int) bool
-	ReadFifoControl(fifo *os.File, ch chan<- Return)
 	ReadPidFile(pidfile string) (int, error)
 	WatchPid(pid int, ch chan<- error)
 }
@@ -54,7 +53,8 @@ func (s *Sup) ReadPidFile(pidfile string) (int, error) {
 }
 
 // ReadSocket read from socket and handled by signals
-func (s *Sup) ReadSocket(supDir string, ch chan<- Return) {
+func (s *Sup) ReadSocket(supDir string) {
+	//s.HandleSignals(fifo.msg, d)
 	l, err := net.Listen("unix", filepath.Join(supDir, "immortal.sock"))
 	if err != nil {
 		log.Println(err)

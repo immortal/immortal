@@ -33,7 +33,7 @@ func Supervise(d *Daemon) {
 	s := &Sup{p}
 
 	// listen on control for signals
-	s.ReadSocket(d.supDir, d.fifo)
+	s.ReadSocket(d.supDir)
 
 	for {
 		select {
@@ -93,11 +93,6 @@ func Supervise(d *Daemon) {
 			} else {
 				run <- struct{}{}
 			}
-		case fifo := <-d.fifo:
-			if fifo.err != nil {
-				log.Printf("control error: %s", fifo.err)
-			}
-			s.HandleSignals(fifo.msg, d)
 		}
 	}
 }

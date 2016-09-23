@@ -14,21 +14,14 @@ import (
 	"time"
 )
 
-// Return struct used for fifo channel
-type Return struct {
-	err error
-	msg string
-}
-
 // Daemon struct
 type Daemon struct {
 	cfg            *Config
 	count          uint64
-	fifo           chan Return
-	supDir         string
 	lock, lockOnce uint32
 	quit           chan struct{}
 	sTime          time.Time
+	supDir         string
 }
 
 // Run returns a process instance
@@ -115,7 +108,6 @@ func New(cfg *Config) (*Daemon, error) {
 
 	return &Daemon{
 		cfg:    cfg,
-		fifo:   make(chan Return),
 		supDir: supDir,
 		quit:   make(chan struct{}),
 		sTime:  time.Now(),
