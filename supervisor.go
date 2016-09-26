@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -11,8 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
-	"github.com/gorilla/mux"
+	"github.com/nbari/violetear"
 )
 
 // Supervisor interface
@@ -26,6 +28,7 @@ type Supervisor interface {
 
 // Sup implements Supervisor
 type Sup struct {
+	daemon  *Daemon
 	process *process
 }
 
@@ -53,18 +56,29 @@ func (s *Sup) ReadPidFile(pidfile string) (int, error) {
 }
 
 // ReadSocket read from socket and handled by signals
+// curl --unix-socket immortal.sock http:/
 func (s *Sup) ReadSocket(supDir string) {
 	//s.HandleSignals(fifo.msg, d)
 	l, err := net.Listen("unix", filepath.Join(supDir, "immortal.sock"))
 	if err != nil {
 		log.Println(err)
 	}
-	var router *mux.Router = mux.NewRouter()
-	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "<h1>Hello World</h1>")
-	})
+	router := violetear.New()
+	router.HandleFunc("/", s.Status)
 	err = http.Serve(l, router)
 	if err != nil {
+		log.Println(err)
+	}
+}
+
+// Status return process status
+func (s *Sup) Status(w http.ResponseWriter, r *http.Request) {
+	j := map[string]string{
+		"uptime": fmt.Sprintf("%s", time.Since(s.process.sTime)),
+		"PID":    fmt.Sprintf("%d", s.process.Pid()),
+		"dir":    s.daemon.supDir,
+	}
+	if err := json.NewEncoder(w).Encode(j); err != nil {
 		log.Println(err)
 	}
 }

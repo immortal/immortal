@@ -30,10 +30,10 @@ func Supervise(d *Daemon) {
 	signal.Notify(info, syscall.SIGQUIT)
 
 	// create a supervisor
-	s := &Sup{p}
+	s := &Sup{d, p}
 
 	// listen on control for signals
-	s.ReadSocket(d.supDir)
+	//s.ReadSocket(d.supDir)
 
 	for {
 		select {
@@ -52,8 +52,9 @@ func Supervise(d *Daemon) {
 				time.Sleep(time.Second)
 				run <- struct{}{}
 			}
-			s = &Sup{p}
+			s = &Sup{d, p}
 		case err := <-p.errch:
+			log.Println("3333333333333333333333333333")
 			// unlock, or lock once
 			atomic.StoreUint32(&d.lock, d.lockOnce)
 			if err != nil && err.Error() == "EXIT" {
