@@ -1,14 +1,12 @@
 package immortal
 
 import (
-	"crypto/md5"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/user"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -86,13 +84,12 @@ func New(cfg *Config) (*Daemon, error) {
 		}
 		supDir = filepath.Join(usr.HomeDir,
 			".immortal",
-			fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(cfg.command, "")))),
+			fmt.Sprintf("%d", os.Getpid()),
 			"supervise")
 	}
 
 	// create supervise dir
-	err := os.MkdirAll(supDir, os.ModePerm)
-	if err != nil {
+	if err := os.MkdirAll(supDir, os.ModePerm); err != nil {
 		return nil, err
 	}
 
