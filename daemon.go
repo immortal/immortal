@@ -17,6 +17,7 @@ type Daemon struct {
 	cfg            *Config
 	count          uint64
 	lock, lockOnce uint32
+	process        *process
 	quit           chan struct{}
 	sTime          time.Time
 	supDir         string
@@ -28,12 +29,14 @@ func (d *Daemon) Run(p Process) (*process, error) {
 		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lockOnce)
 	}
 
+	var err error
+
 	// increment count by 1
 	atomic.AddUint64(&d.count, 1)
 
 	time.Sleep(time.Duration(d.cfg.Wait) * time.Second)
 
-	process, err := p.Start()
+	d.process, err = p.Start()
 	if err != nil {
 		atomic.StoreUint32(&d.lock, d.lockOnce)
 		return nil, err
@@ -53,7 +56,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 		}
 	}
 
-	return process, nil
+	return d.process, nil
 }
 
 // WritePid write pid to file

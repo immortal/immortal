@@ -19,7 +19,6 @@ type Supervisor interface {
 
 // Sup implements Supervisor
 type Sup struct {
-	daemon  *Daemon
 	process *process
 }
 
