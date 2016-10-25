@@ -71,6 +71,7 @@ func (d *Daemon) WritePid(file string, pid int) error {
 func New(cfg *Config) (*Daemon, error) {
 	var supDir string
 
+	// create supervise directory in current directory
 	if cfg.ctl {
 		d, err := os.Getwd()
 		if err != nil {
