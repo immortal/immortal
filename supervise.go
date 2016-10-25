@@ -32,9 +32,6 @@ func Supervise(d *Daemon) {
 	// create a supervisor
 	s := &Sup{p}
 
-	// listen on control for signals
-	//s.ReadSocket(d.supDir)
-
 	for {
 		select {
 		case <-d.quit:
