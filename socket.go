@@ -27,6 +27,7 @@ func (d *Daemon) Listen() error {
 	router := violetear.New()
 	router.Verbose = false
 	router.HandleFunc("/", d.Status)
+	router.HandleFunc("/signal/*", d.Signal)
 	go http.Serve(l, router)
 	return nil
 }
@@ -42,6 +43,19 @@ func (d *Daemon) Status(w http.ResponseWriter, r *http.Request) {
 		status.Down = fmt.Sprintf("%s", time.Since(d.process.eTime))
 	}
 	if err := json.NewEncoder(w).Encode(status); err != nil {
+		log.Println(err)
+	}
+}
+
+// Signal test input
+func (d *Daemon) Signal(w http.ResponseWriter, r *http.Request) {
+	params := r.Context().Value(violetear.ParamsKey).(violetear.Params)
+	var signal = struct {
+		Sig string
+	}{
+		Sig: params["*"].(string),
+	}
+	if err := json.NewEncoder(w).Encode(signal); err != nil {
 		log.Println(err)
 	}
 }
