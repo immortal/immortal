@@ -29,9 +29,6 @@ func Supervise(d *Daemon) {
 	// Info loop, kill 3 PPID get stats
 	signal.Notify(info, syscall.SIGQUIT)
 
-	// create a supervisor
-	s := &Sup{p}
-
 	for {
 		select {
 		case <-d.quit:
@@ -49,7 +46,6 @@ func Supervise(d *Daemon) {
 				time.Sleep(time.Second)
 				run <- struct{}{}
 			}
-			s = &Sup{p}
 		case err := <-p.errch:
 			// unlock, or lock once
 			atomic.StoreUint32(&d.lock, d.lockOnce)
@@ -73,15 +69,15 @@ func Supervise(d *Daemon) {
 			// follow the new pid and stop running the command
 			// unless the new pid dies
 			if d.cfg.Pid.Follow != "" {
-				pid, err = s.ReadPidFile(d.cfg.Pid.Follow)
+				pid, err = d.ReadPidFile(d.cfg.Pid.Follow)
 				if err != nil {
 					log.Printf("Cannot read pidfile:%s, %s", d.cfg.Pid.Follow, err)
 					run <- struct{}{}
 				} else {
 					// check if pid in file is valid
-					if pid > 1 && pid != p.Pid() && s.IsRunning(pid) {
+					if pid > 1 && pid != p.Pid() && d.IsRunning(pid) {
 						log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
-						s.WatchPid(pid, p.errch)
+						d.WatchPid(pid, p.errch)
 					} else {
 						// if cmd exits or process is kill
 						run <- struct{}{}

@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -65,6 +67,29 @@ func (d *Daemon) WritePid(file string, pid int) error {
 		return err
 	}
 	return nil
+}
+
+// IsRunning check if process is running
+func (d *Daemon) IsRunning(pid int) bool {
+	process, _ := os.FindProcess(pid)
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	return true
+}
+
+// ReadPidFile read pid from file if error returns pid 0
+func (d *Daemon) ReadPidFile(pidfile string) (int, error) {
+	content, err := ioutil.ReadFile(pidfile)
+	if err != nil {
+		return 0, err
+	}
+	lines := strings.Split(string(content), "\n")
+	pid, err := strconv.Atoi(lines[0])
+	if err != nil {
+		return 0, err
+	}
+	return pid, nil
 }
 
 // New creates a new daemon

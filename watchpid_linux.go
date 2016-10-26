@@ -9,8 +9,8 @@ import (
 )
 
 // WatchPid check pid changes
-func (s *Sup) WatchPid(pid int, ch chan<- error) {
-	if !s.IsRunning(pid) {
+func (d *Daemon) WatchPid(pid int, ch chan<- error) {
+	if !d.IsRunning(pid) {
 		ch <- fmt.Errorf("PID NOT FOUND")
 		return
 	}
