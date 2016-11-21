@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/nbari/violetear"
@@ -70,9 +71,13 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
 	case "u", "up":
-		d.lock = 0
-		d.lockOnce = 0
-		d.run <- struct{}{}
+		if lock := atomic.LoadUint32(&d.lockOnce); lock != 0 {
+			d.lock = 0
+			d.lockOnce = 0
+			d.run <- struct{}{}
+		} else {
+			err = fmt.Errorf("Process is up, PID: %d", d.process.Pid())
+		}
 
 	// 1: USR1. Send the service a USR1 signal.
 	case "1", "usr1":
