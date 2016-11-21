@@ -97,6 +97,7 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 	type Response struct {
 		Err string
 	}
+
 	res := &Response{}
 
 	if err != nil {
@@ -104,6 +105,7 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 	}
 
+	// return the error on the Response json encoded
 	if err := json.NewEncoder(w).Encode(res); err != nil {
 		log.Println(err)
 	}

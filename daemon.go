@@ -38,8 +38,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 
 	time.Sleep(time.Duration(d.cfg.Wait) * time.Second)
 
-	d.process, err = p.Start()
-	if err != nil {
+	if d.process, err = p.Start(); err != nil {
 		atomic.StoreUint32(&d.lock, d.lockOnce)
 		return nil, err
 	}
