@@ -16,7 +16,6 @@ func Supervise(d *Daemon) {
 		info = make(chan os.Signal)
 		p    *process
 		pid  int
-		run  = make(chan struct{}, 1)
 		wait time.Duration
 	)
 
@@ -35,17 +34,18 @@ func Supervise(d *Daemon) {
 			return
 		case <-info:
 			d.Info()
-		case <-run:
+		case <-d.run:
 			time.Sleep(wait)
-			run <- struct{}{}
-			// create a new process
-			//np := NewProcess(d.cfg)
-			//if p, err = d.Run(np); err != nil {
-			//close(np.quit)
-			//log.Print(err)
-			//wait = time.Second
-			//run <- struct{}{}
-			//}
+			if lock := atomic.LoadUint32(&d.lock); lock == 0 {
+				// create a new process
+				np := NewProcess(d.cfg)
+				if p, err = d.Run(np); err != nil {
+					close(np.quit)
+					log.Print(err)
+					wait = time.Second
+					d.run <- struct{}{}
+				}
+			}
 		case err := <-p.errch:
 			// unlock, or lock once
 			atomic.StoreUint32(&d.lock, d.lockOnce)
@@ -72,7 +72,7 @@ func Supervise(d *Daemon) {
 				pid, err = d.ReadPidFile(d.cfg.Pid.Follow)
 				if err != nil {
 					log.Printf("Cannot read pidfile:%s, %s", d.cfg.Pid.Follow, err)
-					run <- struct{}{}
+					d.run <- struct{}{}
 				} else {
 					// check if pid in file is valid
 					if pid > 1 && pid != p.Pid() && d.IsRunning(pid) {
@@ -80,13 +80,12 @@ func Supervise(d *Daemon) {
 						d.WatchPid(pid, p.errch)
 					} else {
 						// if cmd exits or process is kill
-						run <- struct{}{}
+						d.run <- struct{}{}
 					}
 				}
 			} else {
-				run <- struct{}{}
+				d.run <- struct{}{}
 			}
 		}
-		// out of the select
 	}
 }

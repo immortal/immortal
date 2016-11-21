@@ -72,6 +72,7 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 	case "u", "up":
 		d.lock = 0
 		d.lockOnce = 0
+		d.run <- struct{}{}
 
 	// 1: USR1. Send the service a USR1 signal.
 	case "1", "usr1":

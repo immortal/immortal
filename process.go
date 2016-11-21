@@ -30,6 +30,7 @@ type process struct {
 
 // Start runs the command
 func (p *process) Start() (*process, error) {
+	// command obtained from Config parent
 	p.cmd = exec.Command(p.command[0], p.command[1:]...)
 
 	// change working directory

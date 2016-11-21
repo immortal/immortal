@@ -21,17 +21,19 @@ type Daemon struct {
 	lock, lockOnce uint32
 	process        *process
 	quit           chan struct{}
+	run            chan struct{}
 	sTime          time.Time
 	supDir         string
 }
 
 // Run returns a process instance
 func (d *Daemon) Run(p Process) (*process, error) {
+	var err error
+
+	// return if process is running
 	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
 		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lockOnce)
 	}
-
-	var err error
 
 	// increment count by 1
 	atomic.AddUint64(&d.count, 1)
@@ -135,6 +137,7 @@ func New(cfg *Config) (*Daemon, error) {
 		cfg:    cfg,
 		supDir: supDir,
 		quit:   make(chan struct{}),
+		run:    make(chan struct{}, 1),
 		sTime:  time.Now(),
 	}, nil
 }
