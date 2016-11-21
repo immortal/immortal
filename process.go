@@ -127,12 +127,12 @@ func (p *process) Signal(sig os.Signal) error {
 
 // NewProcess return process instance
 func NewProcess(cfg *Config) *process {
-	quit := make(chan struct{})
+	qch := make(chan struct{})
 	return &process{
 		Config: cfg,
 		Logger: &LogWriter{
-			logger: NewLogger(cfg, quit),
+			logger: NewLogger(cfg, qch),
 		},
-		quit: quit,
+		quit: qch,
 	}
 }

@@ -26,7 +26,7 @@ func Supervise(d *Daemon) {
 		log.Fatal(err)
 	}
 
-	// Info loop, kill 3 PPID get stats
+	// Info loop, kill -3 PPID get stats
 	signal.Notify(info, syscall.SIGQUIT)
 
 	for {
@@ -37,15 +37,15 @@ func Supervise(d *Daemon) {
 			d.Info()
 		case <-run:
 			time.Sleep(wait)
+			run <- struct{}{}
 			// create a new process
-			np := NewProcess(d.cfg)
-			p, err = d.Run(np)
-			if err != nil {
-				close(np.quit)
-				log.Print(err)
-				time.Sleep(time.Second)
-				run <- struct{}{}
-			}
+			//np := NewProcess(d.cfg)
+			//if p, err = d.Run(np); err != nil {
+			//close(np.quit)
+			//log.Print(err)
+			//wait = time.Second
+			//run <- struct{}{}
+			//}
 		case err := <-p.errch:
 			// unlock, or lock once
 			atomic.StoreUint32(&d.lock, d.lockOnce)
@@ -87,5 +87,6 @@ func Supervise(d *Daemon) {
 				run <- struct{}{}
 			}
 		}
+		// out of the select
 	}
 }
