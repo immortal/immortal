@@ -71,7 +71,7 @@ func TestParseDefault(t *testing.T) {
 	if helpCalled {
 		t.Error("help called for regular flag")
 	}
-	expect(t, false, flags.Ctrl)
+	expect(t, false, flags.Ctl)
 	expect(t, false, flags.Version)
 	expect(t, "", flags.Configfile)
 	expect(t, "", flags.Wrkdir)

@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -22,8 +23,8 @@ func TestDaemonNewCtrl(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	cfg := &Config{
-		Cwd:  dir,
-		ctrl: true,
+		Cwd: dir,
+		ctl: true,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -57,8 +58,8 @@ func TestDaemonNewCtrlErr(t *testing.T) {
 	defer os.RemoveAll(dir)
 	os.Chmod(dir, 0000)
 	cfg := &Config{
-		Cwd:  dir,
-		ctrl: true,
+		Cwd: dir,
+		ctl: true,
 	}
 	_, err = New(cfg)
 	if err == nil {
@@ -66,7 +67,7 @@ func TestDaemonNewCtrlErr(t *testing.T) {
 	}
 }
 
-func TestDaemonNewCtrlCwd(t *testing.T) {
+func TestDaemonNewCtlCwd(t *testing.T) {
 	dir, err := ioutil.TempDir("", "TestDaemonNewCtrlCwd")
 	if err != nil {
 		t.Error(err)
@@ -81,22 +82,14 @@ func TestDaemonNewCtrlCwd(t *testing.T) {
 		t.Error(err)
 	}
 	cfg := &Config{
-		ctrl: true,
+		ctl: true,
 	}
 	d, err := New(cfg)
 	if err != nil {
 		t.Error(err)
 	}
-	f, err := os.Stat(filepath.Join(dir, "supervise/control"))
-	if f.Mode()&os.ModeType != os.ModeNamedPipe {
-		t.Error("Expecting os.ModeNamePipe")
-	}
-	f, err = os.Stat(filepath.Join(dir, "supervise/ok"))
-	if f.Mode()&os.ModeType != os.ModeNamedPipe {
-		t.Error("Expecting os.ModeNamePipe")
-	}
 	if _, err = os.Stat(filepath.Join(dir, "supervise/lock")); err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	expect(t, uint32(0), d.lock)
 	expect(t, uint32(0), d.lockOnce)
@@ -236,6 +229,7 @@ func TestSignalsUDOT(t *testing.T) {
 		Log: Log{
 			File: tmpfile.Name(),
 		},
+		ctl: true,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -249,128 +243,160 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Error(err)
 	}
 
-	sup := &Sup{p}
+	// create socket
+	if err := d.Listen(); err != nil {
+		t.Fatal(err)
+	}
 
 	// check pids
-	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
+	if pid, err := d.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
 		t.Error(err)
 	} else {
 		expect(t, os.Getpid(), pid)
 	}
-	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
+	if pid, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 		t.Error(err, pid)
 	} else {
 		expect(t, p.Pid(), pid)
 	}
 
-	// test "k", process should restart and get a new pid
-	t.Log("testing k")
-	currentPid := p.Pid()
-	sup.HandleSignals("k", d)
-	// wait for process to finish
-	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lockOnce)
-	expect(t, "signal: killed", err.Error())
-	p, err = d.Run(NewProcess(cfg))
-	if err != nil {
-		t.Error(err)
-	}
-	sup = &Sup{p}
-	if currentPid == p.Pid() {
-		t.Fatalf("Expecting a new pid")
+	// check lock
+	if _, err = os.Stat("supervise/lock"); err != nil {
+		t.Fatal(err)
 	}
 
-	// test "d", (keep it down and don't restart)
-	t.Log("testing d")
-	sup.HandleSignals("d", d)
-	// wait for process to finish
-	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lockOnce)
-	expect(t, "signal: terminated", err.Error())
-	np = NewProcess(cfg)
-	p, err = d.Run(np)
-	if err == nil {
-		t.Error("Expecting an error")
-	} else {
-		close(np.quit)
+	// http socket client
+	tr := &http.Transport{
+		Dial: func(proto, addr string) (net.Conn, error) {
+			return net.Dial("unix", "supervise/immortal.sock")
+		},
 	}
-
-	// test "u"
-	t.Log("testing up")
-	sup.HandleSignals("u", d)
-	p, err = d.Run(NewProcess(cfg))
-	if err != nil {
-		t.Error(err)
-	}
-	sup = &Sup{p}
-
-	// test "once", process should not restart after going down
-	t.Log("testing once")
-	sup.HandleSignals("o", d)
-	sup.HandleSignals("k", d)
-	// wait for process to finish
-	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lockOnce)
-	expect(t, "signal: killed", err.Error())
-	np = NewProcess(cfg)
-	p, err = d.Run(np)
-	if err == nil {
-		t.Error("Expecting an error")
-	} else {
-		close(np.quit)
-	}
-	sup = &Sup{p}
-
-	// test "u"
-	t.Log("testing u")
-	sup.HandleSignals("u", d)
-	p, err = d.Run(NewProcess(cfg))
-	if err != nil {
-		t.Error(err)
-	}
-	sup = &Sup{p}
-	oldPid := p.Pid()
-
-	// test "t"
-	t.Log("testing t")
-	sup.HandleSignals("t", d)
-	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lockOnce)
-	expect(t, "signal: terminated", err.Error())
-	// restart to get new pid
-	p, err = d.Run(NewProcess(cfg))
-	if err != nil {
-		t.Error(err)
-	}
-	sup = &Sup{p}
-	if oldPid == p.Pid() {
-		t.Fatal("Expecting a new pid")
-	}
-	sup.HandleSignals("kill", d)
-	err = <-p.errch
-	atomic.StoreUint32(&d.lock, d.lockOnce)
-	expect(t, "signal: killed", err.Error())
-
-	// test after
-	p, err = d.Run(NewProcess(cfg))
-	if err != nil {
-		t.Error(err)
-	}
-	sup = &Sup{p}
-
-	select {
-	case err := <-p.errch:
-		expect(t, "signal: killed", err.Error())
-	case <-time.After(1 * time.Second):
-		sup.HandleSignals("kill", d)
-	}
-
-	// test log content
-	t.Log("testing logfile")
-	content, err := ioutil.ReadFile(tmpfile.Name())
+	client := &http.Client{Transport: tr}
+	resp, err := client.Get("http://immortal.sock/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(string(content), "\n")
-	expect(t, true, strings.HasSuffix(lines[0], "5D675098-45D7-4089-A72C-3628713EA5BA"))
+	body, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("body = %s\n", body)
+
+	for {
+		time.Sleep(time.Second)
+	}
+
+	/*
+		// test "k", process should restart and get a new pid
+		t.Log("testing k")
+		currentPid := p.Pid()
+		sup.HandleSignals("k", d)
+		// wait for process to finish
+		err = <-p.errch
+		atomic.StoreUint32(&d.lock, d.lockOnce)
+		expect(t, "signal: killed", err.Error())
+		p, err = d.Run(NewProcess(cfg))
+		if err != nil {
+			t.Error(err)
+		}
+		sup = &Sup{p}
+		if currentPid == p.Pid() {
+			t.Fatalf("Expecting a new pid")
+		}
+
+		// test "d", (keep it down and don't restart)
+		t.Log("testing d")
+		sup.HandleSignals("d", d)
+		// wait for process to finish
+		err = <-p.errch
+		atomic.StoreUint32(&d.lock, d.lockOnce)
+		expect(t, "signal: terminated", err.Error())
+		np = NewProcess(cfg)
+		p, err = d.Run(np)
+		if err == nil {
+			t.Error("Expecting an error")
+		} else {
+			close(np.quit)
+		}
+
+		// test "u"
+		t.Log("testing up")
+		sup.HandleSignals("u", d)
+		p, err = d.Run(NewProcess(cfg))
+		if err != nil {
+			t.Error(err)
+		}
+		sup = &Sup{p}
+
+		// test "once", process should not restart after going down
+		t.Log("testing once")
+		sup.HandleSignals("o", d)
+		sup.HandleSignals("k", d)
+		// wait for process to finish
+		err = <-p.errch
+		atomic.StoreUint32(&d.lock, d.lockOnce)
+		expect(t, "signal: killed", err.Error())
+		np = NewProcess(cfg)
+		p, err = d.Run(np)
+		if err == nil {
+			t.Error("Expecting an error")
+		} else {
+			close(np.quit)
+		}
+		sup = &Sup{p}
+
+		// test "u"
+		t.Log("testing u")
+		sup.HandleSignals("u", d)
+		p, err = d.Run(NewProcess(cfg))
+		if err != nil {
+			t.Error(err)
+		}
+		sup = &Sup{p}
+		oldPid := p.Pid()
+
+		// test "t"
+		t.Log("testing t")
+		sup.HandleSignals("t", d)
+		err = <-p.errch
+		atomic.StoreUint32(&d.lock, d.lockOnce)
+		expect(t, "signal: terminated", err.Error())
+		// restart to get new pid
+		p, err = d.Run(NewProcess(cfg))
+		if err != nil {
+			t.Error(err)
+		}
+		sup = &Sup{p}
+		if oldPid == p.Pid() {
+			t.Fatal("Expecting a new pid")
+		}
+		sup.HandleSignals("kill", d)
+		err = <-p.errch
+		atomic.StoreUint32(&d.lock, d.lockOnce)
+		expect(t, "signal: killed", err.Error())
+
+		// test after
+		p, err = d.Run(NewProcess(cfg))
+		if err != nil {
+			t.Error(err)
+		}
+		sup = &Sup{p}
+
+		select {
+		case err := <-p.errch:
+			expect(t, "signal: killed", err.Error())
+		case <-time.After(1 * time.Second):
+			sup.HandleSignals("kill", d)
+		}
+
+		// test log content
+		t.Log("testing logfile")
+		content, err := ioutil.ReadFile(tmpfile.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(string(content), "\n")
+		expect(t, true, strings.HasSuffix(lines[0], "5D675098-45D7-4089-A72C-3628713EA5BA"))
+	*/
 }
