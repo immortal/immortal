@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,17 +22,16 @@ func TestDaemonNewCtl(t *testing.T) {
 		t.Error(err)
 	}
 	defer os.RemoveAll(dir)
-	defer os.RemoveAll("supervise")
 	cfg := &Config{
 		Cwd: dir,
 		ctl: true,
 	}
 	d, err := New(cfg)
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	if _, err = os.Stat("supervise/lock"); err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	expect(t, uint32(0), d.lock)
 	expect(t, uint32(0), d.lockOnce)
@@ -99,11 +99,12 @@ func TestDaemonNewCtlCwd(t *testing.T) {
 	}
 }
 
-/*
 func TestBadUid(t *testing.T) {
+	os.RemoveAll("supervise")
 	cfg := &Config{
-		command: []string{"--"},
+		command: []string{"go"},
 		user:    &user.User{Uid: "uid", Gid: "0"},
+		ctl:     true,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -116,9 +117,11 @@ func TestBadUid(t *testing.T) {
 }
 
 func TestBadGid(t *testing.T) {
+	os.RemoveAll("supervise")
 	cfg := &Config{
-		command: []string{"--"},
+		command: []string{"go"},
 		user:    &user.User{Uid: "0", Gid: "gid"},
+		ctl:     true,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -131,9 +134,11 @@ func TestBadGid(t *testing.T) {
 }
 
 func TestUser(t *testing.T) {
+	os.RemoveAll("supervise")
 	cfg := &Config{
 		command: []string{"go"},
 		user:    &user.User{Uid: "0", Gid: "0"},
+		ctl:     true,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -144,9 +149,9 @@ func TestUser(t *testing.T) {
 		t.Error("Expecting error")
 	}
 }
-*/
 
 func TestBadWritePidParent(t *testing.T) {
+	os.RemoveAll("supervise")
 	var mylog bytes.Buffer
 	log.SetOutput(&mylog)
 	log.SetFlags(0)
@@ -155,6 +160,7 @@ func TestBadWritePidParent(t *testing.T) {
 		Pid: Pid{
 			Parent: "/dev/null/parent.pid",
 		},
+		ctl: true,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -204,6 +210,7 @@ func TestHelperProcessSignalsUDOT(*testing.T) {
 }
 
 func TestSignalsUDOT(t *testing.T) {
+	os.RemoveAll("supervise")
 	base := filepath.Base(os.Args[0]) // "exec.test"
 	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
 	if dir == "." {
