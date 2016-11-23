@@ -9,19 +9,19 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestDaemonNewCtrl(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestDaemonNewCtrl")
+func TestDaemonNewCtl(t *testing.T) {
+	dir, err := ioutil.TempDir("", "TestDaemonNewCtl")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(dir)
+	defer os.RemoveAll("supervise")
 	cfg := &Config{
 		Cwd: dir,
 		ctl: true,
@@ -30,15 +30,7 @@ func TestDaemonNewCtrl(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	f, err := os.Stat(filepath.Join(dir, "supervise/control"))
-	if f.Mode()&os.ModeType != os.ModeNamedPipe {
-		t.Error("Expecting os.ModeNamePipe")
-	}
-	f, err = os.Stat(filepath.Join(dir, "supervise/ok"))
-	if f.Mode()&os.ModeType != os.ModeNamedPipe {
-		t.Error("Expecting os.ModeNamePipe")
-	}
-	if _, err = os.Stat(filepath.Join(dir, "supervise/lock")); err != nil {
+	if _, err = os.Stat("supervise/lock"); err != nil {
 		t.Error(err)
 	}
 	expect(t, uint32(0), d.lock)
@@ -50,15 +42,22 @@ func TestDaemonNewCtrl(t *testing.T) {
 	}
 }
 
-func TestDaemonNewCtrlErr(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestDaemonNewCtrlErr")
+func TestDaemonNewCtlErr(t *testing.T) {
+	dir, err := ioutil.TempDir("", "TestDaemonNewCtlErr")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(dir)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Chdir(cwd)
+	if err := os.Chdir(dir); err != nil {
+		t.Error(err)
+	}
 	os.Chmod(dir, 0000)
 	cfg := &Config{
-		Cwd: dir,
 		ctl: true,
 	}
 	_, err = New(cfg)
@@ -100,6 +99,7 @@ func TestDaemonNewCtlCwd(t *testing.T) {
 	}
 }
 
+/*
 func TestBadUid(t *testing.T) {
 	cfg := &Config{
 		command: []string{"--"},
@@ -144,6 +144,7 @@ func TestUser(t *testing.T) {
 		t.Error("Expecting error")
 	}
 }
+*/
 
 func TestBadWritePidParent(t *testing.T) {
 	var mylog bytes.Buffer
@@ -282,10 +283,6 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal(err)
 	}
 	fmt.Printf("body = %s\n", body)
-
-	for {
-		time.Sleep(time.Second)
-	}
 
 	/*
 		// test "k", process should restart and get a new pid
