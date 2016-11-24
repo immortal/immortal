@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -273,40 +272,36 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// http socket client
-	tr := &http.Transport{
-		Dial: func(proto, addr string) (net.Conn, error) {
-			return net.Dial("unix", "supervise/immortal.sock")
-		},
-	}
-	client := &http.Client{Transport: tr}
-	resp, err := client.Get("http://immortal.sock/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
+	status := &Status{}
+	if err := getJSON("", status); err != nil {
 		t.Fatal(err)
 	}
 
+	// http socket client
+	// test "k", process should restart and get a new pid
+	t.Log("testing k")
+	expect(t, p.Pid(), status.Pid)
+
+	if err := getJSON("/signal/k", status); err != nil {
+		t.Fatal(err)
+	}
+	// wait for process to finish
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lockOnce)
+	expect(t, "signal: killed", err.Error())
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+
+	if status.Pid == p.Pid() {
+		t.Fatalf("Expecting a new pid")
+	}
+
+	// $ pgrep -fl TestHelperProcessSignalsUDO
+	// PID _test/immortal.test -test.run=TestHelperProcessSignalsUDOT --
+
 	/*
-		// test "k", process should restart and get a new pid
-		t.Log("testing k")
-		currentPid := p.Pid()
-		sup.HandleSignals("k", d)
-		// wait for process to finish
-		err = <-p.errch
-		atomic.StoreUint32(&d.lock, d.lockOnce)
-		expect(t, "signal: killed", err.Error())
-		p, err = d.Run(NewProcess(cfg))
-		if err != nil {
-			t.Error(err)
-		}
-		sup = &Sup{p}
-		if currentPid == p.Pid() {
-			t.Fatalf("Expecting a new pid")
-		}
 
 		// test "d", (keep it down and don't restart)
 		t.Log("testing d")
