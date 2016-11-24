@@ -36,8 +36,8 @@ func Supervise(d *Daemon) {
 			d.Info()
 		case <-d.run:
 			time.Sleep(wait)
-			if lock := atomic.LoadUint32(&d.lock); lock == 0 {
-				// create a new process
+			// create a new process
+			if d.lock == 0 {
 				np := NewProcess(d.cfg)
 				if p, err = d.Run(np); err != nil {
 					close(np.quit)

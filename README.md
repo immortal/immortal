@@ -47,3 +47,8 @@ so command can be run multiple times:
     `--(hash)
        `--supervise
           `--immortal.sock
+
+
+# debug
+
+    pgrep -fl "immortal -ctl"  | awk '{print $1}' | xargs watch -n .1 pstree -p

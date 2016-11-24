@@ -289,7 +289,6 @@ func TestSignalsUDOT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("body = %s\n", body)
 
 	/*
 		// test "k", process should restart and get a new pid
