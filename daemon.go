@@ -33,7 +33,6 @@ func (d *Daemon) Run(p Process) (*process, error) {
 	// return if process is running
 	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
 		log.Println("going to die....")
-		time.Sleep(5 * time.Second)
 		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lockOnce)
 	}
 
