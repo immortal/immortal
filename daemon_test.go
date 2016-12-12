@@ -301,22 +301,24 @@ func TestSignalsUDOT(t *testing.T) {
 	// $ pgrep -fl TestHelperProcessSignalsUDO
 	// PID _test/immortal.test -test.run=TestHelperProcessSignalsUDOT --
 
-	/*
+	// test "d", (keep it down and don't restart)
+	t.Log("testing d")
+	if err := getJSON("/signal/d", status); err != nil {
+		t.Fatal(err)
+	}
+	// wait for process to finish
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lockOnce)
+	expect(t, "signal: terminated", err.Error())
+	np = NewProcess(cfg)
+	p, err = d.Run(np)
+	if err == nil {
+		t.Error("Expecting an error")
+	} else {
+		close(np.quit)
+	}
 
-		// test "d", (keep it down and don't restart)
-		t.Log("testing d")
-		sup.HandleSignals("d", d)
-		// wait for process to finish
-		err = <-p.errch
-		atomic.StoreUint32(&d.lock, d.lockOnce)
-		expect(t, "signal: terminated", err.Error())
-		np = NewProcess(cfg)
-		p, err = d.Run(np)
-		if err == nil {
-			t.Error("Expecting an error")
-		} else {
-			close(np.quit)
-		}
+	/*
 
 		// test "u"
 		t.Log("testing up")
