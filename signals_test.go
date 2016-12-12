@@ -1,10 +1,9 @@
 package immortal
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
@@ -20,6 +19,7 @@ func TestHelperProcessSignalsFiFo(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
+	tmpfile := os.Getenv("TEST_SIGNALS_FILE")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c,
 		syscall.SIGALRM,
@@ -33,34 +33,29 @@ func TestHelperProcessSignalsFiFo(*testing.T) {
 		syscall.SIGUSR2,
 		syscall.SIGWINCH,
 	)
-	fifo, err := OpenFifo("supervise/control")
-	if err != nil {
-		panic(err)
-	}
-	defer fifo.Close()
 	for {
 		signalType := <-c
 		switch signalType {
 		case syscall.SIGALRM:
-			fmt.Fprintln(fifo, "--a")
+			ioutil.WriteFile(tmpfile, []byte("--a"), 0644)
 		case syscall.SIGCONT:
-			fmt.Fprintln(fifo, "--c")
+			ioutil.WriteFile(tmpfile, []byte("--c"), 0644)
 		case syscall.SIGHUP:
-			fmt.Fprintln(fifo, "--h")
+			ioutil.WriteFile(tmpfile, []byte("--h"), 0644)
 		case syscall.SIGINT:
-			fmt.Fprintln(fifo, "--i")
+			ioutil.WriteFile(tmpfile, []byte("--i"), 0644)
 		case syscall.SIGQUIT:
-			fmt.Fprintln(fifo, "--q")
+			ioutil.WriteFile(tmpfile, []byte("--q"), 0644)
 		case syscall.SIGTTIN:
-			fmt.Fprintln(fifo, "--in")
+			ioutil.WriteFile(tmpfile, []byte("--in"), 0644)
 		case syscall.SIGTTOU:
-			fmt.Fprintln(fifo, "--ou")
+			ioutil.WriteFile(tmpfile, []byte("--ou"), 0644)
 		case syscall.SIGUSR1:
-			fmt.Fprintln(fifo, "--1")
+			ioutil.WriteFile(tmpfile, []byte("--1"), 0644)
 		case syscall.SIGUSR2:
-			fmt.Fprintln(fifo, "--2")
+			ioutil.WriteFile(tmpfile, []byte("--2"), 0644)
 		case syscall.SIGWINCH:
-			fmt.Fprintln(fifo, "--w")
+			ioutil.WriteFile(tmpfile, []byte("--w"), 0644)
 		}
 	}
 }
@@ -79,15 +74,22 @@ func TestSignalsFiFo(t *testing.T) {
 	if dirBase == "." {
 		t.Skipf("skipping; unexpected shallow dir of %q", dir)
 	}
+	// for writing the signals
+	tmpfile, err := ioutil.TempFile("", "signals")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpfile.Name()) // clean up
+
 	cfg := &Config{
-		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1", "TEST_SIGNALS_FILE": tmpfile.Name()},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsFiFo", "--"},
 		Cwd:     parentDir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
-		ctrl: true,
+		ctl: true,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -99,30 +101,25 @@ func TestSignalsFiFo(t *testing.T) {
 		t.Error(err)
 	}
 
-	sup := &Sup{p}
+	// create socket
+	if err := d.Listen(); err != nil {
+		t.Fatal(err)
+	}
 
 	// check pids
-	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
+	if pid, err := d.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
 		t.Error(err)
 	} else {
 		expect(t, os.Getpid(), pid)
 	}
-	if pid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
+	if pid, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
 		t.Error(err)
 	} else {
 		expect(t, p.Pid(), pid)
 	}
 
-	// wait "probably" for fifo to be ready (check this)
+	// sync
 	time.Sleep(time.Second)
-
-	sup.ReadFifoControl(d.fifoControl, d.fifo)
-
-	// open fifo for reading
-	fifo, err := OpenFifo(filepath.Join(parentDir, "supervise/ok"))
-	if err != nil {
-		t.Error(err)
-	}
 
 	var testSignals = []struct {
 		signal   string
@@ -149,22 +146,23 @@ func TestSignalsFiFo(t *testing.T) {
 		{"w", "--w"},
 		{"winch", "--w"},
 	}
-	go func() {
-		for {
-			select {
-			case fifo := <-d.fifo:
-				sup.HandleSignals(fifo.msg, d)
-			}
-		}
-	}()
 
+	status := &Status{}
 	for _, s := range testSignals {
-		sup.HandleSignals(s.signal, d)
-		waitSig(t, fifo, s.expected)
+		if err := getJSON(fmt.Sprintf("/signal/%s", s.signal), status); err != nil {
+			t.Fatal(err)
+		}
+		data, err := ioutil.ReadFile(tmpfile.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		expect(t, s.expected, string(data))
 	}
 
 	// test "d", (keep it down and don't restart)
-	sup.HandleSignals("down", d)
+	if err := getJSON("/signal/d", status); err != nil {
+		t.Fatal(err)
+	}
 	// wait for process to finish
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lockOnce)
@@ -173,42 +171,29 @@ func TestSignalsFiFo(t *testing.T) {
 	// create error os: process already finished
 	mylog.Reset()
 	for _, s := range testSignals {
-		sup.HandleSignals(s.signal, d)
+		if err := getJSON(fmt.Sprintf("/signal/%s", s.signal), status); err != nil {
+			t.Fatal(err)
+		}
 		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 		mylog.Reset()
 	}
 
-	sup.HandleSignals("d", d)
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
-	sup.HandleSignals("t", d)
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
-	sup.HandleSignals("p", d)
+	if err := getJSON("/signal/d", status); err != nil {
+		t.Fatal(err)
+	}
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 
-	//exit
-	sup.HandleSignals("x", d)
-	<-d.quit
-}
+	if err := getJSON("/signal/t", status); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 
-func waitSig(t *testing.T, fifo *os.File, sig string) {
-	buf := make([]byte, 0, 8)
-	r := bufio.NewReader(fifo)
-	for {
-		n, err := r.Read(buf[:cap(buf)])
-		if n == 0 {
-			if err == nil {
-				continue
-			}
-			if err == io.EOF {
-				continue
-			}
-			t.Fatal(err)
-		}
-		buf = buf[:n]
-		msg := strings.TrimSpace(string(buf))
-		if msg != sig {
-			expect(t, sig, msg)
-		}
-		return
+	if err := getJSON("/signal/p", status); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
+
+	if err := getJSON("/signal/x", status); err != nil {
+		t.Fatal(err)
 	}
 }
