@@ -61,6 +61,7 @@ func TestHelperProcessSignalsFiFo(*testing.T) {
 }
 
 func TestSignalsFiFo(t *testing.T) {
+	os.RemoveAll("supervise")
 	var mylog bytes.Buffer
 	log.SetOutput(&mylog)
 	log.SetFlags(0)
@@ -152,6 +153,8 @@ func TestSignalsFiFo(t *testing.T) {
 		if err := getJSON(fmt.Sprintf("/signal/%s", s.signal), status); err != nil {
 			t.Fatal(err)
 		}
+		// need to improve this (fifo maybe)
+		time.Sleep(time.Millisecond)
 		data, err := ioutil.ReadFile(tmpfile.Name())
 		if err != nil {
 			t.Fatal(err)
