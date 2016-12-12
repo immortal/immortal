@@ -318,85 +318,94 @@ func TestSignalsUDOT(t *testing.T) {
 		close(np.quit)
 	}
 
+	// test "u"
+	t.Log("testing up")
+	if err := getJSON("/signal/up", status); err != nil {
+		t.Fatal(err)
+	}
+	p, err = d.Run(NewProcess(cfg))
+	if err != nil {
+		t.Error(err)
+	}
+
+	// test "once", process should not restart after going down
+	t.Log("testing once")
+	if err := getJSON("/signal/o", status); err != nil {
+		t.Fatal(err)
+	}
+	if err := getJSON("/signal/k", status); err != nil {
+		t.Fatal(err)
+	}
+	// wait for process to finish
+	err = <-p.errch
+	atomic.StoreUint32(&d.lock, d.lockOnce)
+	expect(t, "signal: killed", err.Error())
+	np = NewProcess(cfg)
+	p, err = d.Run(np)
+	if err == nil {
+		t.Error("Expecting an error")
+	} else {
+		close(np.quit)
+	}
 	/*
-
-		// test "u"
-		t.Log("testing up")
-		sup.HandleSignals("u", d)
-		p, err = d.Run(NewProcess(cfg))
-		if err != nil {
-			t.Error(err)
-		}
-		sup = &Sup{p}
-
-		// test "once", process should not restart after going down
-		t.Log("testing once")
-		sup.HandleSignals("o", d)
-		sup.HandleSignals("k", d)
-		// wait for process to finish
-		err = <-p.errch
-		atomic.StoreUint32(&d.lock, d.lockOnce)
-		expect(t, "signal: killed", err.Error())
-		np = NewProcess(cfg)
-		p, err = d.Run(np)
-		if err == nil {
-			t.Error("Expecting an error")
-		} else {
-			close(np.quit)
-		}
-		sup = &Sup{p}
-
 		// test "u"
 		t.Log("testing u")
-		sup.HandleSignals("u", d)
+		if err := getJSON("/signal/u", status); err != nil {
+			t.Fatal(err)
+		}
 		p, err = d.Run(NewProcess(cfg))
 		if err != nil {
 			t.Error(err)
 		}
-		sup = &Sup{p}
 		oldPid := p.Pid()
 
 		// test "t"
 		t.Log("testing t")
-		sup.HandleSignals("t", d)
+		if err := getJSON("/signal/t", status); err != nil {
+			t.Fatal(err)
+		}
 		err = <-p.errch
 		atomic.StoreUint32(&d.lock, d.lockOnce)
 		expect(t, "signal: terminated", err.Error())
-		// restart to get new pid
-		p, err = d.Run(NewProcess(cfg))
-		if err != nil {
-			t.Error(err)
-		}
-		sup = &Sup{p}
-		if oldPid == p.Pid() {
-			t.Fatal("Expecting a new pid")
-		}
-		sup.HandleSignals("kill", d)
-		err = <-p.errch
-		atomic.StoreUint32(&d.lock, d.lockOnce)
-		expect(t, "signal: killed", err.Error())
 
-		// test after
-		p, err = d.Run(NewProcess(cfg))
-		if err != nil {
-			t.Error(err)
-		}
-		sup = &Sup{p}
 
-		select {
-		case err := <-p.errch:
+			// restart to get new pid
+			p, err = d.Run(NewProcess(cfg))
+			if err != nil {
+				t.Error(err)
+			}
+			if oldPid == p.Pid() {
+				t.Fatal("Expecting a new pid")
+			}
+			if err := getJSON("/signal/kill", status); err != nil {
+				t.Fatal(err)
+			}
+			err = <-p.errch
+			atomic.StoreUint32(&d.lock, d.lockOnce)
 			expect(t, "signal: killed", err.Error())
-		case <-time.After(1 * time.Second):
-			sup.HandleSignals("kill", d)
-		}
 
-		// test log content
-		t.Log("testing logfile")
-		content, err := ioutil.ReadFile(tmpfile.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		lines := strings.Split(string(content), "\n")
-		expect(t, true, strings.HasSuffix(lines[0], "5D675098-45D7-4089-A72C-3628713EA5BA"))
+				// test after
+				p, err = d.Run(NewProcess(cfg))
+				if err != nil {
+					t.Error(err)
+				}
+
+				select {
+				case err := <-p.errch:
+					expect(t, "signal: killed", err.Error())
+				case <-time.After(1 * time.Second):
+					if err := getJSON("/signal/kill", status); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				// test log content
+				t.Log("testing logfile")
+				content, err := ioutil.ReadFile(tmpfile.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				lines := strings.Split(string(content), "\n")
+				expect(t, true, strings.HasSuffix(lines[0], "5D675098-45D7-4089-A72C-3628713EA5BA"))
 	*/
 }
