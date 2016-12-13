@@ -17,7 +17,7 @@ import (
 // Daemon struct
 type Daemon struct {
 	cfg            *Config
-	count          uint64
+	count          uint32
 	lock, lockOnce uint32
 	process        *process
 	quit           chan struct{}
@@ -37,7 +37,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 	}
 
 	// increment count by 1
-	atomic.AddUint64(&d.count, 1)
+	atomic.AddUint32(&d.count, 1)
 
 	time.Sleep(time.Duration(d.cfg.Wait) * time.Second)
 
