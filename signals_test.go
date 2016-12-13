@@ -1,8 +1,10 @@
 package immortal
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -19,7 +21,7 @@ func TestHelperProcessSignalsFiFo(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
-	tmpfile := os.Getenv("TEST_SIGNALS_FILE")
+	tmpdir := os.Getenv("TEST_TEMP_DIR")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c,
 		syscall.SIGALRM,
@@ -33,29 +35,34 @@ func TestHelperProcessSignalsFiFo(*testing.T) {
 		syscall.SIGUSR2,
 		syscall.SIGWINCH,
 	)
+	fifo, err := OpenFifo(filepath.Join(tmpdir, "fifo"))
+	if err != nil {
+		panic(err)
+	}
+	defer fifo.Close()
 	for {
 		signalType := <-c
 		switch signalType {
 		case syscall.SIGALRM:
-			ioutil.WriteFile(tmpfile, []byte("--a"), 0644)
+			fmt.Fprintln(fifo, "--a")
 		case syscall.SIGCONT:
-			ioutil.WriteFile(tmpfile, []byte("--c"), 0644)
+			fmt.Fprintln(fifo, "--c")
 		case syscall.SIGHUP:
-			ioutil.WriteFile(tmpfile, []byte("--h"), 0644)
+			fmt.Fprintln(fifo, "--h")
 		case syscall.SIGINT:
-			ioutil.WriteFile(tmpfile, []byte("--i"), 0644)
+			fmt.Fprintln(fifo, "--i")
 		case syscall.SIGQUIT:
-			ioutil.WriteFile(tmpfile, []byte("--q"), 0644)
+			fmt.Fprintln(fifo, "--q")
 		case syscall.SIGTTIN:
-			ioutil.WriteFile(tmpfile, []byte("--in"), 0644)
+			fmt.Fprintln(fifo, "--in")
 		case syscall.SIGTTOU:
-			ioutil.WriteFile(tmpfile, []byte("--ou"), 0644)
+			fmt.Fprintln(fifo, "--ou")
 		case syscall.SIGUSR1:
-			ioutil.WriteFile(tmpfile, []byte("--1"), 0644)
+			fmt.Fprintln(fifo, "--1")
 		case syscall.SIGUSR2:
-			ioutil.WriteFile(tmpfile, []byte("--2"), 0644)
+			fmt.Fprintln(fifo, "--2")
 		case syscall.SIGWINCH:
-			ioutil.WriteFile(tmpfile, []byte("--w"), 0644)
+			fmt.Fprintln(fifo, "--w")
 		}
 	}
 }
@@ -76,14 +83,14 @@ func TestSignalsFiFo(t *testing.T) {
 		t.Skipf("skipping; unexpected shallow dir of %q", dir)
 	}
 	// for writing the signals
-	tmpfile, err := ioutil.TempFile("", "signals")
+	tmpdir, err := ioutil.TempDir("", "signals")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmpfile.Name()) // clean up
+	defer os.Remove(tmpdir) // clean up
 
 	cfg := &Config{
-		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1", "TEST_SIGNALS_FILE": tmpfile.Name()},
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1", "TEST_TEMP_DIR": tmpdir},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsFiFo", "--"},
 		Cwd:     parentDir,
 		Pid: Pid{
@@ -119,8 +126,19 @@ func TestSignalsFiFo(t *testing.T) {
 		expect(t, p.Pid(), pid)
 	}
 
-	// sync
+	// Make fifo in/out
+	if err := MakeFifo(filepath.Join(tmpdir, "fifo")); err != nil {
+		t.Fatal(err)
+	}
+
+	// sync fifo
 	time.Sleep(time.Second)
+
+	// open fifo for reading
+	fifo, err := OpenFifo(filepath.Join(tmpdir, "fifo"))
+	if err != nil {
+		t.Error(err)
+	}
 
 	var testSignals = []struct {
 		signal   string
@@ -148,22 +166,21 @@ func TestSignalsFiFo(t *testing.T) {
 		{"winch", "--w"},
 	}
 
-	status := &Status{}
+	type Response struct {
+		Err string
+	}
+	res := &Response{}
+
 	for _, s := range testSignals {
-		if err := getJSON(fmt.Sprintf("/signal/%s", s.signal), status); err != nil {
+		if err := getJSON(fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
 			t.Fatal(err)
 		}
-		// need to improve this (fifo maybe)
-		time.Sleep(time.Millisecond)
-		data, err := ioutil.ReadFile(tmpfile.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		expect(t, s.expected, string(data))
+		expect(t, "", res.Err)
+		waitSig(t, fifo, s.expected)
 	}
 
 	// test "d", (keep it down and don't restart)
-	if err := getJSON("/signal/d", status); err != nil {
+	if err := getJSON("/signal/d", res); err != nil {
 		t.Fatal(err)
 	}
 	// wait for process to finish
@@ -174,29 +191,57 @@ func TestSignalsFiFo(t *testing.T) {
 	// create error os: process already finished
 	mylog.Reset()
 	for _, s := range testSignals {
-		if err := getJSON(fmt.Sprintf("/signal/%s", s.signal), status); err != nil {
+		if err := getJSON(fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
 			t.Fatal(err)
 		}
 		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 		mylog.Reset()
 	}
 
-	if err := getJSON("/signal/d", status); err != nil {
+	if err := getJSON("/signal/d", res); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 
-	if err := getJSON("/signal/t", status); err != nil {
+	if err := getJSON("/signal/t", res); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 
-	if err := getJSON("/signal/p", status); err != nil {
+	if err := getJSON("/signal/p", res); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 
-	if err := getJSON("/signal/x", status); err != nil {
+	if err := getJSON("/signal/unknown", res); err != nil {
 		t.Fatal(err)
+	}
+	expect(t, "Unknown signal: unknown", res.Err)
+
+	if err := getJSON("/signal/x", res); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitSig(t *testing.T, fifo *os.File, sig string) {
+	buf := make([]byte, 0, 8)
+	r := bufio.NewReader(fifo)
+	for {
+		n, err := r.Read(buf[:cap(buf)])
+		if n == 0 {
+			if err == nil {
+				continue
+			}
+			if err == io.EOF {
+				continue
+			}
+			t.Fatal(err)
+		}
+		buf = buf[:n]
+		msg := strings.TrimSpace(string(buf))
+		if msg != sig {
+			expect(t, sig, msg)
+		}
+		return
 	}
 }
