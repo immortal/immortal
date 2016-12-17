@@ -2,7 +2,7 @@ cmd: bundle exec unicorn -c unicorn.rb
 cwd: /tmp/
 env:
     DEBUG: 1
-    ENVIROMENT: production
+    ENVIRONMENT: production
 pid:
     follow: /path/to/unicorn.pid
     parent: /tmp/parent.pid

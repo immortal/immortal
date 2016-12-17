@@ -1,5 +1,7 @@
-ir-scandir
-!*ir-scandir/
+immortal-dir
+!*immortal-dir/
+immortal-ctl
+!*immortal-ctl/
 immortal
 !*immortal/
 coverage.*

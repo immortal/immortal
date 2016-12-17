@@ -8,14 +8,13 @@ import (
 )
 
 func TestWatchPidGetpid(t *testing.T) {
-	sup := new(Sup)
 	ch := make(chan error, 1)
-
+	d := &Daemon{}
 	cmd := exec.Command("go", "version")
 	cmd.Start()
 	pid := cmd.Process.Pid
 	go func() {
-		sup.WatchPid(pid, ch)
+		d.WatchPid(pid, ch)
 		ch <- cmd.Wait()
 	}()
 	select {
@@ -31,14 +30,13 @@ func TestWatchPidGetpid(t *testing.T) {
 }
 
 func TestWatchPidGetpidKill(t *testing.T) {
-	sup := new(Sup)
+	d := &Daemon{}
 	ch := make(chan error, 1)
-
 	cmd := exec.Command("sleep", "100")
 	cmd.Start()
 	pid := cmd.Process.Pid
 	go func() {
-		sup.WatchPid(pid, ch)
+		d.WatchPid(pid, ch)
 		ch <- cmd.Wait()
 	}()
 

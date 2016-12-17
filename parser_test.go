@@ -71,7 +71,7 @@ func TestParseDefault(t *testing.T) {
 	if helpCalled {
 		t.Error("help called for regular flag")
 	}
-	expect(t, false, flags.Ctrl)
+	expect(t, false, flags.Ctl)
 	expect(t, false, flags.Version)
 	expect(t, "", flags.Configfile)
 	expect(t, "", flags.Wrkdir)
@@ -93,7 +93,7 @@ func TestParseFlags(t *testing.T) {
 		expected interface{}
 	}{
 		{[]string{"cmd", "-v"}, "Version", true},
-		{[]string{"cmd", "-ctrl"}, "Ctrl", true},
+		{[]string{"cmd", "-ctl"}, "Ctl", true},
 		{[]string{"cmd", "-c", "run.yml"}, "Configfile", "run.yml"},
 		{[]string{"cmd", "-d", "/arena/wrkdir"}, "Wrkdir", "/arena/wrkdir"},
 		{[]string{"cmd", "-e", "/path/to/envdir"}, "Envdir", "/path/to/envdir"},
@@ -200,8 +200,8 @@ func TestParseArgsTable(t *testing.T) {
 		expectError bool
 	}{
 		{[]string{"cmd", "-v"}, false},
-		{[]string{"cmd", "-ctrl"}, true},
-		{[]string{"cmd", "-ctrl", "cmd"}, false},
+		{[]string{"cmd", "-ctl"}, true},
+		{[]string{"cmd", "-ctl", "cmd"}, false},
 		{[]string{"cmd", "-c", "run.yml"}, true},
 		{[]string{"cmd", "-c", "run.yml", "cmd"}, true},
 		{[]string{"cmd", "-c", "example/run.yml", "cmd"}, false},

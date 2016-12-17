@@ -1,7 +1,6 @@
 package immortal
 
 import (
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -37,6 +36,7 @@ func TestHelperProcessSupervise2(*testing.T) {
 }
 
 func TestSupervise(t *testing.T) {
+	os.RemoveAll("supervise")
 	log.SetOutput(ioutil.Discard)
 	log.SetFlags(0)
 	base := filepath.Base(os.Args[0]) // "exec.test"
@@ -58,7 +58,7 @@ func TestSupervise(t *testing.T) {
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSupervise", "--"},
 		Cwd:     parentDir,
-		ctrl:    true,
+		ctl:     true,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
@@ -66,41 +66,35 @@ func TestSupervise(t *testing.T) {
 		},
 	}
 	// to remove lock
-	os.RemoveAll(filepath.Join(parentDir, "supervise"))
 	d, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Second)
-	fctrl, err := OpenFifo(filepath.Join(parentDir, "supervise/control"))
-	if err != nil {
+
+	// create socket
+	if err := d.Listen(); err != nil {
 		t.Fatal(err)
 	}
+
 	go Supervise(d)
 	defer func() {
-		fmt.Fprintln(fctrl, "kill")
-		fmt.Fprintln(fctrl, "exit")
+		status := &Status{}
+		getJSON("/signal/exit", status)
 	}()
 
-	sup := &Sup{}
-
 	time.Sleep(time.Second)
-
-	// check pids
-	parentPid, err := sup.ReadPidFile(filepath.Join(parentDir, "parent.pid"))
+	childPid, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid"))
 	if err != nil {
 		t.Error(err)
 	}
-	expect(t, os.Getpid(), parentPid)
-	childPid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
-	if err != nil {
-		t.Error(err)
-	}
-	expect(t, true, childPid > 0)
 
-	fmt.Fprintln(fctrl, "t")
+	status := &Status{}
+	t.Log("testing t")
+	if err := getJSON("/signal/t", status); err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(time.Second)
-	newchildPid, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
+	newchildPid, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid"))
 	if err != nil {
 		t.Error(err)
 	}
@@ -109,7 +103,7 @@ func TestSupervise(t *testing.T) {
 	}
 
 	// test info
-	syscall.Kill(parentPid, syscall.SIGQUIT)
+	syscall.Kill(os.Getpid(), syscall.SIGQUIT)
 	time.Sleep(time.Second)
 
 	// fake watch pid with other process
@@ -125,13 +119,16 @@ func TestSupervise(t *testing.T) {
 	}
 
 	// reset
-	fmt.Fprintln(fctrl, "t")
-	for sup.IsRunning(watchPid) {
+	t.Log("testing t")
+	if err := getJSON("/signal/t", status); err != nil {
+		t.Fatal(err)
+	}
+	for d.IsRunning(watchPid) {
 		// wait mock watchpid to finish
 		time.Sleep(500 * time.Millisecond)
 	}
 	time.Sleep(time.Second)
-	newchildPidAfter, err := sup.ReadPidFile(filepath.Join(parentDir, "child.pid"))
+	newchildPidAfter, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid"))
 	if err != nil {
 		t.Error(err)
 	}
@@ -141,6 +138,7 @@ func TestSupervise(t *testing.T) {
 }
 
 func TestSuperviseWait(t *testing.T) {
+	os.RemoveAll("supervise")
 	log.SetOutput(ioutil.Discard)
 	log.SetFlags(0)
 	base := filepath.Base(os.Args[0]) // "exec.test"
@@ -157,23 +155,21 @@ func TestSuperviseWait(t *testing.T) {
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSupervise2", "--"},
 		Cwd:     parentDir,
-		ctrl:    true,
+		ctl:     true,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
 	}
-	// to remove lock
-	os.RemoveAll(filepath.Join(parentDir, "supervise"))
 	d, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Second)
-	fctrl, err := OpenFifo(filepath.Join(parentDir, "supervise/control"))
-	if err != nil {
+	// create socket
+	if err := d.Listen(); err != nil {
 		t.Fatal(err)
 	}
+	time.Sleep(time.Second)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -181,7 +177,8 @@ func TestSuperviseWait(t *testing.T) {
 		Supervise(d)
 	}()
 	time.Sleep(2 * time.Second)
-	fmt.Fprintln(fctrl, "exit")
+	status := &Status{}
+	getJSON("/signal/exit", status)
 	wg.Wait()
 	expect(t, true, d.count >= 2)
 }
