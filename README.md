@@ -9,3 +9,46 @@ A *nix cross-platform (OS agnostic) supervisor
 https://immortal.run/
 
 [ ![Download](https://api.bintray.com/packages/nbari/immortal/immortal/images/download.svg) ](https://bintray.com/nbari/immortal/immortal/_latestVersion)
+
+# Paths
+
+When using immortal-dir:
+
+    /usr/local/etc/immortal
+    |--api1.example.com
+    |  |--env
+    |  |--run.yml
+    |  `--supervice
+    |     |--lock
+    |     `--immortal.sock
+    |--api2.example.com
+    |  |--env
+    |  |--run.yml
+    |  `--supervice
+    |     |--lock
+    |     `--immortal.sock
+    `--api3.example.com
+       |--env
+       |--run.yml
+       `--supervice
+          |--lock
+           `--immortal.sock
+
+When running like non-root user or not by ``immortal-dir`` there will be no lock
+so command can be run multiple times:
+
+    ~/.immortal
+    |--(hash)
+    |  `--supervise
+    |     `--immortal.sock
+    |--(hash)
+    |  `--supervise
+    |     `--immortal.sock
+    `--(hash)
+       `--supervise
+          `--immortal.sock
+
+
+# debug
+
+    pgrep -fl "immortal -ctl"  | awk '{print $1}' | xargs watch -n .1 pstree -p

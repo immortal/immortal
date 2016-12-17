@@ -30,6 +30,7 @@ type process struct {
 
 // Start runs the command
 func (p *process) Start() (*process, error) {
+	// command obtained from Config parent
 	p.cmd = exec.Command(p.command[0], p.command[1:]...)
 
 	// change working directory
@@ -127,12 +128,12 @@ func (p *process) Signal(sig os.Signal) error {
 
 // NewProcess return process instance
 func NewProcess(cfg *Config) *process {
-	quit := make(chan struct{})
+	qch := make(chan struct{})
 	return &process{
 		Config: cfg,
 		Logger: &LogWriter{
-			logger: NewLogger(cfg, quit),
+			logger: NewLogger(cfg, qch),
 		},
-		quit: quit,
+		quit: qch,
 	}
 }

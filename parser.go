@@ -34,7 +34,7 @@ type Parse struct {
 
 // Parse parse the command line flags
 func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
-	fs.BoolVar(&p.Flags.Ctrl, "ctrl", false, "Create supervise directory")
+	fs.BoolVar(&p.Flags.Ctl, "ctl", false, "Create supervise directory")
 	fs.BoolVar(&p.Flags.Version, "v", false, "Print version")
 	fs.StringVar(&p.Flags.Configfile, "c", "", "`run.yml` configuration file")
 	fs.StringVar(&p.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
@@ -141,7 +141,7 @@ func (p *Parse) checkUser(u string) (usr *user.User, err error) {
 // Usage prints to standard error a usage message
 func (p *Parse) Usage(fs *flag.FlagSet) func() {
 	return func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [-v -ctrl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [-v -ctl] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
 		var flags []string
 		fs.VisitAll(func(f *flag.Flag) {
 			flags = append(flags, f.Name)
@@ -216,9 +216,9 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	cfg.command = fs.Args()
 	cfg.Log.Size = 1
 
-	// if -ctrl
-	if flags.Ctrl {
-		cfg.ctrl = true
+	// if -ctl
+	if flags.Ctl {
+		cfg.ctl = true
 	}
 
 	// if -d

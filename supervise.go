@@ -16,7 +16,6 @@ func Supervise(d *Daemon) {
 		info = make(chan os.Signal)
 		p    *process
 		pid  int
-		run  = make(chan struct{}, 1)
 		wait time.Duration
 	)
 
@@ -26,16 +25,8 @@ func Supervise(d *Daemon) {
 		log.Fatal(err)
 	}
 
-	// Info loop, kill 3 PPID get stats
+	// Info loop, kill -3 PPID get stats
 	signal.Notify(info, syscall.SIGQUIT)
-
-	// create a supervisor
-	s := &Sup{p}
-
-	// listen on control for signals
-	if d.cfg.ctrl {
-		s.ReadFifoControl(d.fifoControl, d.fifo)
-	}
 
 	for {
 		select {
@@ -43,18 +34,18 @@ func Supervise(d *Daemon) {
 			return
 		case <-info:
 			d.Info()
-		case <-run:
+		case <-d.run:
 			time.Sleep(wait)
 			// create a new process
-			np := NewProcess(d.cfg)
-			p, err = d.Run(np)
-			if err != nil {
-				close(np.quit)
-				log.Print(err)
-				time.Sleep(time.Second)
-				run <- struct{}{}
+			if d.lock == 0 {
+				np := NewProcess(d.cfg)
+				if p, err = d.Run(np); err != nil {
+					close(np.quit)
+					log.Print(err)
+					wait = time.Second
+					d.run <- struct{}{}
+				}
 			}
-			s = &Sup{p}
 		case err := <-p.errch:
 			// unlock, or lock once
 			atomic.StoreUint32(&d.lock, d.lockOnce)
@@ -78,28 +69,23 @@ func Supervise(d *Daemon) {
 			// follow the new pid and stop running the command
 			// unless the new pid dies
 			if d.cfg.Pid.Follow != "" {
-				pid, err = s.ReadPidFile(d.cfg.Pid.Follow)
+				pid, err = d.ReadPidFile(d.cfg.Pid.Follow)
 				if err != nil {
 					log.Printf("Cannot read pidfile:%s, %s", d.cfg.Pid.Follow, err)
-					run <- struct{}{}
+					d.run <- struct{}{}
 				} else {
 					// check if pid in file is valid
-					if pid > 1 && pid != p.Pid() && s.IsRunning(pid) {
+					if pid > 1 && pid != p.Pid() && d.IsRunning(pid) {
 						log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
-						s.WatchPid(pid, p.errch)
+						d.WatchPid(pid, p.errch)
 					} else {
 						// if cmd exits or process is kill
-						run <- struct{}{}
+						d.run <- struct{}{}
 					}
 				}
 			} else {
-				run <- struct{}{}
+				d.run <- struct{}{}
 			}
-		case fifo := <-d.fifo:
-			if fifo.err != nil {
-				log.Printf("control error: %s", fifo.err)
-			}
-			s.HandleSignals(fifo.msg, d)
 		}
 	}
 }

@@ -15,7 +15,7 @@ type Config struct {
 	User    string `yaml:",omitempty" json:",omitempty"`
 	Wait    int    `yaml:",omitempty"`
 	command []string
-	ctrl    bool
+	ctl     bool
 	log     bool
 	user    *user.User
 }

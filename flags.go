@@ -2,7 +2,7 @@ package immortal
 
 // Flags available command flags
 type Flags struct {
-	Ctrl       bool
+	Ctl        bool
 	Version    bool
 	Configfile string
 	Wrkdir     string

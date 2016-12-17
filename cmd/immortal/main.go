@@ -43,19 +43,10 @@ func main() {
 		defer logger.Close()
 	}
 
-	// create daemon
-	daemon, err := immortal.New(cfg)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		log.Print(err)
-		os.Exit(1)
-	}
-
 	// fork
 	if os.Getppid() > 1 {
 		if pid, err := immortal.Fork(); err != nil {
-			log.Printf("Error while forking: %s", err)
-			os.Exit(1)
+			log.Fatalf("Error while forking: %s", err)
 		} else {
 			if pid > 0 {
 				os.Exit(0)
@@ -63,7 +54,18 @@ func main() {
 		}
 	}
 
+	// create daemon
+	daemon, err := immortal.New(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	log.Printf("%c  %d", immortal.Logo(), os.Getpid())
+
+	// listen on socket
+	if err := daemon.Listen(); err != nil {
+		log.Fatal(err)
+	}
 
 	immortal.Supervise(daemon)
 }
