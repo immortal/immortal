@@ -89,7 +89,6 @@ func TestSupervise(t *testing.T) {
 	}
 
 	status := &Status{}
-	t.Log("testing t")
 	if err := getJSON("/signal/t", status); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +118,6 @@ func TestSupervise(t *testing.T) {
 	}
 
 	// reset
-	t.Log("testing t")
 	if err := getJSON("/signal/t", status); err != nil {
 		t.Fatal(err)
 	}
