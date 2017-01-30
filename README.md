@@ -52,3 +52,7 @@ so command can be run multiple times:
 # debug
 
     pgrep -fl "immortal -ctl"  | awk '{print $1}' | xargs watch -n .1 pstree -p
+
+# Test status using curl
+
+    curl --unix-socket immortal.sock http:/ -s | jq
