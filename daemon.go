@@ -32,7 +32,6 @@ func (d *Daemon) Run(p Process) (*process, error) {
 
 	// return if process is running
 	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
-		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lockOnce)
 		return nil, fmt.Errorf("Cannot start, process still running")
 	}
 
