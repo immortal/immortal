@@ -15,38 +15,49 @@ https://immortal.run/
 When using immortal-dir:
 
     /usr/local/etc/immortal
-    |--api1.example.com
+    |--api1
     |  |--env
-    |  |--run.yml
-    |  `--supervice
-    |     |--lock
-    |     `--immortal.sock
-    |--api2.example.com
+    |  `--run.yml
+    |--api2
     |  |--env
-    |  |--run.yml
-    |  `--supervice
-    |     |--lock
-    |     `--immortal.sock
-    `--api3.example.com
-       |--env
-       |--run.yml
-       `--supervice
-          |--lock
-           `--immortal.sock
+    |  `--run.yml
+    `--api3.yml
+
+If using a directory the name of the directory will be used to reference the
+application to be daemonized only if within the directory exists a proper
+`run.yml` file
+
+## /var/run/immortal/<name>
+
+    /var/run/immortal
+    |--api1
+    |  |-lock
+    |  `-immortal.sock
+    |--api2
+    |  |-lock
+    |  `-immortal.sock
+    `--api3
+       |-lock
+       `-immortal.sock
+
+Considering the use of dir `/var/run/immortal/app/` when using `immortal-dir`
+
+## immortal like non-root user
 
 When running like non-root user or not by ``immortal-dir`` there will be no lock
 so command can be run multiple times:
 
     ~/.immortal
-    |--(hash)
+    |--(pid)
     |  `--supervise
     |     `--immortal.sock
-    |--(hash)
+    |--(pid)
     |  `--supervise
     |     `--immortal.sock
-    `--(hash)
+    `--(pid)
        `--supervise
           `--immortal.sock
+
 
 
 # debug
