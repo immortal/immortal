@@ -2,8 +2,8 @@ package immortal
 
 // Flags available command flags
 type Flags struct {
-	Ctl        bool
 	Version    bool
+	Seconds    int
 	Configfile string
 	Wrkdir     string
 	Envdir     string
@@ -13,6 +13,6 @@ type Flags struct {
 	ParentPid  string
 	ChildPid   string
 	User       string
-	Seconds    int
 	Command    string
+	Ctl        string
 }

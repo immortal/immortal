@@ -97,13 +97,10 @@ func (d *Daemon) ReadPidFile(pidfile string) (int, error) {
 func New(cfg *Config) (*Daemon, error) {
 	var supDir string
 
-	// create supervise directory in current directory
-	if cfg.ctl {
-		d, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-		supDir = filepath.Join(d, "supervise")
+	// create supervise directory in specified directory
+	// default to /var/run/immotal/<app>
+	if cfg.ctl != "" {
+		supDir = cfg.ctl
 	} else {
 		// create an .immortal dir on $HOME user when calling immortal directly
 		// and not using immortal-dir, this helps to run immortal-ctl and

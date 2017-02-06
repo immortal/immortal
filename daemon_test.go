@@ -23,13 +23,13 @@ func TestDaemonNewCtl(t *testing.T) {
 	defer os.RemoveAll(dir)
 	cfg := &Config{
 		Cwd: dir,
-		ctl: true,
+		ctl: dir,
 	}
 	d, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = os.Stat("supervise/lock"); err != nil {
+	if _, err = os.Stat(filepath.Join(dir, "lock")); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, uint32(0), d.lock)
@@ -57,7 +57,7 @@ func TestDaemonNewCtlErr(t *testing.T) {
 	}
 	os.Chmod(dir, 0000)
 	cfg := &Config{
-		ctl: true,
+		ctl: dir,
 	}
 	_, err = New(cfg)
 	if err == nil {
@@ -80,13 +80,13 @@ func TestDaemonNewCtlCwd(t *testing.T) {
 		t.Error(err)
 	}
 	cfg := &Config{
-		ctl: true,
+		ctl: dir,
 	}
 	d, err := New(cfg)
 	if err != nil {
 		t.Error(err)
 	}
-	if _, err = os.Stat(filepath.Join(dir, "supervise/lock")); err != nil {
+	if _, err = os.Stat(filepath.Join(dir, "lock")); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, uint32(0), d.lock)
@@ -103,7 +103,7 @@ func TestBadUid(t *testing.T) {
 	cfg := &Config{
 		command: []string{"go"},
 		user:    &user.User{Uid: "uid", Gid: "0"},
-		ctl:     true,
+		ctl:     "",
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestBadGid(t *testing.T) {
 	cfg := &Config{
 		command: []string{"go"},
 		user:    &user.User{Uid: "0", Gid: "gid"},
-		ctl:     true,
+		ctl:     "",
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -137,7 +137,7 @@ func TestUser(t *testing.T) {
 	cfg := &Config{
 		command: []string{"go"},
 		user:    &user.User{Uid: "0", Gid: "0"},
-		ctl:     true,
+		ctl:     "",
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestBadWritePidParent(t *testing.T) {
 		Pid: Pid{
 			Parent: "/dev/null/parent.pid",
 		},
-		ctl: true,
+		ctl: "",
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -236,7 +236,7 @@ func TestSignalsUDOT(t *testing.T) {
 		Log: Log{
 			File: tmpfile.Name(),
 		},
-		ctl: true,
+		ctl: dir,
 	}
 	d, err := New(cfg)
 	if err != nil {

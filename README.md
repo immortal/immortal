@@ -24,8 +24,8 @@ When using immortal-dir:
     `--api3.yml
 
 If using a directory the name of the directory will be used to reference the
-application to be daemonized only if within the directory exists a proper
-`run.yml` file
+service to be daemonized only if within the directory exists a proper
+`run.yml` file.
 
 ## /var/run/immortal/<name>
 
@@ -40,7 +40,7 @@ application to be daemonized only if within the directory exists a proper
        |-lock
        `-immortal.sock
 
-Considering the use of dir `/var/run/immortal/app/` when using `immortal-dir`
+Considering the use of dir `/var/run/immortal/<service>/` when using `immortal-dir`
 
 ## immortal like non-root user
 
@@ -57,7 +57,6 @@ so command can be run multiple times:
     `--(pid)
        `--supervise
           `--immortal.sock
-
 
 
 # debug

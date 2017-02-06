@@ -97,7 +97,7 @@ func TestSignalsFiFo(t *testing.T) {
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
-		ctl: true,
+		ctl: "",
 	}
 	d, err := New(cfg)
 	if err != nil {

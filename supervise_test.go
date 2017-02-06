@@ -58,7 +58,7 @@ func TestSupervise(t *testing.T) {
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSupervise", "--"},
 		Cwd:     parentDir,
-		ctl:     true,
+		ctl:     dir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
@@ -153,7 +153,7 @@ func TestSuperviseWait(t *testing.T) {
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSupervise2", "--"},
 		Cwd:     parentDir,
-		ctl:     true,
+		ctl:     dir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
