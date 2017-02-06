@@ -215,6 +215,16 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	cfg = new(Config)
 	cfg.command = fs.Args()
 	cfg.Log.Size = 1
+
+	if flags.Ctl != "" {
+		sdir := filepath.Clean(flags.Ctl)
+		if strings.HasPrefix(sdir, "/") {
+			cfg.ctl = sdir
+		} else {
+			cfg.ctl = filepath.Join("/var/run/immortal", sdir)
+		}
+	}
+
 	cfg.ctl = flags.Ctl
 
 	// if -d
