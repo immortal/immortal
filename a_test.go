@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"testing"
@@ -19,11 +20,11 @@ func expect(t *testing.T, a interface{}, b interface{}) {
 }
 
 // getJSON unix socket web client
-func getJSON(path string, target interface{}) error {
+func getJSON(spath, path string, target interface{}) error {
 	// http socket client
 	tr := &http.Transport{
 		Dial: func(proto, addr string) (net.Conn, error) {
-			return net.Dial("unix", "supervise/immortal.sock")
+			return net.Dial("unix", filepath.Join(spath, "immortal.sock"))
 		},
 	}
 	client := &http.Client{Transport: tr}
