@@ -170,6 +170,42 @@ func TestParseArgsVersion2(t *testing.T) {
 	}
 }
 
+func TestParseArgsCtl(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-ctl", "service", "xyz"}
+	parser := &Parse{}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsCtl", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	cfg, err := ParseArgs(parser, fs)
+	if err != nil {
+		t.Error(err)
+	}
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	expect(t, "/var/run/immortal/service", cfg.ctl)
+}
+
+func TestParseArgsCtl2(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-ctl", "/service", "xyz"}
+	parser := &Parse{}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsCtl2", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	cfg, err := ParseArgs(parser, fs)
+	if err != nil {
+		t.Error(err)
+	}
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	expect(t, "/service", cfg.ctl)
+}
+
 func TestParseArgsNoargs(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
