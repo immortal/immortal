@@ -98,7 +98,7 @@ func New(cfg *Config) (*Daemon, error) {
 	var supDir string
 
 	// create supervise directory in specified directory
-	// defaults to /var/run/immotal/<app>
+	// defaults to /var/run/immortal/<app>
 	if cfg.ctl != "" {
 		supDir = cfg.ctl
 	} else {
