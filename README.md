@@ -65,4 +65,14 @@ so command can be run multiple times:
 
 # Test status using curl
 
+status:
+
     curl --unix-socket immortal.sock http:/status -s | jq
+
+down:
+
+    curl --unix-socket immortal.sock http://im/signal/d -s | jq
+
+up:
+
+    curl --unix-socket immortal.sock http://im/signal/u -s | jq
