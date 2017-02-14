@@ -98,7 +98,7 @@ func New(cfg *Config) (*Daemon, error) {
 	var supDir string
 
 	// create supervise directory in specified directory
-	// default to /var/run/immotal/<app>
+	// defaults to /var/run/immotal/<app>
 	if cfg.ctl != "" {
 		supDir = cfg.ctl
 	} else {
@@ -111,8 +111,7 @@ func New(cfg *Config) (*Daemon, error) {
 		}
 		supDir = filepath.Join(usr.HomeDir,
 			".immortal",
-			fmt.Sprintf("%d", os.Getpid()),
-			"supervise")
+			fmt.Sprintf("%d", os.Getpid()))
 	}
 
 	// create supervise dir

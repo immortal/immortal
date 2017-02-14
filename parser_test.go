@@ -173,37 +173,37 @@ func TestParseArgsVersion2(t *testing.T) {
 func TestParseArgsCtl(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
-	os.Args = []string{"cmd", "-ctl", "service", "xyz"}
-	parser := &Parse{}
-	var helpCalled = false
-	fs := flag.NewFlagSet("TestParseArgsCtl", flag.ContinueOnError)
-	fs.Usage = func() { helpCalled = true }
-	cfg, err := ParseArgs(parser, fs)
-	if err != nil {
-		t.Error(err)
+	var flagTest = []struct {
+		flag     []string
+		expected string
+	}{
+		{[]string{"cmd", "-ctl", "/service", "xyz"}, "/service"},
+		{[]string{"cmd", "-ctl", "service", "xyz"}, "/var/run/immortal/service"},
+		{[]string{"cmd", "-ctl", "123", "xyz"}, "/var/run/immortal/123"},
+		{[]string{"cmd", "-ctl", "123/456", "xyz"}, "/var/run/immortal/456"},
+		{[]string{"cmd", "-ctl", "123/../456", "xyz"}, "/var/run/immortal/456"},
+		{[]string{"cmd", "-ctl", "../123/../456", "xyz"}, "/var/run/immortal/456"},
+		{[]string{"cmd", "-ctl", "../foo", "xyz"}, "/var/run/immortal/foo"},
+		{[]string{"cmd", "-ctl", "", "xyz"}, ""},
+		{[]string{"cmd", "-ctl", "~/user", "xyz"}, "/var/run/immortal/user"},
+		{[]string{"cmd", "-ctl", "/tmp/test/", "xyz"}, "/tmp/test"},
 	}
-	if helpCalled {
-		t.Error("help called for regular flag")
+	for _, f := range flagTest {
+		os.Args = f.flag
+		parser := &Parse{}
+		var helpCalled = false
+		fs := flag.NewFlagSet("TestParseArgsCtl", flag.ContinueOnError)
+		fs.Usage = func() { helpCalled = true }
+		cfg, err := ParseArgs(parser, fs)
+		if err != nil {
+			t.Error(err)
+		}
+		if helpCalled {
+			t.Error("help called for regular flag")
+			helpCalled = false // reset for next test
+		}
+		expect(t, cfg.ctl, f.expected)
 	}
-	expect(t, "/var/run/immortal/service", cfg.ctl)
-}
-
-func TestParseArgsCtl2(t *testing.T) {
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
-	os.Args = []string{"cmd", "-ctl", "/service", "xyz"}
-	parser := &Parse{}
-	var helpCalled = false
-	fs := flag.NewFlagSet("TestParseArgsCtl2", flag.ContinueOnError)
-	fs.Usage = func() { helpCalled = true }
-	cfg, err := ParseArgs(parser, fs)
-	if err != nil {
-		t.Error(err)
-	}
-	if helpCalled {
-		t.Error("help called for regular flag")
-	}
-	expect(t, "/service", cfg.ctl)
 }
 
 func TestParseArgsNoargs(t *testing.T) {

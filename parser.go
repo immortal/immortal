@@ -223,7 +223,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		if strings.HasPrefix(sdir, "/") {
 			cfg.ctl = sdir
 		} else {
-			cfg.ctl = filepath.Join("/var/run/immortal", sdir)
+			cfg.ctl = filepath.Join("/var/run/immortal", filepath.Base(sdir))
 		}
 	}
 
