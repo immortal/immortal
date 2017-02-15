@@ -83,7 +83,7 @@ func TestSupervise(t *testing.T) {
 	go Supervise(d)
 	defer func() {
 		status := &Status{}
-		getJSON(sdir, "/signal/exit", status)
+		GetJSON(sdir, "/signal/exit", status)
 	}()
 
 	time.Sleep(time.Second)
@@ -93,7 +93,7 @@ func TestSupervise(t *testing.T) {
 	}
 
 	status := &Status{}
-	if err := getJSON(sdir, "/signal/t", status); err != nil {
+	if err := GetJSON(sdir, "/signal/t", status); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)
@@ -122,7 +122,7 @@ func TestSupervise(t *testing.T) {
 	}
 
 	// reset
-	if err := getJSON(sdir, "/signal/t", status); err != nil {
+	if err := GetJSON(sdir, "/signal/t", status); err != nil {
 		t.Fatal(err)
 	}
 	for d.IsRunning(watchPid) {
@@ -184,7 +184,7 @@ func TestSuperviseWait(t *testing.T) {
 	}()
 	time.Sleep(2 * time.Second)
 	status := &Status{}
-	getJSON(sdir, "/signal/exit", status)
+	GetJSON(sdir, "/signal/exit", status)
 	wg.Wait()
 	expect(t, true, d.count >= 2)
 }

@@ -176,7 +176,7 @@ func TestSignalsFiFo(t *testing.T) {
 	res := &Response{}
 
 	for _, s := range testSignals {
-		if err := getJSON(sdir, fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
+		if err := GetJSON(sdir, fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
 			t.Fatal(err)
 		}
 		expect(t, "", res.Err)
@@ -184,7 +184,7 @@ func TestSignalsFiFo(t *testing.T) {
 	}
 
 	// test "d", (keep it down and don't restart)
-	if err := getJSON(sdir, "/signal/d", res); err != nil {
+	if err := GetJSON(sdir, "/signal/d", res); err != nil {
 		t.Fatal(err)
 	}
 	// wait for process to finish
@@ -195,34 +195,34 @@ func TestSignalsFiFo(t *testing.T) {
 	// create error os: process already finished
 	mylog.Reset()
 	for _, s := range testSignals {
-		if err := getJSON(sdir, fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
+		if err := GetJSON(sdir, fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
 			t.Fatal(err)
 		}
 		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 		mylog.Reset()
 	}
 
-	if err := getJSON(sdir, "/signal/d", res); err != nil {
+	if err := GetJSON(sdir, "/signal/d", res); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 
-	if err := getJSON(sdir, "/signal/t", res); err != nil {
+	if err := GetJSON(sdir, "/signal/t", res); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 
-	if err := getJSON(sdir, "/signal/p", res); err != nil {
+	if err := GetJSON(sdir, "/signal/p", res); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 
-	if err := getJSON(sdir, "/signal/unknown", res); err != nil {
+	if err := GetJSON(sdir, "/signal/unknown", res); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, "Unknown signal: unknown", res.Err)
 
-	if err := getJSON(sdir, "/signal/x", res); err != nil {
+	if err := GetJSON(sdir, "/signal/x", res); err != nil {
 		t.Fatal(err)
 	}
 }

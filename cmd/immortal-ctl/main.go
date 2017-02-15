@@ -3,7 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"os"
+	"path/filepath"
+
+	"github.com/immortal/immortal"
 )
 
 var version string
@@ -17,7 +22,6 @@ func main() {
 	)
 
 	// if IMMORTAL_SDIR env is set, use it as default sdir
-	// TODO  how to handle errors when dir don't exists
 	if sdir = os.Getenv("IMMORTAL_SDIR"); sdir == "" {
 		sdir = "/var/run/immortal"
 	}
@@ -55,5 +59,21 @@ func main() {
 	if *v {
 		fmt.Printf("%s\n", version)
 		os.Exit(0)
+	}
+
+	systemServices, err := ioutil.ReadDir(sdir)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, file := range systemServices {
+		if file.IsDir() {
+			socket := filepath.Join(sdir, file.Name(), "immortal.sock")
+			if _, err := os.Stat(socket); err == nil {
+				status := &immortal.Status{}
+				immortal.GetJSON(socket, "/", status)
+				fmt.Printf("%s %d %v %v \n", file.Name(), status.Pid, status.Up, status.Down)
+			}
+		}
 	}
 }

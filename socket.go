@@ -38,9 +38,9 @@ func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		Pid: d.process.Pid(),
 	}
 	if d.process.eTime.IsZero() {
-		status.Up = fmt.Sprintf("%s", time.Since(d.process.sTime))
+		status.Up = fmt.Sprintf("%s", DurationRound(time.Since(d.process.sTime), time.Millisecond))
 	} else {
-		status.Down = fmt.Sprintf("%s", time.Since(d.process.eTime))
+		status.Down = fmt.Sprintf("%s", DurationRound(time.Since(d.process.eTime), time.Millisecond))
 	}
 	if err := json.NewEncoder(w).Encode(status); err != nil {
 		log.Println(err)
