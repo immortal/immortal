@@ -1,7 +1,6 @@
 .PHONY: all get test clean build cover compile goxc bintray
 
 GO ?= go
-BIN_NAME=immortal
 GO_XC = ${GOPATH}/bin/goxc -os="freebsd netbsd openbsd darwin linux"
 GOXC_FILE = .goxc.json
 GOXC_FILE_LOCAL = .goxc.local.json
@@ -15,11 +14,12 @@ get:
 build: get
 #	${GO} get -u gopkg.in/yaml.v2;
 #	${GO} get -u github.com/nbari/violetear;
+	${GO} build -ldflags "-X main.version=${VERSION}" -o immortal cmd/immortal/main.go;
+	${GO} build -ldflags "-X main.version=${VERSION}" -o immortal-ctl cmd/immortal-ctl/main.go;
 	${GO} build -ldflags "-X main.version=${VERSION}" -o immortal-dir cmd/immortal-dir/main.go;
-	${GO} build -ldflags "-X main.version=${VERSION}" -o ${BIN_NAME} cmd/immortal/main.go;
 
 clean:
-	@rm -rf immortal-* ${BIN_NAME} ${BIN_NAME}.debug *.out build debian
+	@rm -rf immortal-* immortal *.debug *.out build debian
 
 test: get
 	${GO} test -race -v
