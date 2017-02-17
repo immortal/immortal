@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nbari/violetear"
@@ -16,6 +17,7 @@ type Status struct {
 	Pid  int    `json:"pid"`
 	Up   string `json:"up,omitempty"`
 	Down string `json:"down,omitempty"`
+	Cmd  string `json:"cmd"`
 }
 
 // Listen creates a unix socket used for control the daemon
@@ -36,6 +38,7 @@ func (d *Daemon) Listen() error {
 func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	status := Status{
 		Pid: d.process.Pid(),
+		Cmd: strings.Join(d.cfg.command, " "),
 	}
 	if d.process.eTime.IsZero() {
 		status.Up = fmt.Sprintf("%s", DurationRound(time.Since(d.process.sTime), time.Millisecond))
