@@ -15,11 +15,11 @@ build: get
 #	${GO} get -u gopkg.in/yaml.v2;
 #	${GO} get -u github.com/nbari/violetear;
 	${GO} build -ldflags "-X main.version=${VERSION}" -o immortal cmd/immortal/main.go;
-	${GO} build -ldflags "-X main.version=${VERSION}" -o immortal-ctl cmd/immortal-ctl/main.go;
-	${GO} build -ldflags "-X main.version=${VERSION}" -o immortal-dir cmd/immortal-dir/main.go;
+	${GO} build -ldflags "-X main.version=${VERSION}" -o immortalctl cmd/immortalctl/main.go;
+	${GO} build -ldflags "-X main.version=${VERSION}" -o immortaldir cmd/immortaldir/main.go;
 
 clean:
-	@rm -rf immortal-* immortal *.debug *.out build debian
+	@rm -rf immortal immortalctl immortaldir *.debug *.out build debian
 
 test: get
 	${GO} test -race -v
