@@ -66,18 +66,22 @@ func main() {
 		log.Fatal(err)
 	}
 
-	format := "%+7v %+10v %+10s %-10s %-10s\n"
+	format := "%+7v %+10v %+10s   %-10s %-10s\n"
 	fmt.Printf(format, "PID", "Up", "Down", "Name", "CMD")
 	for _, file := range systemServices {
 		if file.IsDir() {
 			socket := filepath.Join(sdir, file.Name(), "immortal.sock")
 			if _, err := os.Stat(socket); err == nil {
 				status := &immortal.Status{}
-				immortal.GetJSON(socket, "/", status)
-				if status.Down != "" {
-					fmt.Printf(format, immortal.Red(file.Name()), status.Pid, status.Up, status.Down, "--")
+				if err := immortal.GetJSON(socket, "/", status); err == nil {
+					if status.Down != "" {
+						fmt.Printf(format, immortal.Red(file.Name()), status.Pid, status.Up, status.Down, "--")
+					} else {
+						fmt.Printf(format, status.Pid, status.Up, status.Down, immortal.Yellow(fmt.Sprintf("%-10s", file.Name())), status.Cmd)
+					}
 				} else {
-					fmt.Printf(format, status.Pid, status.Up, status.Down, immortal.Green(fmt.Sprintf("%-10s", file.Name())), status.Cmd)
+					// clean
+					os.RemoveAll(filepath.Join(sdir, file.Name()))
 				}
 			}
 		}
