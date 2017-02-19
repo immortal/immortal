@@ -77,7 +77,7 @@ func main() {
 					if status.Down != "" {
 						fmt.Printf(format, immortal.Red(file.Name()), status.Pid, status.Up, status.Down, "--")
 					} else {
-						fmt.Printf(format, status.Pid, status.Up, status.Down, immortal.Yellow(fmt.Sprintf("%-10s", file.Name())), status.Cmd)
+						fmt.Printf(format, status.Pid, status.Up, status.Down, immortal.Green(fmt.Sprintf("%-10s", file.Name())), status.Cmd)
 					}
 				} else {
 					// clean
