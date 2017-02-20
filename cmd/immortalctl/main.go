@@ -66,7 +66,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	format := "%+7v %+10v %+10s   %-10s %-10s\n"
+	format := "%+13v %+13v %+13s   %-10s %-10s\n"
 	fmt.Printf(format, "PID", "Up", "Down", "Name", "CMD")
 	for _, file := range systemServices {
 		if file.IsDir() {
