@@ -41,9 +41,9 @@ func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		Cmd: strings.Join(d.cfg.command, " "),
 	}
 	if d.process.eTime.IsZero() {
-		status.Up = fmt.Sprintf("%s", DurationRound(time.Since(d.process.sTime), time.Millisecond))
+		status.Up = fmt.Sprintf("%s", DurationRound(time.Since(d.process.sTime), time.Second))
 	} else {
-		status.Down = fmt.Sprintf("%s", DurationRound(time.Since(d.process.eTime), time.Millisecond))
+		status.Down = fmt.Sprintf("%s", DurationRound(time.Since(d.process.eTime), time.Second))
 	}
 	if err := json.NewEncoder(w).Encode(status); err != nil {
 		log.Println(err)

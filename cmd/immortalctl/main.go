@@ -3,15 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"os"
+	"os/user"
 	"path/filepath"
 
 	"github.com/immortal/immortal"
 )
 
 var version string
+
+const FORMAT = "%+7v %+13v %+13s   %-10s %-10s\n"
 
 // immortal-ctl options service
 // immortal-ctl status (print status of all services)
@@ -27,7 +28,7 @@ func main() {
 	}
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [option] [signal] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n",
+		fmt.Fprintf(os.Stderr, "usage: %s [option] [signal] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n",
 			os.Args[0],
 			"  Options:",
 			"    start     Start the service",
@@ -35,6 +36,7 @@ func main() {
 			"    restart   Restart the service",
 			"    once      Do not restart if service stops",
 			"    kill      Terminate service",
+			"    status    Print status of services",
 			"  Signals:",
 			"    a         ALRM",
 			"    c         CONT",
@@ -61,29 +63,31 @@ func main() {
 		os.Exit(0)
 	}
 
-	systemServices, err := ioutil.ReadDir(sdir)
-	if err != nil {
-		log.Fatal(err)
+	services, _ := immortal.FindServices(sdir)
+
+	if usr, err := user.Current(); err == nil {
+		if userServices, err := immortal.FindServices(
+			filepath.Join(usr.HomeDir, ".immortal"),
+		); err == nil {
+			services = append(services, userServices...)
+		}
 	}
 
-	format := "%+13v %+13v %+13s   %-10s %-10s\n"
-	fmt.Printf(format, "PID", "Up", "Down", "Name", "CMD")
-	for _, file := range systemServices {
-		if file.IsDir() {
-			socket := filepath.Join(sdir, file.Name(), "immortal.sock")
-			if _, err := os.Stat(socket); err == nil {
-				status := &immortal.Status{}
-				if err := immortal.GetJSON(socket, "/", status); err == nil {
-					if status.Down != "" {
-						fmt.Printf(format, immortal.Red(file.Name()), status.Pid, status.Up, status.Down, "--")
-					} else {
-						fmt.Printf(format, status.Pid, status.Up, status.Down, immortal.Green(fmt.Sprintf("%-10s", file.Name())), status.Cmd)
-					}
+	if len(services) > 0 {
+		fmt.Printf(FORMAT, "PID", "Up", "Down", "Name", "CMD")
+		for _, s := range services {
+			status, err := immortal.GetStatus(s[1])
+			if err != nil {
+				immortal.PurgeServices(s[1])
+			} else {
+				if status.Down != "" {
+					fmt.Printf(FORMAT, status.Pid, status.Up, status.Down, immortal.Red(fmt.Sprintf("%-10s", s[0])), status.Cmd)
 				} else {
-					// clean
-					os.RemoveAll(filepath.Join(sdir, file.Name()))
+					fmt.Printf(FORMAT, status.Pid, status.Up, status.Down, immortal.Green(fmt.Sprintf("%-10s", s[0])), status.Cmd)
 				}
 			}
 		}
+	} else {
+		println("No services found")
 	}
 }
