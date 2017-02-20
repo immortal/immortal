@@ -63,8 +63,10 @@ func main() {
 		os.Exit(0)
 	}
 
+	// get status for all services
 	services, _ := immortal.FindServices(sdir)
 
+	// get user $HOME/.immortal services
 	if usr, err := user.Current(); err == nil {
 		if userServices, err := immortal.FindServices(
 			filepath.Join(usr.HomeDir, ".immortal"),
