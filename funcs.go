@@ -1,8 +1,10 @@
 package immortal
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -46,23 +48,25 @@ func GetJSON(spath, path string, target interface{}) error {
 	return json.NewDecoder(r.Body).Decode(target)
 }
 
-// DurationRound
-// https://play.golang.org/p/QHocTHl8iR
-func DurationRound(d, r time.Duration) time.Duration {
-	if r <= 0 {
-		return d
+// TimeDiff return format days, hours, minutes, seconds
+func TimeDiff(t time.Time) string {
+	diff := time.Since(t)
+	days := diff / (24 * time.Hour)
+	hours := diff % (24 * time.Hour)
+	minutes := hours % time.Hour
+	seconds := math.Mod(minutes.Seconds(), 60)
+	var buffer bytes.Buffer
+	if days > 0 {
+		buffer.WriteString(fmt.Sprintf("%dd", days))
 	}
-	neg := d < 0
-	if neg {
-		d = -d
+	if hours/time.Hour > 0 {
+		buffer.WriteString(fmt.Sprintf("%dh", hours/time.Hour))
 	}
-	if m := d % r; m+m < r {
-		d = d - m
-	} else {
-		d = d + r - m
+	if minutes/time.Minute > 0 {
+		buffer.WriteString(fmt.Sprintf("%dm", minutes/time.Minute))
 	}
-	if neg {
-		return -d
+	if seconds > 0 {
+		buffer.WriteString(fmt.Sprintf("%.1fs", seconds))
 	}
-	return d
+	return buffer.String()
 }

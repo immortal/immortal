@@ -2,13 +2,11 @@ package immortal
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/nbari/violetear"
 )
@@ -41,9 +39,9 @@ func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		Cmd: strings.Join(d.cfg.command, " "),
 	}
 	if d.process.eTime.IsZero() {
-		status.Up = fmt.Sprintf("%s", DurationRound(time.Since(d.process.sTime), time.Second))
+		status.Up = TimeDiff(d.process.sTime)
 	} else {
-		status.Down = fmt.Sprintf("%s", DurationRound(time.Since(d.process.eTime), time.Second))
+		status.Down = TimeDiff(d.process.eTime)
 	}
 	if err := json.NewEncoder(w).Encode(status); err != nil {
 		log.Println(err)
