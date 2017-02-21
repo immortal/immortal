@@ -12,8 +12,9 @@ get:
 	${GO} get
 
 build: get
-#	${GO} get -u gopkg.in/yaml.v2;
-#	${GO} get -u github.com/nbari/violetear;
+	${GO} get -u gopkg.in/yaml.v2;
+	${GO} get -u github.com/nbari/violetear;
+	${GO} get -u github.com/immortal/scandir;
 	${GO} build -ldflags "-X main.version=${VERSION}" -o immortal cmd/immortal/main.go;
 	${GO} build -ldflags "-X main.version=${VERSION}" -o immortalctl cmd/immortalctl/main.go;
 	${GO} build -ldflags "-X main.version=${VERSION}" -o immortaldir cmd/immortaldir/main.go;
