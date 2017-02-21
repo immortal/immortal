@@ -12,7 +12,7 @@ import (
 
 var version string
 
-const FORMAT = "%+7v %+13v %+13s   %-10s %-10s\n"
+const FORMAT = "%+7v %+10v %+10s   %-10s %-10s\n"
 
 // immortal-ctl options service
 // immortal-ctl status (print status of all services)
