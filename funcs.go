@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -48,25 +47,32 @@ func GetJSON(spath, path string, target interface{}) error {
 	return json.NewDecoder(r.Body).Decode(target)
 }
 
-// TimeDiff return format days, hours, minutes, seconds
-func TimeDiff(t time.Time) string {
-	diff := time.Since(t)
-	days := diff / (24 * time.Hour)
-	hours := diff % (24 * time.Hour)
-	minutes := hours % time.Hour
-	seconds := math.Mod(minutes.Seconds(), 60)
+// AbsSince return format days, hours, minutes, seconds
+func AbsSince(t time.Time) string {
+	const (
+		Decisecond = 100 * time.Millisecond
+		Day        = 24 * time.Hour
+	)
+	ts := time.Since(t) + Decisecond/2
+	d := ts / Day
+	ts = ts % Day
+	h := ts / time.Hour
+	ts = ts % time.Hour
+	m := ts / time.Minute
+	ts = ts % time.Minute
+	s := ts / time.Second
+	ts = ts % time.Second
+	f := ts / Decisecond
 	var buffer bytes.Buffer
-	if days > 0 {
-		buffer.WriteString(fmt.Sprintf("%dd", days))
+	if d > 0 {
+		buffer.WriteString(fmt.Sprintf("%dd", d))
 	}
-	if hours/time.Hour > 0 {
-		buffer.WriteString(fmt.Sprintf("%dh", hours/time.Hour))
+	if h > 0 {
+		buffer.WriteString(fmt.Sprintf("%dh", h))
 	}
-	if minutes/time.Minute > 0 {
-		buffer.WriteString(fmt.Sprintf("%dm", minutes/time.Minute))
+	if m > 0 {
+		buffer.WriteString(fmt.Sprintf("%dm", m))
 	}
-	if seconds > 0 {
-		buffer.WriteString(fmt.Sprintf("%.1fs", seconds))
-	}
+	buffer.WriteString(fmt.Sprintf("%d.%ds", s, f))
 	return buffer.String()
 }
