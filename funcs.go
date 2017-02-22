@@ -47,7 +47,7 @@ func GetJSON(spath, path string, target interface{}) error {
 	return json.NewDecoder(r.Body).Decode(target)
 }
 
-// AbsSince return format days, hours, minutes, seconds
+// AbsSince return time since in format [days]d[hours]h[minutes]m[seconds.decisecond]s
 func AbsSince(t time.Time) string {
 	const (
 		Decisecond = 100 * time.Millisecond
