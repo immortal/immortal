@@ -6,6 +6,12 @@ import (
 	"path/filepath"
 )
 
+type ServiceStatus struct {
+	Name   string
+	Socket string
+	Status *Status
+}
+
 // GetStatus returns service status in json format
 func GetStatus(socket string) (*Status, error) {
 	status := &Status{}
@@ -16,18 +22,24 @@ func GetStatus(socket string) (*Status, error) {
 }
 
 // FindServices return [name, socket path] of service
-func FindServices(dir string) ([][]string, error) {
+func FindServices(dir string) ([]*ServiceStatus, error) {
 	sdir, err := ioutil.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	sockets := [][]string{}
+	var sockets []*ServiceStatus
 	for _, file := range sdir {
 		if file.IsDir() {
 			socket := filepath.Join(dir, file.Name(), "immortal.sock")
 			if fi, err := os.Lstat(socket); err == nil {
 				if fi.Mode()&os.ModeType == os.ModeSocket {
-					sockets = append(sockets, []string{file.Name(), socket})
+					sockets = append(sockets,
+						&ServiceStatus{
+							file.Name(),
+							socket,
+							&Status{},
+						},
+					)
 				}
 			}
 		}
