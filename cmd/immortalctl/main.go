@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sync"
 
 	"github.com/immortal/immortal"
 )
@@ -75,21 +76,29 @@ func main() {
 		}
 	}
 
+	var wg sync.WaitGroup
+
 	if len(services) > 0 {
+		wg.Add(len(services))
 		fmt.Printf(FORMAT, "PID", "Up", "Down", "Name", "CMD")
-		for _, s := range services {
-			status, err := immortal.GetStatus(s[1])
-			if err != nil {
-				immortal.PurgeServices(s[1])
-			} else {
-				if status.Down != "" {
-					fmt.Printf(FORMAT, status.Pid, status.Up, status.Down, immortal.Red(fmt.Sprintf("%-10s", s[0])), status.Cmd)
+		for _, service := range services {
+			go func(s []string) {
+				defer wg.Done()
+				status, err := immortal.GetStatus(s[1])
+				if err != nil {
+					immortal.PurgeServices(s[1])
 				} else {
-					fmt.Printf(FORMAT, status.Pid, status.Up, status.Down, immortal.Green(fmt.Sprintf("%-10s", s[0])), status.Cmd)
+					if status.Down != "" {
+						fmt.Printf(FORMAT, status.Pid, status.Up, status.Down, immortal.Red(fmt.Sprintf("%-10s", s[0])), status.Cmd)
+					} else {
+						fmt.Printf(FORMAT, status.Pid, status.Up, status.Down, immortal.Green(fmt.Sprintf("%-10s", s[0])), status.Cmd)
+					}
 				}
-			}
+			}(service)
 		}
 	} else {
 		println("No services found")
 	}
+
+	wg.Wait()
 }
