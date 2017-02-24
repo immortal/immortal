@@ -77,10 +77,11 @@ func main() {
 	}
 
 	if len(services) > 0 {
-		for _, s := range services {
+		for i, s := range services {
 			status, err := immortal.GetStatus(s.Socket)
 			if err != nil {
 				immortal.PurgeServices(s.Socket)
+				services = append(services[:i], services[i+1:]...)
 			} else {
 				s.Status = status
 				if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
