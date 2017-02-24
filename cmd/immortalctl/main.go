@@ -80,13 +80,12 @@ func main() {
 
 	if len(services) > 0 {
 		wg.Add(len(services))
-		for i, service := range services {
+		for _, service := range services {
 			go func(s *immortal.ServiceStatus) {
 				defer wg.Done()
 				status, err := immortal.GetStatus(s.Socket)
 				if err != nil {
 					immortal.PurgeServices(s.Socket)
-					services = append(services[:i], services[i+1:]...)
 				} else {
 					s.Status = status
 					if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
@@ -130,10 +129,12 @@ func main() {
 
 	fmt.Printf(format, "PID", "Up", "Down", "Name", "CMD")
 	for _, s := range services {
-		if s.Status.Down != "" {
-			fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Red(fmt.Sprintf("%-*s", pname, s.Name)), s.Status.Cmd)
-		} else {
-			fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)), s.Status.Cmd)
+		if s.Status.Pid > 0 {
+			if s.Status.Down != "" {
+				fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Red(fmt.Sprintf("%-*s", pname, s.Name)), s.Status.Cmd)
+			} else {
+				fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)), s.Status.Cmd)
+			}
 		}
 	}
 }

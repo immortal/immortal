@@ -1,7 +1,6 @@
 package immortal
 
 import (
-	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -50,7 +49,5 @@ func FindServices(dir string) ([]*ServiceStatus, error) {
 
 // PurgeServices remove unused service directory
 func PurgeServices(dir string) error {
-	fmt.Printf("dir = %+v\n", dir)
-	return nil
-	//	return os.RemoveAll(filepath.Dir(dir))
+	return os.RemoveAll(filepath.Dir(dir))
 }
