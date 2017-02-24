@@ -6,8 +6,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"sort"
-	"sync"
 
 	"github.com/immortal/immortal"
 )
@@ -20,9 +18,9 @@ const FORMAT = "%+7v %+15s %+15s   %-10s %-10s\n"
 // immortal-ctl status (print status of all services)
 func main() {
 	var (
-		v    = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
-		sdir string
-		wg   sync.WaitGroup
+		v                       = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
+		sdir                    string
+		ppid, pup, pdown, pname int
 	)
 
 	// if IMMORTAL_SDIR env is set, use it as default sdir
@@ -78,56 +76,55 @@ func main() {
 		}
 	}
 
-	var ppid, pup, pdown, pname, pcmd []int
 	if len(services) > 0 {
-		wg.Add(len(services))
-		for _, service := range services {
-			go func(s *immortal.ServiceStatus, ppid, pup, pdown, pname, pcmd []int) {
-				defer wg.Done()
-				status, err := immortal.GetStatus(s.Socket)
-				if err != nil {
-					immortal.PurgeServices(s.Socket)
-				} else {
-					s.Status = status
-					ppid = append(ppid, len(fmt.Sprintf("%d", status.Pid)))
-					pup = append(pup, len(status.Up))
-					pdown = append(pdown, len(status.Down))
-					pname = append(pname, len(s.Name))
-					pcmd = append(pcmd, len(status.Cmd))
+		for _, s := range services {
+			status, err := immortal.GetStatus(s.Socket)
+			if err != nil {
+				immortal.PurgeServices(s.Socket)
+			} else {
+				s.Status = status
+				if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
+					ppid = l
 				}
-			}(service, ppid, pup, pdown, pname, pcmd)
+				if l := len(status.Up); l > pup {
+					pup = l
+				}
+				if l := len(status.Down); l > pdown {
+					pdown = l
+				}
+				if l := len(s.Name); l > pname {
+					pname = l
+				}
+			}
 		}
 	} else {
 		println("No services found")
 		return
 	}
 
-	wg.Wait()
-
-	// for padding and prety print the status
-	sort.Ints(ppid)
-	sort.Ints(pup)
-	sort.Ints(pdown)
-	sort.Ints(pname)
-	sort.Ints(pcmd)
-
-	format := fmt.Sprintf("%%+%dv  %%+%ds  %%+%ds  %%-%ds  %%-%ds\n",
-		ppid[len(ppid)-1],
-		pup[len(pup)-1],
-		pdown[(len(pdown)+1)-1],
-		pname[len(pname)-1],
-		pcmd[len(pcmd)-1])
-
-	fmt.Printf("format = %+v\n", format)
-	fmt.Printf("ppid = %+v\n", ppid)
+	// format the output
+	if ppid < 3 {
+		ppid = 3
+	}
+	if pup == 0 {
+		pup = 4
+	}
+	if pdown == 0 {
+		pdown = 6
+	}
+	format := fmt.Sprintf("%%+%dv  %%+%ds  %%+%ds  %%-%ds  %%s\n",
+		ppid,
+		pup,
+		pdown,
+		pname,
+	)
 
 	fmt.Printf(format, "PID", "Up", "Down", "Name", "CMD")
 	for _, s := range services {
 		if s.Status.Down != "" {
-			fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Red(fmt.Sprintf("%-*s", pname[len(pname)-1], s.Name)), s.Status.Cmd)
+			fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Red(fmt.Sprintf("%-*s", pname, s.Name)), s.Status.Cmd)
 		} else {
-			fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Green(fmt.Sprintf("%-*s", pname[len(pname)-1], s.Name)), s.Status.Cmd)
+			fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)), s.Status.Cmd)
 		}
 	}
-
 }
