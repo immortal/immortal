@@ -106,13 +106,13 @@ func main() {
 	if ppid < 3 {
 		ppid = 3
 	}
-	if pup == 0 {
-		pup = 4
+	if pup < 2 {
+		pup = 2
 	}
-	if pdown == 0 {
-		pdown = 6
+	if pdown < 4 {
+		pdown = 4
 	}
-	format := fmt.Sprintf("%%+%dv  %%+%ds  %%+%ds  %%-%ds  %%s\n",
+	format := fmt.Sprintf("%%+%dv   %%+%ds   %%+%ds   %%-%ds   %%s\n",
 		ppid,
 		pup,
 		pdown,
