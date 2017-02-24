@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sync"
 
 	"github.com/immortal/immortal"
 )
@@ -21,6 +22,7 @@ func main() {
 		v                       = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
 		sdir                    string
 		ppid, pup, pdown, pname int
+		wg                      sync.WaitGroup
 	)
 
 	// if IMMORTAL_SDIR env is set, use it as default sdir
@@ -77,31 +79,37 @@ func main() {
 	}
 
 	if len(services) > 0 {
-		for i, s := range services {
-			status, err := immortal.GetStatus(s.Socket)
-			if err != nil {
-				immortal.PurgeServices(s.Socket)
-				services = append(services[:i], services[i+1:]...)
-			} else {
-				s.Status = status
-				if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
-					ppid = l
+		wg.Add(len(services))
+		for i, service := range services {
+			go func(s *immortal.ServiceStatus) {
+				defer wg.Done()
+				status, err := immortal.GetStatus(s.Socket)
+				if err != nil {
+					immortal.PurgeServices(s.Socket)
+					services = append(services[:i], services[i+1:]...)
+				} else {
+					s.Status = status
+					if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
+						ppid = l
+					}
+					if l := len(status.Up); l > pup {
+						pup = l
+					}
+					if l := len(status.Down); l > pdown {
+						pdown = l
+					}
+					if l := len(s.Name); l > pname {
+						pname = l
+					}
 				}
-				if l := len(status.Up); l > pup {
-					pup = l
-				}
-				if l := len(status.Down); l > pdown {
-					pdown = l
-				}
-				if l := len(s.Name); l > pname {
-					pname = l
-				}
-			}
+			}(service)
 		}
 	} else {
 		println("No services found")
 		return
 	}
+
+	wg.Wait()
 
 	// format the output
 	if ppid < 3 {
