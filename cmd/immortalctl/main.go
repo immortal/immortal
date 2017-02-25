@@ -13,8 +13,6 @@ import (
 
 var version string
 
-const FORMAT = "%+7v %+15s %+15s   %-10s %-10s\n"
-
 // immortal-ctl options service
 // immortal-ctl status (print status of all services)
 func main() {
