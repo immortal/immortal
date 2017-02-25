@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/immortal/immortal"
@@ -22,11 +23,25 @@ func exit1(err error) {
 // immortal-ctl status (print status of all services)
 func main() {
 	var (
-		options                 = []string{"kill", "one", "restart", "start", "status", "stop"}
+		options                 = []string{"kill", "one", "restart", "start", "status", "stop", "exit"}
 		ppid, pup, pdown, pname int
 		sdir                    string
-		v                       = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
+		serviceName             string
 		wg                      sync.WaitGroup
+		v                       = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
+		a                       = flag.Bool("a", false, "ALRM")
+		c                       = flag.Bool("c", false, "CONT")
+		h                       = flag.Bool("h", false, "HUP")
+		i                       = flag.Bool("i", false, "INT")
+		k                       = flag.Bool("k", false, "KILL")
+		in                      = flag.Bool("in", false, "TTIN")
+		ou                      = flag.Bool("ou", false, "TTOU")
+		q                       = flag.Bool("q", false, "QUIT")
+		s                       = flag.Bool("s", false, "STOP")
+		t                       = flag.Bool("t", false, "TERM")
+		usr1                    = flag.Bool("1", false, "USR1")
+		usr2                    = flag.Bool("2", false, "USR2")
+		w                       = flag.Bool("w", false, "WINCH")
 	)
 
 	// if IMMORTAL_SDIR env is set, use it as default sdir
@@ -40,32 +55,31 @@ func main() {
 	}
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [option] [signal] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n",
+		fmt.Fprintf(os.Stderr, "usage: %s [option] [-12achikinouqstvw] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s %s\n",
 			os.Args[0],
 			"  Options:",
+			"    exit      Stop service and supervisor",
 			"    kill      Terminate service",
 			"    once      Do not restart if service stops",
 			"    restart   Restart the service",
 			"    start     Start the service",
-			"    status    Print status of services",
+			"    status    Print status",
 			"    stop      Stop the service",
-			"    signals:",
-			"    a         ALRM",
-			"    c         CONT",
-			"    d         TERM",
-			"    h         HUP",
-			"    i         INT",
-			"    in        TTIN",
-			"    ou        TTOU",
-			"    s         STOP",
-			"    q         QUIT",
-			"    t         TERM",
-			"    q         QUIT",
-			"    1         USR1",
-			"    2         USR2",
-			"    w         WINCH",
-		)
-		flag.PrintDefaults()
+			"  Signals:",
+			"    -1        USR1",
+			"    -2        USR2",
+			"    -a        ALRM",
+			"    -c        CONT",
+			"    -h        HUP",
+			"    -i        INT",
+			"    -k        KILL",
+			"    -in       TTIN",
+			"    -ou       TTOU",
+			"    -q        QUIT",
+			"    -s        STOP",
+			"    -t        TERM",
+			"    -w        WINCH",
+			"  version", version)
 	}
 
 	flag.Parse()
@@ -74,6 +88,8 @@ func main() {
 		fmt.Printf("%s\n", version)
 		os.Exit(0)
 	}
+
+	println(a, c, h, i, in, ou, q, s, t, usr1, usr2, w, k)
 
 	// check options
 	exit := true
@@ -86,7 +102,7 @@ func main() {
 		}
 	}
 	if exit {
-		exit1(fmt.Errorf("Invalid option, use (\"%s -h\") for help.\n", os.Args[0]))
+		exit1(fmt.Errorf("Invalid option, use (\"%s -help\") for help.\n", os.Args[0]))
 	}
 
 	// get status for all services
@@ -101,8 +117,19 @@ func main() {
 		}
 	}
 
+	// set service name
+	if flag.NArg() > 1 {
+		serviceName = flag.Arg(1)
+	}
+
 	wg.Add(len(services))
 	for _, service := range services {
+		if serviceName != "" {
+			if !strings.HasPrefix(service.Name, serviceName) {
+				wg.Done()
+				continue
+			}
+		}
 		go func(s *immortal.ServiceStatus) {
 			defer wg.Done()
 			status, err := immortal.GetStatus(s.Socket)
