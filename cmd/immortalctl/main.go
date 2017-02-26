@@ -23,7 +23,7 @@ func exit1(err error) {
 // immortal-ctl status (print status of all services)
 func main() {
 	var (
-		options                 = []string{"kill", "one", "restart", "start", "status", "stop", "exit"}
+		options                 = []string{"kill", "once", "restart", "start", "status", "stop", "exit"}
 		ppid, pup, pdown, pname int
 		sdir                    string
 		serviceName             string
@@ -89,26 +89,33 @@ func main() {
 		os.Exit(0)
 	}
 
-	println(a, c, h, i, in, ou, q, s, t, usr1, usr2, w, k)
+	if flag.NFlag() > 1000 {
+		println(a, c, h, i, in, ou, q, s, t, usr1, usr2, w, k)
+	}
 
-	// check options
+	// check options and flags
 	exit := true
-	if flag.Arg(0) != "" {
+	if flag.NFlag() == 0 && flag.Arg(0) != "" {
 		for _, v := range options {
 			if flag.Arg(0) == v {
 				exit = false
+				if flag.NArg() == 2 {
+					serviceName = flag.Arg(1)
+				} else {
+					exit = true
+				}
 				break
 			}
 		}
+	} else if flag.NFlag() == 1 && flag.NArg() == 1 {
+		serviceName = flag.Arg(0)
+		exit = false
 	}
 	if exit {
-		exit1(fmt.Errorf("Invalid option, use (\"%s -help\") for help.\n", os.Args[0]))
+		exit1(fmt.Errorf("Invalid arguments, use (\"%s -help\") for help.\n", os.Args[0]))
 	}
 
-	// set service name
-	if flag.NArg() > 1 {
-		serviceName = flag.Arg(1)
-	}
+	fmt.Printf("serviceName = %+v\n", serviceName)
 
 	// get status for all services
 	services, _ := immortal.FindServices(sdir)
@@ -122,6 +129,7 @@ func main() {
 		}
 	}
 
+	// apply options/signals to specified services
 	wg.Add(len(services))
 	for _, service := range services {
 		if serviceName != "" {
@@ -130,27 +138,36 @@ func main() {
 				continue
 			}
 		}
-		go func(s *immortal.ServiceStatus) {
-			defer wg.Done()
-			status, err := immortal.GetStatus(s.Socket)
-			if err != nil {
-				immortal.PurgeServices(s.Socket)
-			} else {
-				s.Status = status
-				if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
-					ppid = l
+		switch flag.Arg(0) {
+		case "status":
+			go func(s *immortal.ServiceStatus) {
+				defer wg.Done()
+				status, err := immortal.GetStatus(s.Socket)
+				if err != nil {
+					immortal.PurgeServices(s.Socket)
+				} else {
+					s.Status = status
+					if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
+						ppid = l
+					}
+					if l := len(status.Up); l > pup {
+						pup = l
+					}
+					if l := len(status.Down); l > pdown {
+						pdown = l
+					}
+					if l := len(s.Name); l > pname {
+						pname = l
+					}
 				}
-				if l := len(status.Up); l > pup {
-					pup = l
-				}
-				if l := len(status.Down); l > pdown {
-					pdown = l
-				}
-				if l := len(s.Name); l > pname {
-					pname = l
-				}
-			}
-		}(service)
+			}(service)
+		case "exit":
+			fmt.Printf("flag.Arg(0) = %+v\n", flag.Arg(0))
+			wg.Done()
+		default:
+			wg.Done()
+		}
+
 	}
 	wg.Wait()
 
