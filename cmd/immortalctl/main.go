@@ -23,10 +23,12 @@ func exit1(err error) {
 // immortal-ctl status (print status of all services)
 func main() {
 	var (
+		option                  string
 		options                 = []string{"kill", "once", "restart", "start", "status", "stop", "exit"}
 		ppid, pup, pdown, pname int
 		sdir                    string
 		serviceName             string
+		signal                  string
 		wg                      sync.WaitGroup
 		v                       = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
 		a                       = flag.Bool("a", false, "ALRM")
@@ -89,8 +91,34 @@ func main() {
 		os.Exit(0)
 	}
 
-	if flag.NFlag() > 1000 {
-		println(a, c, h, i, in, ou, q, s, t, usr1, usr2, w, k)
+	// set signal
+	switch true {
+	case *a:
+		signal = "ALRM"
+	case *c:
+		signal = "CONT"
+	case *h:
+		signal = "HUP"
+	case *i:
+		signal = "INT"
+	case *k:
+		signal = "KILL"
+	case *in:
+		signal = "TTIN"
+	case *ou:
+		signal = "TTOU"
+	case *q:
+		signal = "QUIT"
+	case *s:
+		signal = "STOP"
+	case *t:
+		signal = "TERM"
+	case *w:
+		signal = "WINCH"
+	case *usr1:
+		signal = "USR1"
+	case *usr2:
+		signal = "USR2"
 	}
 
 	// check options and flags
@@ -99,9 +127,11 @@ func main() {
 		for _, v := range options {
 			if flag.Arg(0) == v {
 				exit = false
+				option = flag.Arg(0)
 				if flag.NArg() == 2 {
 					serviceName = flag.Arg(1)
-				} else {
+				}
+				if option != "status" && flag.NArg() < 2 {
 					exit = true
 				}
 				break
@@ -114,8 +144,6 @@ func main() {
 	if exit {
 		exit1(fmt.Errorf("Invalid arguments, use (\"%s -help\") for help.\n", os.Args[0]))
 	}
-
-	fmt.Printf("serviceName = %+v\n", serviceName)
 
 	// get status for all services
 	services, _ := immortal.FindServices(sdir)
@@ -138,7 +166,7 @@ func main() {
 				continue
 			}
 		}
-		switch flag.Arg(0) {
+		switch option {
 		case "status":
 			go func(s *immortal.ServiceStatus) {
 				defer wg.Done()
@@ -162,12 +190,12 @@ func main() {
 				}
 			}(service)
 		case "exit":
-			fmt.Printf("flag.Arg(0) = %+v\n", flag.Arg(0))
+			fmt.Printf("serviceName = %+v\n", serviceName)
 			wg.Done()
 		default:
+			fmt.Printf("signal = %+v\n", signal)
 			wg.Done()
 		}
-
 	}
 	wg.Wait()
 
