@@ -33,8 +33,8 @@ func main() {
 		c                       = flag.Bool("c", false, "CONT")
 		h                       = flag.Bool("h", false, "HUP")
 		i                       = flag.Bool("i", false, "INT")
-		k                       = flag.Bool("k", false, "KILL")
 		in                      = flag.Bool("in", false, "TTIN")
+		k                       = flag.Bool("k", false, "KILL")
 		ou                      = flag.Bool("ou", false, "TTOU")
 		q                       = flag.Bool("q", false, "QUIT")
 		s                       = flag.Bool("s", false, "STOP")
@@ -105,6 +105,11 @@ func main() {
 		exit1(fmt.Errorf("Invalid option, use (\"%s -help\") for help.\n", os.Args[0]))
 	}
 
+	// set service name
+	if flag.NArg() > 1 {
+		serviceName = flag.Arg(1)
+	}
+
 	// get status for all services
 	services, _ := immortal.FindServices(sdir)
 
@@ -115,11 +120,6 @@ func main() {
 		); err == nil {
 			services = append(services, userServices...)
 		}
-	}
-
-	// set service name
-	if flag.NArg() > 1 {
-		serviceName = flag.Arg(1)
 	}
 
 	wg.Add(len(services))
