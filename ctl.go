@@ -1,15 +1,17 @@
 package immortal
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 )
 
 type ServiceStatus struct {
-	Name   string
-	Socket string
-	Status *Status
+	Name           string
+	Socket         string
+	Status         *Status
+	SignalResponse *SignalResponse
 }
 
 // GetStatus returns service status in json format
@@ -19,6 +21,15 @@ func GetStatus(socket string) (*Status, error) {
 		return nil, err
 	}
 	return status, nil
+}
+
+// SendSignal send signal to process
+func SendSignal(socket, signal string) (*SignalResponse, error) {
+	res := &SignalResponse{}
+	if err := GetJSON(socket, fmt.Sprintf("/signal/%s", signal), res); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 // FindServices return [name, socket path] of service
@@ -38,6 +49,7 @@ func FindServices(dir string) ([]*ServiceStatus, error) {
 							file.Name(),
 							socket,
 							&Status{},
+							&SignalResponse{},
 						},
 					)
 				}

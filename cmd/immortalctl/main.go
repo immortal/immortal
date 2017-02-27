@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/immortal/immortal"
 )
@@ -19,31 +20,26 @@ func exit1(err error) {
 	os.Exit(1)
 }
 
-// immortal-ctl options service
-// immortal-ctl status (print status of all services)
 func main() {
 	var (
-		option                  string
-		options                 = []string{"kill", "once", "restart", "start", "status", "stop", "exit"}
-		ppid, pup, pdown, pname int
-		sdir                    string
-		serviceName             string
-		signal                  string
-		wg                      sync.WaitGroup
-		v                       = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
-		a                       = flag.Bool("a", false, "ALRM")
-		c                       = flag.Bool("c", false, "CONT")
-		h                       = flag.Bool("h", false, "HUP")
-		i                       = flag.Bool("i", false, "INT")
-		in                      = flag.Bool("in", false, "TTIN")
-		k                       = flag.Bool("k", false, "KILL")
-		ou                      = flag.Bool("ou", false, "TTOU")
-		q                       = flag.Bool("q", false, "QUIT")
-		s                       = flag.Bool("s", false, "STOP")
-		t                       = flag.Bool("t", false, "TERM")
-		usr1                    = flag.Bool("1", false, "USR1")
-		usr2                    = flag.Bool("2", false, "USR2")
-		w                       = flag.Bool("w", false, "WINCH")
+		sdir, serviceName, signal string
+		options                   = []string{"kill", "once", "restart", "start", "status", "stop", "exit"}
+		ppid, pup, pdown, pname   int
+		wg                        sync.WaitGroup
+		v                         = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
+		a                         = flag.Bool("a", false, "ALRM")
+		c                         = flag.Bool("c", false, "CONT")
+		h                         = flag.Bool("h", false, "HUP")
+		i                         = flag.Bool("i", false, "INT")
+		in                        = flag.Bool("in", false, "TTIN")
+		k                         = flag.Bool("k", false, "KILL")
+		ou                        = flag.Bool("ou", false, "TTOU")
+		q                         = flag.Bool("q", false, "QUIT")
+		s                         = flag.Bool("s", false, "STOP")
+		t                         = flag.Bool("t", false, "TERM")
+		usr1                      = flag.Bool("1", false, "USR1")
+		usr2                      = flag.Bool("2", false, "USR2")
+		w                         = flag.Bool("w", false, "WINCH")
 	)
 
 	// if IMMORTAL_SDIR env is set, use it as default sdir
@@ -127,11 +123,11 @@ func main() {
 		for _, v := range options {
 			if flag.Arg(0) == v {
 				exit = false
-				option = flag.Arg(0)
+				signal = flag.Arg(0)
 				if flag.NArg() == 2 {
 					serviceName = flag.Arg(1)
 				}
-				if option != "status" && flag.NArg() < 2 {
+				if signal != "status" && flag.NArg() < 2 {
 					exit = true
 				}
 				break
@@ -166,36 +162,39 @@ func main() {
 				continue
 			}
 		}
-		switch option {
-		case "status":
-			go func(s *immortal.ServiceStatus) {
-				defer wg.Done()
-				status, err := immortal.GetStatus(s.Socket)
-				if err != nil {
-					immortal.PurgeServices(s.Socket)
-				} else {
-					s.Status = status
-					if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
-						ppid = l
-					}
-					if l := len(status.Up); l > pup {
-						pup = l
-					}
-					if l := len(status.Down); l > pdown {
-						pdown = l
-					}
-					if l := len(s.Name); l > pname {
-						pname = l
-					}
+		//case "exit", "kill", "once", "restart", "start", "stop":
+		go func(s *immortal.ServiceStatus) {
+			defer wg.Done()
+			var (
+				err error
+				res *immortal.SignalResponse
+			)
+			if signal != "status" {
+				res, err = immortal.SendSignal(s.Socket, signal)
+				if err == nil {
+					time.Sleep(time.Millisecond)
 				}
-			}(service)
-		case "exit":
-			fmt.Printf("serviceName = %+v\n", serviceName)
-			wg.Done()
-		default:
-			fmt.Printf("signal = %+v\n", signal)
-			wg.Done()
-		}
+			}
+			status, err := immortal.GetStatus(s.Socket)
+			if err != nil {
+				immortal.PurgeServices(s.Socket)
+			} else {
+				s.Status = status
+				s.SignalResponse = res
+				if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
+					ppid = l
+				}
+				if l := len(status.Up); l > pup {
+					pup = l
+				}
+				if l := len(status.Down); l > pdown {
+					pdown = l
+				}
+				if l := len(s.Name); l > pname {
+					pname = l
+				}
+			}
+		}(service)
 	}
 	wg.Wait()
 
@@ -209,20 +208,35 @@ func main() {
 	if pdown < 4 {
 		pdown = 4
 	}
-	format := fmt.Sprintf("%%+%dv   %%+%ds   %%+%ds   %%-%ds   %%s\n",
+	format := fmt.Sprintf("%%+%dv   %%+%ds   %%+%ds   %%-%ds   %%s",
 		ppid,
 		pup,
 		pdown,
 		pname,
 	)
 
-	fmt.Printf(format, "PID", "Up", "Down", "Name", "CMD")
+	fmt.Printf(format+"\n", "PID", "Up", "Down", "Name", "CMD")
 	for _, s := range services {
 		if s.Status.Pid > 0 {
 			if s.Status.Down != "" {
-				fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Red(fmt.Sprintf("%-*s", pname, s.Name)), s.Status.Cmd)
+				fmt.Printf(format,
+					s.Status.Pid,
+					s.Status.Up,
+					s.Status.Down,
+					immortal.Red(fmt.Sprintf("%-*s", pname, s.Name)),
+					s.Status.Cmd)
 			} else {
-				fmt.Printf(format, s.Status.Pid, s.Status.Up, s.Status.Down, immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)), s.Status.Cmd)
+				fmt.Printf(format,
+					s.Status.Pid,
+					s.Status.Up,
+					s.Status.Down,
+					immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)),
+					s.Status.Cmd)
+			}
+			if s.SignalResponse != nil && s.SignalResponse.Err != "" {
+				println(immortal.Yellow(fmt.Sprintf(" - %s", s.SignalResponse.Err)))
+			} else {
+				println()
 			}
 		}
 	}
