@@ -198,19 +198,19 @@ func TestSignalsFiFo(t *testing.T) {
 		if err := GetJSON(filepath.Join(sdir, "immortal.sock"), fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
 			t.Fatal(err)
 		}
-		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
+		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "no such process"))
 		mylog.Reset()
 	}
 
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/d", res); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "no such process"))
 
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/t", res); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "no such process"))
 
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/unknown", res); err != nil {
 		t.Fatal(err)

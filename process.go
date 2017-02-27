@@ -123,7 +123,7 @@ func (p *process) Pid() int {
 
 // Signal sends a signal to the Process
 func (p *process) Signal(sig os.Signal) error {
-	return p.cmd.Process.Signal(sig)
+	return syscall.Kill(p.cmd.Process.Pid, sig.(syscall.Signal))
 }
 
 // NewProcess return process instance
