@@ -56,13 +56,17 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 	// o: Once. If the service is not running, start it. Do not restart it if it stops.
 	case "o", "once":
 		d.lockOnce = 1
+		if !d.IsRunning(d.process.Pid()) {
+			d.lock = 0
+		}
+		d.run <- struct{}{}
 
 	// ou: TTOU. Send the service a TTOU signal.
 	case "ou", "ttou", "TTOU":
 		err = d.process.Signal(syscall.SIGTTOU)
 
-	// p: Pause. Send the service a STOP signal.
-	case "p", "pause", "s", "stop", "STOP":
+	// s: stop. Send the service a STOP signal.
+	case "s", "stop", "STOP":
 		err = d.process.Signal(syscall.SIGSTOP)
 
 	// q: QUIT. Send the service a QUIT signal.
@@ -74,7 +78,7 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 		err = d.process.Signal(syscall.SIGTERM)
 
 	// u: Up. If the service is not running, start it. If the service stops, restart it.
-	case "u", "up":
+	case "u", "up", "start":
 		d.lockOnce = 0
 		if !d.IsRunning(d.process.Pid()) {
 			d.lock = 0

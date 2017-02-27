@@ -23,7 +23,7 @@ func exit1(err error) {
 func main() {
 	var (
 		sdir, serviceName, signal string
-		options                   = []string{"kill", "once", "restart", "start", "status", "stop", "exit"}
+		options                   = []string{"once", "start", "status", "stop", "exit"}
 		ppid, pup, pdown, pname   int
 		wg                        sync.WaitGroup
 		v                         = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
@@ -53,16 +53,14 @@ func main() {
 	}
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [option] [-12achikinouqstvw] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s %s\n",
+		fmt.Fprintf(os.Stderr, "usage: %s [option] [-12achikinouqstvw] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s %s\n",
 			os.Args[0],
 			"  Options:",
-			"    exit      Stop service and supervisor",
-			"    kill      Terminate service",
-			"    once      Do not restart if service stops",
-			"    restart   Restart the service",
-			"    start     Start the service",
-			"    status    Print status",
-			"    stop      Stop the service",
+			"    exit      Stop service and supervisor.",
+			"    once      If the service is not running, start it. Do not restart it if it stops.",
+			"    start     Start the service.",
+			"    status    Print status.",
+			"    stop      Stop the service.",
 			"  Signals:",
 			"    -1        USR1",
 			"    -2        USR2",
@@ -130,6 +128,10 @@ func main() {
 				if signal != "status" && flag.NArg() < 2 {
 					exit = true
 				}
+				// to avoid collision with signal STOP
+				if signal == "stop" {
+					signal = "down"
+				}
 				break
 			}
 		}
@@ -162,7 +164,6 @@ func main() {
 				continue
 			}
 		}
-		//case "exit", "kill", "once", "restart", "start", "stop":
 		go func(s *immortal.ServiceStatus) {
 			defer wg.Done()
 			var (
