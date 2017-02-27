@@ -212,11 +212,6 @@ func TestSignalsFiFo(t *testing.T) {
 	}
 	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
 
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/p", res); err != nil {
-		t.Fatal(err)
-	}
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
-
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/unknown", res); err != nil {
 		t.Fatal(err)
 	}
