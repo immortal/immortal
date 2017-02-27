@@ -58,8 +58,8 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 		d.lockOnce = 1
 		if !d.IsRunning(d.process.Pid()) {
 			d.lock = 0
+			d.run <- struct{}{}
 		}
-		d.run <- struct{}{}
 
 	// ou: TTOU. Send the service a TTOU signal.
 	case "ou", "ttou", "TTOU":
