@@ -158,7 +158,7 @@ func main() {
 	// apply options/signals to specified services
 	wg.Add(len(services))
 	for _, service := range services {
-		if serviceName != "" {
+		if serviceName != "" || serviceName != "*" {
 			if !strings.HasPrefix(service.Name, serviceName) {
 				wg.Done()
 				continue
