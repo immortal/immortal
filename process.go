@@ -14,7 +14,7 @@ import (
 type Process interface {
 	Kill() error
 	Pid() int
-	Signal(sig os.Signal) error
+	Signal(sig syscall.Signal) error
 	Start() (*process, error)
 }
 
@@ -122,8 +122,8 @@ func (p *process) Pid() int {
 }
 
 // Signal sends a signal to the Process
-func (p *process) Signal(sig os.Signal) error {
-	return syscall.Kill(p.cmd.Process.Pid, sig.(syscall.Signal))
+func (p *process) Signal(sig syscall.Signal) error {
+	return syscall.Kill(p.cmd.Process.Pid, sig)
 }
 
 // NewProcess return process instance
