@@ -74,6 +74,7 @@ func (s *ScanDir) Scaner() {
 			if refresh {
 				cmd := exec.Command("immortal", "-c", path, "-ctl", name)
 				cmd.Env = os.Environ()
+				fmt.Printf("cmd.Path = %+v\n", cmd.Path)
 				stdoutStderr, err := cmd.CombinedOutput()
 				if err != nil {
 					return err
