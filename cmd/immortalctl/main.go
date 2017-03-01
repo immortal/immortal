@@ -159,12 +159,12 @@ func main() {
 		pid, up, down, name int
 	}
 
-	queue := make(chan *Pad)
+	queue := make(chan *Pad, 1)
 
 	// apply options/signals to specified services
 	wg.Add(len(services))
 	for _, service := range services {
-		if serviceName != "" || serviceName != "*" {
+		if serviceName != "" {
 			if !strings.HasPrefix(service.Name, serviceName) {
 				wg.Done()
 				continue
