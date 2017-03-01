@@ -155,6 +155,12 @@ func main() {
 		}
 	}
 
+	type Pad struct {
+		pid, up, down, name int
+	}
+
+	queue := make(chan *Pad)
+
 	// apply options/signals to specified services
 	wg.Add(len(services))
 	for _, service := range services {
@@ -165,7 +171,6 @@ func main() {
 			}
 		}
 		go func(s *immortal.ServiceStatus) {
-			defer wg.Done()
 			var (
 				err error
 				res *immortal.SignalResponse
@@ -182,21 +187,33 @@ func main() {
 			} else {
 				s.Status = status
 				s.SignalResponse = res
-				if l := len(fmt.Sprintf("%d", status.Pid)); l > ppid {
-					ppid = l
-				}
-				if l := len(status.Up); l > pup {
-					pup = l
-				}
-				if l := len(status.Down); l > pdown {
-					pdown = l
-				}
-				if l := len(s.Name); l > pname {
-					pname = l
+				queue <- &Pad{
+					pid:  len(fmt.Sprintf("%d", status.Pid)),
+					up:   len(status.Up),
+					down: len(status.Down),
+					name: len(s.Name),
 				}
 			}
 		}(service)
 	}
+
+	go func() {
+		for q := range queue {
+			if q.pid > ppid {
+				ppid = q.pid
+			}
+			if q.up > pup {
+				pup = q.up
+			}
+			if q.down > pdown {
+				pdown = q.down
+			}
+			if q.name > pname {
+				pname = q.name
+			}
+			wg.Done()
+		}
+	}()
 	wg.Wait()
 
 	// format the output
