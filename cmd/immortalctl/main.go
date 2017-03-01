@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -159,15 +158,17 @@ func main() {
 		pid, up, down, name int
 	}
 
-	queue := make(chan *Pad, 1)
+	queue := make(chan *Pad)
 
 	// apply options/signals to specified services
 	wg.Add(len(services))
 	for _, service := range services {
 		if serviceName != "" {
-			if !strings.HasPrefix(service.Name, serviceName) {
-				wg.Done()
-				continue
+			if serviceName != "*" {
+				if service.Name != serviceName {
+					wg.Done()
+					continue
+				}
 			}
 		}
 		go func(s *immortal.ServiceStatus) {
@@ -184,6 +185,7 @@ func main() {
 			status, err := immortal.GetStatus(s.Socket)
 			if err != nil {
 				immortal.PurgeServices(s.Socket)
+				queue <- &Pad{}
 			} else {
 				s.Status = status
 				s.SignalResponse = res
