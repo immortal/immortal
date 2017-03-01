@@ -14,11 +14,6 @@ import (
 
 var version string
 
-func exit1(err error) {
-	fmt.Println(err)
-	os.Exit(1)
-}
-
 func main() {
 	var (
 		sdir, serviceName, signal string
@@ -139,7 +134,8 @@ func main() {
 		exit = false
 	}
 	if exit {
-		exit1(fmt.Errorf("Invalid arguments, use (\"%s -help\") for help.\n", os.Args[0]))
+		fmt.Printf("Invalid arguments, use (\"%s -help\") for help.\n", os.Args[0])
+		os.Exit(1)
 	}
 
 	// get status for all services
@@ -185,6 +181,7 @@ func main() {
 			status, err := immortal.GetStatus(s.Socket)
 			if err != nil {
 				immortal.PurgeServices(s.Socket)
+				// mainly for signal exit
 				queue <- &Pad{}
 			} else {
 				s.Status = status
