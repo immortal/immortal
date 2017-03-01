@@ -177,6 +177,20 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		return
 	}
 
+	// if -ctl defaults to /var/run/immortal
+	var sdir string
+	if flags.Ctl != "" {
+		if s := filepath.Clean(flags.Ctl); strings.HasPrefix(s, "/") {
+			sdir = s
+		} else {
+			sdirEnv := os.Getenv("IMMORTAL_SDIR")
+			if sdirEnv == "" {
+				sdirEnv = "/var/run/immortal"
+			}
+			sdir = filepath.Join(sdirEnv, filepath.Base(s))
+		}
+	}
+
 	// if -c
 	if flags.Configfile != "" {
 		if !p.isFile(flags.Configfile) {
@@ -202,6 +216,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 				return
 			}
 		}
+		cfg.ctl = sdir
 		return
 	}
 
@@ -215,17 +230,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	cfg = new(Config)
 	cfg.command = fs.Args()
 	cfg.Log.Size = 1
-
-	// ctl defaults to /var/run/immortal
-	cfg.ctl = flags.Ctl
-	if flags.Ctl != "" {
-		sdir := filepath.Clean(flags.Ctl)
-		if strings.HasPrefix(sdir, "/") {
-			cfg.ctl = sdir
-		} else {
-			cfg.ctl = filepath.Join("/var/run/immortal", filepath.Base(sdir))
-		}
-	}
+	cfg.ctl = sdir
 
 	// if -d
 	if flags.Wrkdir != "" {
