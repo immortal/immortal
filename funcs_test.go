@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"testing"
+	"time"
 )
 
 func TestLogo(t *testing.T) {
@@ -22,5 +23,13 @@ func TestIconErr(t *testing.T) {
 	i := Icon(" ")
 	if i != 0 {
 		t.Errorf("Expecting: 0 got: %v", i)
+	}
+}
+
+func TestAbsSince(t *testing.T) {
+	start := time.Unix(0, 0)
+	diff := AbsSince(start)
+	if len(diff) < 16 {
+		t.Errorf("Check that systems clock are in sync, diff: %s", diff)
 	}
 }
