@@ -72,6 +72,10 @@ func (s *ScanDir) Scaner() {
 			refresh := (time.Unix() - f.ModTime().Unix()) <= 5
 			log.Printf("name: %s  refresh: %v", name, refresh)
 			if refresh {
+				// chmod 3444 for example
+				if m := f.Mode(); m&os.ModeSticky != 0 {
+					println("turn off ", name)
+				}
 				cmd := exec.Command("immortal", "-c", path, "-ctl", name)
 				cmd.Env = os.Environ()
 				fmt.Printf("cmd.Path = %+v\n", cmd.Path)
