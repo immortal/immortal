@@ -19,6 +19,7 @@ build: get
 	${GO} build -ldflags "-X main.version=${VERSION}" -o immortaldir cmd/immortaldir/main.go;
 
 clean:
+	${GO} clean -i
 	@rm -rf immortal immortalctl immortaldir *.debug *.out build debian
 
 test: get
