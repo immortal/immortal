@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -62,30 +62,40 @@ func (s *ScanDir) Start() {
 
 // Scaner searchs for run.yml and based on the perms start/stops the process
 func (s *ScanDir) Scaner() {
-	time := time.Now()
 	find := func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if strings.HasSuffix(f.Name(), ".yml") {
+			ctime := f.Sys().(*syscall.Stat_t).Ctimespec
+			c := time.Unix(int64(ctime.Sec), int64(ctime.Nsec))
+			fmt.Printf("ctime = %+v\n", ctime)
+			fmt.Printf("c = %+v\n", c)
+			fmt.Printf("c = %d\n", c.Unix())
+
+			//
+			// implement ctime
+			//
+
 			name := strings.TrimSuffix(f.Name(), filepath.Ext(f.Name()))
-			refresh := (time.Unix() - f.ModTime().Unix()) <= 5
+			refresh := (time.Now().Unix() - f.ModTime().Unix()) <= 5
+			//			refresh := (time.Unix() - ctime) <= 5
 			log.Printf("name: %s  refresh: %v", name, refresh)
-			if refresh {
-				if m := f.Mode(); m&0111 != 0 {
-					println("turn on ", name)
-				} else {
-					println("turn off ", name)
-				}
-				cmd := exec.Command("immortal", "-c", path, "-ctl", name)
-				cmd.Env = os.Environ()
-				fmt.Printf("cmd.Path = %+v\n", cmd.Path)
-				stdoutStderr, err := cmd.CombinedOutput()
-				if err != nil {
-					return err
-				}
-				log.Printf("%s\n", stdoutStderr)
-			}
+			//if refresh {
+			//if m := f.Mode(); m&0111 != 0 {
+			//println("turn on ", name)
+			//} else {
+			//println("turn off ", name)
+			//}
+			//cmd := exec.Command("immortal", "-c", path, "-ctl", name)
+			//cmd.Env = os.Environ()
+			//fmt.Printf("cmd.Path = %+v\n", cmd.Path)
+			//stdoutStderr, err := cmd.CombinedOutput()
+			//if err != nil {
+			//return err
+			//}
+			//log.Printf("%s\n", stdoutStderr)
+			//}
 		}
 		return nil
 	}
