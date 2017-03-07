@@ -65,14 +65,21 @@ func (s *ScanDir) Start() {
 }
 
 // Scaner searchs for run.yml and based on the perms start/stops the process
+// if file changes it will reload(exit-start)
 func (s *ScanDir) Scaner() {
 	find := func(path string, f os.FileInfo, err error) error {
+		var (
+			hash string
+			md5  string
+			name string
+			exit bool
+		)
 		if err != nil {
 			return err
 		}
 		if strings.HasSuffix(f.Name(), ".yml") {
-			name := strings.TrimSuffix(f.Name(), filepath.Ext(f.Name()))
-			md5, err := md5sum(path)
+			name = strings.TrimSuffix(f.Name(), filepath.Ext(f.Name()))
+			md5, err = md5sum(path)
 			if err != nil {
 				return err
 			}
@@ -80,15 +87,15 @@ func (s *ScanDir) Scaner() {
 			if hash, ok := s.services[name]; !ok {
 				s.services[name] = md5
 			} else if hash != md5 {
-				println("relaod: exit and start")
+				exit = true
 			}
 			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= 5
-			log.Printf("name: %s  refresh: %v, hash: %s",
-				name,
-				refresh,
-				md5)
 			if refresh {
+				// if file is executable start
 				if m := f.Mode(); m&0111 != 0 {
+					if exit {
+						SendSignal(socket, "exit")
+					}
 					println("turn on ", name)
 					// try to start before via socket
 					cmd := exec.Command("immortal", "-c", path, "-ctl", name)
@@ -101,7 +108,7 @@ func (s *ScanDir) Scaner() {
 					log.Printf("%s\n", stdoutStderr)
 				} else {
 					// socket put down
-					println("turn off ", name)
+					SendSignal(socket, "exit")
 				}
 			}
 		}
