@@ -14,7 +14,8 @@ import (
 
 // ScanDir struct
 type ScanDir struct {
-	scandir string
+	scandir  string
+	services map[string]string
 }
 
 // NewScanDir returns ScanDir struct
@@ -45,7 +46,8 @@ func NewScanDir(path string) (*ScanDir, error) {
 	defer d.Close()
 
 	return &ScanDir{
-		scandir: dir,
+		scandir:  dir,
+		services: map[string]string{},
 	}, nil
 }
 
@@ -70,8 +72,21 @@ func (s *ScanDir) Scaner() {
 		}
 		if strings.HasSuffix(f.Name(), ".yml") {
 			name := strings.TrimSuffix(f.Name(), filepath.Ext(f.Name()))
+			md5, err := md5sum(path)
+			if err != nil {
+				return err
+			}
+			// add service and reload if any changes
+			if hash, ok := s.services[name]; !ok {
+				s.services[name] = md5
+			} else if hash != md5 {
+				println("relaod: exit and start")
+			}
 			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= 5
-			log.Printf("name: %s  refresh: %v", name, refresh)
+			log.Printf("name: %s  refresh: %v, hash: %s",
+				name,
+				refresh,
+				md5)
 			if refresh {
 				if m := f.Mode(); m&0111 != 0 {
 					println("turn on ", name)
