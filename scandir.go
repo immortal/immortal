@@ -110,7 +110,6 @@ func (s *ScanDir) Scaner() {
 						log.Printf("Starting %q\n", name)
 						cmd := exec.Command("immortal", "-c", path, "-ctl", name)
 						cmd.Env = os.Environ()
-						fmt.Printf("cmd.Path = %+v\n", cmd.Path)
 						stdoutStderr, err := cmd.CombinedOutput()
 						if err != nil {
 							return err
@@ -120,9 +119,10 @@ func (s *ScanDir) Scaner() {
 						log.Printf("%q restarted\n", name)
 					}
 				} else {
-					_, err := SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "down")
-					if err != nil {
+					if _, err := SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "down"); err != nil {
 						log.Printf("%q not running\n", name)
+					} else {
+						log.Printf("Stopping %q\n", name)
 					}
 				}
 			}
