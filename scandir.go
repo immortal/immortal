@@ -15,6 +15,7 @@ import (
 // ScanDir struct
 type ScanDir struct {
 	scandir  string
+	sdir     string
 	services map[string]string
 }
 
@@ -45,8 +46,15 @@ func NewScanDir(path string) (*ScanDir, error) {
 	}
 	defer d.Close()
 
+	// if IMMORTAL_SDIR env is set, use it as default sdir
+	sdir := os.Getenv("IMMORTAL_SDIR")
+	if sdir == "" {
+		sdir = "/var/run/immortal"
+	}
+
 	return &ScanDir{
 		scandir:  dir,
+		sdir:     sdir,
 		services: map[string]string{},
 	}, nil
 }
@@ -69,7 +77,6 @@ func (s *ScanDir) Start() {
 func (s *ScanDir) Scaner() {
 	find := func(path string, f os.FileInfo, err error) error {
 		var (
-			hash string
 			md5  string
 			name string
 			exit bool
@@ -83,32 +90,40 @@ func (s *ScanDir) Scaner() {
 			if err != nil {
 				return err
 			}
-			// add service and reload if any changes
+			// add service to services map or reload if file has been changed
 			if hash, ok := s.services[name]; !ok {
 				s.services[name] = md5
 			} else if hash != md5 {
 				exit = true
 			}
+			// check if file hasn't been changed since last tick (5 seconds)
 			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= 5
 			if refresh {
 				// if file is executable start
 				if m := f.Mode(); m&0111 != 0 {
 					if exit {
-						SendSignal(socket, "exit")
+						log.Printf("Restarting %q\n", name)
+						SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
 					}
-					println("turn on ", name)
 					// try to start before via socket
-					cmd := exec.Command("immortal", "-c", path, "-ctl", name)
-					cmd.Env = os.Environ()
-					fmt.Printf("cmd.Path = %+v\n", cmd.Path)
-					stdoutStderr, err := cmd.CombinedOutput()
-					if err != nil {
-						return err
+					if _, err := SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
+						log.Printf("Starting %q\n", name)
+						cmd := exec.Command("immortal", "-c", path, "-ctl", name)
+						cmd.Env = os.Environ()
+						fmt.Printf("cmd.Path = %+v\n", cmd.Path)
+						stdoutStderr, err := cmd.CombinedOutput()
+						if err != nil {
+							return err
+						}
+						log.Printf("%s\n", stdoutStderr)
+					} else {
+						log.Printf("%q restarted\n", name)
 					}
-					log.Printf("%s\n", stdoutStderr)
 				} else {
-					// socket put down
-					SendSignal(socket, "exit")
+					_, err := SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "down")
+					if err != nil {
+						log.Printf("%q not running\n", name)
+					}
 				}
 			}
 		}
