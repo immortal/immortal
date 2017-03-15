@@ -80,13 +80,13 @@ func (s *ScanDir) Scaner() {
 
 	find := func(path string, f os.FileInfo, err error) error {
 		var (
-			md5  string
-			name string
-			exit bool
+			exit, start bool
+			md5, name   string
 		)
 		if err != nil {
 			return err
 		}
+		// only use .yml files
 		if strings.HasSuffix(f.Name(), ".yml") {
 			name = strings.TrimSuffix(f.Name(), filepath.Ext(f.Name()))
 			md5, err = md5sum(path)
@@ -97,12 +97,13 @@ func (s *ScanDir) Scaner() {
 			services = append(services, name)
 			if hash, ok := s.services[name]; !ok {
 				s.services[name] = md5
+				start = true
 			} else if hash != md5 {
 				exit = true
 			}
 			// check if file hasn't been changed since last tick (5 seconds)
 			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= 5
-			if refresh {
+			if refresh || start {
 				if exit {
 					// restart = exit + start
 					log.Printf("Restarting: %s\n", name)
