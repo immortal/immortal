@@ -72,9 +72,12 @@ func (s *ScanDir) Start() {
 	}
 }
 
-// Scaner searchs for run.yml and based on the perms start/stops the process
-// if file changes it will reload(exit-start)
+// Scaner searchs for run.yml if file changes it will reload(exit-start)
 func (s *ScanDir) Scaner() {
+	// var services used to keep track of what services should be removed if they don't
+	// exist any more
+	var services []string
+
 	find := func(path string, f os.FileInfo, err error) error {
 		var (
 			md5  string
@@ -91,6 +94,7 @@ func (s *ScanDir) Scaner() {
 				return err
 			}
 			// add service to services map or reload if file has been changed
+			services = append(services, name)
 			if hash, ok := s.services[name]; !ok {
 				s.services[name] = md5
 			} else if hash != md5 {
@@ -99,39 +103,50 @@ func (s *ScanDir) Scaner() {
 			// check if file hasn't been changed since last tick (5 seconds)
 			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= 5
 			if refresh {
-				// if file is executable start
-				if m := f.Mode(); m&0111 != 0 {
-					if exit {
-						log.Printf("Restarting %q\n", name)
-						SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
+				if exit {
+					// restart = exit + start
+					log.Printf("Restarting: %s\n", name)
+					SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
+					time.Sleep(time.Second)
+				}
+				log.Printf("Starting: %s\n", name)
+				// try to start before via socket
+				if _, err := SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
+					cmd := exec.Command("immortal", "-c", path, "-ctl", name)
+					cmd.Env = os.Environ()
+					stdoutStderr, err := cmd.CombinedOutput()
+					if err != nil {
+						return err
 					}
-					// try to start before via socket
-					if _, err := SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
-						log.Printf("Starting %q\n", name)
-						cmd := exec.Command("immortal", "-c", path, "-ctl", name)
-						cmd.Env = os.Environ()
-						stdoutStderr, err := cmd.CombinedOutput()
-						if err != nil {
-							return err
-						}
-						log.Printf("%s\n", stdoutStderr)
-					} else {
-						log.Printf("%q restarted\n", name)
-					}
-				} else {
-					if _, err := SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "down"); err != nil {
-						log.Printf("%q not running\n", name)
-					} else {
-						log.Printf("Stopping %q\n", name)
-					}
+					log.Printf("%s\n", stdoutStderr)
 				}
 			}
 		}
 		return nil
 	}
+
+	// find for .yml files
 	err := filepath.Walk(s.scandir, find)
-	if err != nil {
+	if err != nil && !os.IsPermission(err) {
 		log.Println(err)
 	}
-	return
+
+	// contains find if an item exists on an slice
+	contains := func(s []string, item string) bool {
+		for _, i := range s {
+			if i == item {
+				return true
+			}
+		}
+		return false
+	}
+
+	// exit services that don't exist anymore
+	for service := range s.services {
+		if !contains(services, service) {
+			delete(s.services, service)
+			SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
+			log.Printf("Exiting: %s\n", service)
+		}
+	}
 }
