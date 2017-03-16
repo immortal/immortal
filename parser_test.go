@@ -458,3 +458,10 @@ user: nonexistent`)
 		t.Error("Expecting error")
 	}
 }
+
+func TestParseParseYmlioutil(t *testing.T) {
+	p := &Parse{}
+	if _, err := p.parseYml("/dev/null/non-existent"); err == nil {
+		t.Error("Expecting error")
+	}
+}
