@@ -31,7 +31,7 @@ func TestIconErr(t *testing.T) {
 func TestAbsSince(t *testing.T) {
 	start := time.Unix(0, 0)
 	diff := AbsSince(start)
-	if len(diff) < 15 {
+	if len(diff) < 12 {
 		t.Errorf("Check that systems clock are in sync, diff: %s", diff)
 	}
 }
