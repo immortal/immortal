@@ -1,7 +1,10 @@
 package immortal
 
 import (
+	"io/ioutil"
+	"os"
 	"testing"
+	"time"
 )
 
 func TestLogo(t *testing.T) {
@@ -23,4 +26,39 @@ func TestIconErr(t *testing.T) {
 	if i != 0 {
 		t.Errorf("Expecting: 0 got: %v", i)
 	}
+}
+
+func TestAbsSince(t *testing.T) {
+	start := time.Unix(0, 0)
+	diff := AbsSince(start)
+	if len(diff) < 12 {
+		t.Errorf("Check that systems clock are in sync, diff: %s", diff)
+	}
+}
+
+func TestMd5sumNonexistent(t *testing.T) {
+	_, err := md5sum("/dev/null/non-existent")
+	if err == nil {
+		t.Errorf("Expecting an error")
+	}
+}
+
+func TestMd5sum(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "md5")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	content := []byte("The quick brown fox jumps over the lazy dog")
+	if _, err := tmpfile.Write(content); err != nil {
+		t.Error(err)
+	}
+	if err := tmpfile.Close(); err != nil {
+		t.Error(err)
+	}
+	md5, err := md5sum(tmpfile.Name())
+	if err != nil {
+		t.Error(err)
+	}
+	expect(t, "9e107d9d372bb6826bd81d3542a419d6", md5)
 }

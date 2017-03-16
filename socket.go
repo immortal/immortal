@@ -2,12 +2,11 @@ package immortal
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/nbari/violetear"
 )
@@ -16,6 +15,7 @@ type Status struct {
 	Pid  int    `json:"pid"`
 	Up   string `json:"up,omitempty"`
 	Down string `json:"down,omitempty"`
+	Cmd  string `json:"cmd"`
 }
 
 // Listen creates a unix socket used for control the daemon
@@ -36,11 +36,12 @@ func (d *Daemon) Listen() error {
 func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	status := Status{
 		Pid: d.process.Pid(),
+		Cmd: strings.Join(d.cfg.command, " "),
 	}
 	if d.process.eTime.IsZero() {
-		status.Up = fmt.Sprintf("%s", time.Since(d.process.sTime))
+		status.Up = AbsSince(d.process.sTime)
 	} else {
-		status.Down = fmt.Sprintf("%s", time.Since(d.process.eTime))
+		status.Down = AbsSince(d.process.eTime)
 	}
 	if err := json.NewEncoder(w).Encode(status); err != nil {
 		log.Println(err)

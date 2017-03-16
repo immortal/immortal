@@ -32,8 +32,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 
 	// return if process is running
 	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
-		log.Println("going to die....")
-		return nil, fmt.Errorf("lock: %d lock once: %d", d.lock, d.lockOnce)
+		return nil, fmt.Errorf("Cannot start, process still running")
 	}
 
 	// increment count by 1
@@ -98,15 +97,12 @@ func (d *Daemon) ReadPidFile(pidfile string) (int, error) {
 func New(cfg *Config) (*Daemon, error) {
 	var supDir string
 
-	// create supervise directory in current directory
-	if cfg.ctl {
-		d, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-		supDir = filepath.Join(d, "supervise")
+	// create supervise directory in specified directory
+	// defaults to /var/run/immortal/<app>
+	if cfg.ctl != "" {
+		supDir = cfg.ctl
 	} else {
-		// create an .immotal dir on HOME user when calling immortal directly
+		// create an .immortal dir on $HOME user when calling immortal directly
 		// and not using immortal-dir, this helps to run immortal-ctl and
 		// check status of all daemons
 		usr, err := user.Current()
@@ -115,8 +111,7 @@ func New(cfg *Config) (*Daemon, error) {
 		}
 		supDir = filepath.Join(usr.HomeDir,
 			".immortal",
-			fmt.Sprintf("%d", os.Getpid()),
-			"supervise")
+			fmt.Sprintf("%d", os.Getpid()))
 	}
 
 	// create supervise dir

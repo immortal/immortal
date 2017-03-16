@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	ir "github.com/immortal/scandir"
+	"github.com/immortal/immortal"
 )
 
 var version string
@@ -36,7 +36,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cmd, err := ir.NewScanDir(path)
+	cmd, err := immortal.NewScanDir(path)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

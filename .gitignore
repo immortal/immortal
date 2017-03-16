@@ -1,7 +1,7 @@
-immortal-dir
-!*immortal-dir/
-immortal-ctl
-!*immortal-ctl/
+immortaldir
+!*immortaldir/
+immortalctl
+!*immortalctl/
 immortal
 !*immortal/
 coverage.*

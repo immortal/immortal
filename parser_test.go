@@ -71,7 +71,7 @@ func TestParseDefault(t *testing.T) {
 	if helpCalled {
 		t.Error("help called for regular flag")
 	}
-	expect(t, false, flags.Ctl)
+	expect(t, "", flags.Ctl)
 	expect(t, false, flags.Version)
 	expect(t, "", flags.Configfile)
 	expect(t, "", flags.Wrkdir)
@@ -93,7 +93,7 @@ func TestParseFlags(t *testing.T) {
 		expected interface{}
 	}{
 		{[]string{"cmd", "-v"}, "Version", true},
-		{[]string{"cmd", "-ctl"}, "Ctl", true},
+		{[]string{"cmd", "-ctl", "service"}, "Ctl", "service"},
 		{[]string{"cmd", "-c", "run.yml"}, "Configfile", "run.yml"},
 		{[]string{"cmd", "-d", "/arena/wrkdir"}, "Wrkdir", "/arena/wrkdir"},
 		{[]string{"cmd", "-e", "/path/to/envdir"}, "Envdir", "/path/to/envdir"},
@@ -170,6 +170,42 @@ func TestParseArgsVersion2(t *testing.T) {
 	}
 }
 
+func TestParseArgsCtl(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	var flagTest = []struct {
+		flag     []string
+		expected string
+	}{
+		{[]string{"cmd", "-ctl", "/service", "xyz"}, "/service"},
+		{[]string{"cmd", "-ctl", "service", "xyz"}, "/var/run/immortal/service"},
+		{[]string{"cmd", "-ctl", "123", "xyz"}, "/var/run/immortal/123"},
+		{[]string{"cmd", "-ctl", "123/456", "xyz"}, "/var/run/immortal/456"},
+		{[]string{"cmd", "-ctl", "123/../456", "xyz"}, "/var/run/immortal/456"},
+		{[]string{"cmd", "-ctl", "../123/../456", "xyz"}, "/var/run/immortal/456"},
+		{[]string{"cmd", "-ctl", "../foo", "xyz"}, "/var/run/immortal/foo"},
+		{[]string{"cmd", "-ctl", "", "xyz"}, ""},
+		{[]string{"cmd", "-ctl", "~/user", "xyz"}, "/var/run/immortal/user"},
+		{[]string{"cmd", "-ctl", "/tmp/test/", "xyz"}, "/tmp/test"},
+	}
+	for _, f := range flagTest {
+		os.Args = f.flag
+		parser := &Parse{}
+		var helpCalled = false
+		fs := flag.NewFlagSet("TestParseArgsCtl", flag.ContinueOnError)
+		fs.Usage = func() { helpCalled = true }
+		cfg, err := ParseArgs(parser, fs)
+		if err != nil {
+			t.Error(err)
+		}
+		if helpCalled {
+			t.Error("help called for regular flag")
+			helpCalled = false // reset for next test
+		}
+		expect(t, cfg.ctl, f.expected)
+	}
+}
+
 func TestParseArgsNoargs(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
@@ -200,8 +236,8 @@ func TestParseArgsTable(t *testing.T) {
 		expectError bool
 	}{
 		{[]string{"cmd", "-v"}, false},
-		{[]string{"cmd", "-ctl"}, true},
-		{[]string{"cmd", "-ctl", "cmd"}, false},
+		{[]string{"cmd", "-ctl", "service"}, true},
+		{[]string{"cmd", "-ctl", "service", "cmd"}, false},
 		{[]string{"cmd", "-c", "run.yml"}, true},
 		{[]string{"cmd", "-c", "run.yml", "cmd"}, true},
 		{[]string{"cmd", "-c", "example/run.yml", "cmd"}, false},
@@ -419,6 +455,13 @@ user: nonexistent`)
 		t.Error("help called for regular flag")
 	}
 	if err == nil {
+		t.Error("Expecting error")
+	}
+}
+
+func TestParseParseYmlioutil(t *testing.T) {
+	p := &Parse{}
+	if _, err := p.parseYml("/dev/null/non-existent"); err == nil {
 		t.Error("Expecting error")
 	}
 }

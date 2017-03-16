@@ -68,7 +68,11 @@ func TestHelperProcessSignalsFiFo(*testing.T) {
 }
 
 func TestSignalsFiFo(t *testing.T) {
-	os.RemoveAll("supervise")
+	sdir, err := ioutil.TempDir("", "TestSignalsFiFo")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
 	var mylog bytes.Buffer
 	log.SetOutput(&mylog)
 	log.SetFlags(0)
@@ -97,7 +101,7 @@ func TestSignalsFiFo(t *testing.T) {
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
 		},
-		ctl: true,
+		ctl: sdir,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -172,7 +176,7 @@ func TestSignalsFiFo(t *testing.T) {
 	res := &Response{}
 
 	for _, s := range testSignals {
-		if err := getJSON(fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
+		if err := GetJSON(filepath.Join(sdir, "immortal.sock"), fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
 			t.Fatal(err)
 		}
 		expect(t, "", res.Err)
@@ -180,7 +184,7 @@ func TestSignalsFiFo(t *testing.T) {
 	}
 
 	// test "d", (keep it down and don't restart)
-	if err := getJSON("/signal/d", res); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/d", res); err != nil {
 		t.Fatal(err)
 	}
 	// wait for process to finish
@@ -191,34 +195,29 @@ func TestSignalsFiFo(t *testing.T) {
 	// create error os: process already finished
 	mylog.Reset()
 	for _, s := range testSignals {
-		if err := getJSON(fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
+		if err := GetJSON(filepath.Join(sdir, "immortal.sock"), fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
 			t.Fatal(err)
 		}
-		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
+		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "no such process"))
 		mylog.Reset()
 	}
 
-	if err := getJSON("/signal/d", res); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/d", res); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "no such process"))
 
-	if err := getJSON("/signal/t", res); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/t", res); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
+	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "no such process"))
 
-	if err := getJSON("/signal/p", res); err != nil {
-		t.Fatal(err)
-	}
-	expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "os: process already finished"))
-
-	if err := getJSON("/signal/unknown", res); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/unknown", res); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, "Unknown signal: unknown", res.Err)
 
-	if err := getJSON("/signal/x", res); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/x", res); err != nil {
 		t.Fatal(err)
 	}
 }

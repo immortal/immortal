@@ -23,13 +23,13 @@ func TestDaemonNewCtl(t *testing.T) {
 	defer os.RemoveAll(dir)
 	cfg := &Config{
 		Cwd: dir,
-		ctl: true,
+		ctl: dir,
 	}
 	d, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = os.Stat("supervise/lock"); err != nil {
+	if _, err = os.Stat(filepath.Join(dir, "lock")); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, uint32(0), d.lock)
@@ -57,7 +57,7 @@ func TestDaemonNewCtlErr(t *testing.T) {
 	}
 	os.Chmod(dir, 0000)
 	cfg := &Config{
-		ctl: true,
+		ctl: dir,
 	}
 	_, err = New(cfg)
 	if err == nil {
@@ -80,13 +80,13 @@ func TestDaemonNewCtlCwd(t *testing.T) {
 		t.Error(err)
 	}
 	cfg := &Config{
-		ctl: true,
+		ctl: dir,
 	}
 	d, err := New(cfg)
 	if err != nil {
 		t.Error(err)
 	}
-	if _, err = os.Stat(filepath.Join(dir, "supervise/lock")); err != nil {
+	if _, err = os.Stat(filepath.Join(dir, "lock")); err != nil {
 		t.Fatal(err)
 	}
 	expect(t, uint32(0), d.lock)
@@ -99,11 +99,15 @@ func TestDaemonNewCtlCwd(t *testing.T) {
 }
 
 func TestBadUid(t *testing.T) {
-	os.RemoveAll("supervise")
+	dir, err := ioutil.TempDir("", "TestBadUid")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(dir)
 	cfg := &Config{
 		command: []string{"go"},
 		user:    &user.User{Uid: "uid", Gid: "0"},
-		ctl:     true,
+		ctl:     dir,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -116,11 +120,15 @@ func TestBadUid(t *testing.T) {
 }
 
 func TestBadGid(t *testing.T) {
-	os.RemoveAll("supervise")
+	dir, err := ioutil.TempDir("", "TestBadGid")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(dir)
 	cfg := &Config{
 		command: []string{"go"},
 		user:    &user.User{Uid: "0", Gid: "gid"},
-		ctl:     true,
+		ctl:     dir,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -133,11 +141,15 @@ func TestBadGid(t *testing.T) {
 }
 
 func TestUser(t *testing.T) {
-	os.RemoveAll("supervise")
+	dir, err := ioutil.TempDir("", "TestUser")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(dir)
 	cfg := &Config{
 		command: []string{"go"},
 		user:    &user.User{Uid: "0", Gid: "0"},
-		ctl:     true,
+		ctl:     dir,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -150,7 +162,11 @@ func TestUser(t *testing.T) {
 }
 
 func TestBadWritePidParent(t *testing.T) {
-	os.RemoveAll("supervise")
+	dir, err := ioutil.TempDir("", "TestBadWritePidParent")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(dir)
 	var mylog bytes.Buffer
 	log.SetOutput(&mylog)
 	log.SetFlags(0)
@@ -159,7 +175,7 @@ func TestBadWritePidParent(t *testing.T) {
 		Pid: Pid{
 			Parent: "/dev/null/parent.pid",
 		},
-		ctl: true,
+		ctl: dir,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -209,7 +225,11 @@ func TestHelperProcessSignalsUDOT(*testing.T) {
 }
 
 func TestSignalsUDOT(t *testing.T) {
-	os.RemoveAll("supervise")
+	sdir, err := ioutil.TempDir("", "TestSignalsUDOT")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
 	base := filepath.Base(os.Args[0]) // "exec.test"
 	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
 	if dir == "." {
@@ -236,7 +256,7 @@ func TestSignalsUDOT(t *testing.T) {
 		Log: Log{
 			File: tmpfile.Name(),
 		},
-		ctl: true,
+		ctl: sdir,
 	}
 	d, err := New(cfg)
 	if err != nil {
@@ -268,12 +288,12 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 
 	// check lock
-	if _, err = os.Stat("supervise/lock"); err != nil {
+	if _, err = os.Stat(filepath.Join(sdir, "immortal.sock")); err != nil {
 		t.Fatal(err)
 	}
 
 	status := &Status{}
-	if err := getJSON("", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "", status); err != nil {
 		t.Fatal(err)
 	}
 
@@ -282,7 +302,7 @@ func TestSignalsUDOT(t *testing.T) {
 	t.Log("testing k")
 	expect(t, p.Pid(), status.Pid)
 
-	if err := getJSON("/signal/k", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/k", status); err != nil {
 		t.Fatal(err)
 	}
 	// wait for process to finish
@@ -303,7 +323,7 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "d", (keep it down and don't restart)
 	t.Log("testing d")
-	if err := getJSON("/signal/d", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/d", status); err != nil {
 		t.Fatal(err)
 	}
 	// wait for process to finish
@@ -320,7 +340,7 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "u"
 	t.Log("testing up")
-	if err := getJSON("/signal/up", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/up", status); err != nil {
 		t.Fatal(err)
 	}
 	<-d.run
@@ -331,10 +351,10 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "once", process should not restart after going down
 	t.Log("testing once")
-	if err := getJSON("/signal/o", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/o", status); err != nil {
 		t.Fatal(err)
 	}
-	if err := getJSON("/signal/k", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/k", status); err != nil {
 		t.Fatal(err)
 	}
 	// wait for process to finish
@@ -351,7 +371,7 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "u"
 	t.Log("testing u")
-	if err := getJSON("/signal/u", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/u", status); err != nil {
 		t.Fatal(err)
 	}
 	<-d.run
@@ -363,7 +383,7 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "t"
 	t.Log("testing t")
-	if err := getJSON("/signal/t", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/t", status); err != nil {
 		t.Fatal(err)
 	}
 	err = <-p.errch
@@ -378,7 +398,7 @@ func TestSignalsUDOT(t *testing.T) {
 	if oldPid == p.Pid() {
 		t.Fatal("Expecting a new pid")
 	}
-	if err := getJSON("/signal/kill", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/kill", status); err != nil {
 		t.Fatal(err)
 	}
 	err = <-p.errch
@@ -395,7 +415,7 @@ func TestSignalsUDOT(t *testing.T) {
 	case err := <-p.errch:
 		expect(t, "signal: killed", err.Error())
 	case <-time.After(1 * time.Second):
-		if err := getJSON("/signal/kill", status); err != nil {
+		if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/kill", status); err != nil {
 			t.Fatal(err)
 		}
 	}

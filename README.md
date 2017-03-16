@@ -12,43 +12,63 @@ https://immortal.run/
 
 # Paths
 
-When using immortal-dir:
+When using immortaldir:
 
     /usr/local/etc/immortal
-    |--api1.example.com
-    |  |--env
-    |  |--run.yml
-    |  `--supervice
-    |     |--lock
-    |     `--immortal.sock
-    |--api2.example.com
-    |  |--env
-    |  |--run.yml
-    |  `--supervice
-    |     |--lock
-    |     `--immortal.sock
-    `--api3.example.com
-       |--env
-       |--run.yml
-       `--supervice
-          |--lock
-           `--immortal.sock
+    |--api1.yml
+    |--api2.yml
+    `--api3.yml
 
-When running like non-root user or not by ``immortal-dir`` there will be no lock
-so command can be run multiple times:
+The name of the `file.yml` will be used to reference the service to be daemonized.
+
+## /var/run/immortal/<name>
+
+    /var/run/immortal
+    |--api1
+    |  |-lock
+    |  `-immortal.sock
+    |--api2
+    |  |-lock
+    |  `-immortal.sock
+    `--api3
+       |-lock
+       `-immortal.sock
+
+
+## immortal like non-root user
+
+Any service launched like not using using ``immortaldir`` will follow this
+structure:
 
     ~/.immortal
-    |--(hash)
+    |--(pid)
     |  `--supervise
     |     `--immortal.sock
-    |--(hash)
+    |--(pid)
     |  `--supervise
     |     `--immortal.sock
-    `--(hash)
+    `--(pid)
        `--supervise
           `--immortal.sock
 
+# immortalctl
+
+Will print current status and allow to manage the services
 
 # debug
 
     pgrep -fl "immortal -ctl"  | awk '{print $1}' | xargs watch -n .1 pstree -p
+
+# Test status using curl
+
+status:
+
+    curl --unix-socket immortal.sock http:/status -s | jq
+
+down:
+
+    curl --unix-socket immortal.sock http://im/signal/d -s | jq
+
+up:
+
+    curl --unix-socket immortal.sock http://im/signal/u -s | jq

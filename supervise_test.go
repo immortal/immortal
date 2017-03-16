@@ -36,7 +36,11 @@ func TestHelperProcessSupervise2(*testing.T) {
 }
 
 func TestSupervise(t *testing.T) {
-	os.RemoveAll("supervise")
+	sdir, err := ioutil.TempDir("", "TestDaemonNewCtlErr")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
 	log.SetOutput(ioutil.Discard)
 	log.SetFlags(0)
 	base := filepath.Base(os.Args[0]) // "exec.test"
@@ -58,7 +62,7 @@ func TestSupervise(t *testing.T) {
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSupervise", "--"},
 		Cwd:     parentDir,
-		ctl:     true,
+		ctl:     sdir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
@@ -79,7 +83,7 @@ func TestSupervise(t *testing.T) {
 	go Supervise(d)
 	defer func() {
 		status := &Status{}
-		getJSON("/signal/exit", status)
+		GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/exit", status)
 	}()
 
 	time.Sleep(time.Second)
@@ -89,8 +93,7 @@ func TestSupervise(t *testing.T) {
 	}
 
 	status := &Status{}
-	t.Log("testing t")
-	if err := getJSON("/signal/t", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/t", status); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)
@@ -119,8 +122,7 @@ func TestSupervise(t *testing.T) {
 	}
 
 	// reset
-	t.Log("testing t")
-	if err := getJSON("/signal/t", status); err != nil {
+	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/t", status); err != nil {
 		t.Fatal(err)
 	}
 	for d.IsRunning(watchPid) {
@@ -138,7 +140,11 @@ func TestSupervise(t *testing.T) {
 }
 
 func TestSuperviseWait(t *testing.T) {
-	os.RemoveAll("supervise")
+	sdir, err := ioutil.TempDir("", "TestDaemonNewCtlErr")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
 	log.SetOutput(ioutil.Discard)
 	log.SetFlags(0)
 	base := filepath.Base(os.Args[0]) // "exec.test"
@@ -155,7 +161,7 @@ func TestSuperviseWait(t *testing.T) {
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
 		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSupervise2", "--"},
 		Cwd:     parentDir,
-		ctl:     true,
+		ctl:     sdir,
 		Pid: Pid{
 			Parent: filepath.Join(parentDir, "parent.pid"),
 			Child:  filepath.Join(parentDir, "child.pid"),
@@ -178,7 +184,7 @@ func TestSuperviseWait(t *testing.T) {
 	}()
 	time.Sleep(2 * time.Second)
 	status := &Status{}
-	getJSON("/signal/exit", status)
+	GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/exit", status)
 	wg.Wait()
 	expect(t, true, d.count >= 2)
 }
