@@ -72,7 +72,7 @@ func (s *ScanDir) Start() {
 	}
 }
 
-// Scaner searchs for run.yml if file changes it will reload(exit-start)
+// Scaner searches for run.yml if file changes it will reload(exit-start)
 func (s *ScanDir) Scaner() {
 	// var services used to keep track of what services should be removed if they don't
 	// exist any more

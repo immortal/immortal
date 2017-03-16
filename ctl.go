@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 )
 
+// ServiceStatus struct
 type ServiceStatus struct {
 	Name           string
 	Socket         string

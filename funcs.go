@@ -31,7 +31,7 @@ func Icon(h string) rune {
 	return rune(i)
 }
 
-// getJSON unix socket web client
+// GetJSON unix socket web client
 func GetJSON(spath, path string, target interface{}) error {
 	// http socket client
 	tr := &http.Transport{

@@ -10,12 +10,12 @@ import (
 	"github.com/nbari/violetear"
 )
 
-// Response struct to return the error in json format
+// SignalResponse struct to return the error in json format
 type SignalResponse struct {
 	Err string
 }
 
-// HandleSignals send signals to the current process
+// HandleSignal send signals to the current process
 func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 	var err error
 

@@ -200,7 +200,6 @@ func TestParseArgsCtl(t *testing.T) {
 		}
 		if helpCalled {
 			t.Error("help called for regular flag")
-			helpCalled = false // reset for next test
 		}
 		expect(t, cfg.ctl, f.expected)
 	}

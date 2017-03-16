@@ -11,6 +11,7 @@ import (
 	"github.com/nbari/violetear"
 )
 
+// Status struct
 type Status struct {
 	Pid  int    `json:"pid"`
 	Up   string `json:"up,omitempty"`
@@ -32,7 +33,7 @@ func (d *Daemon) Listen() error {
 	return nil
 }
 
-// Status return process status
+// HandleStatus return process status
 func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	status := Status{
 		Pid: d.process.Pid(),
