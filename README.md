@@ -12,20 +12,14 @@ https://immortal.run/
 
 # Paths
 
-When using immortal-dir:
+When using immortaldir:
 
     /usr/local/etc/immortal
-    |--api1
-    |  |--env
-    |  `--run.yml
-    |--api2
-    |  |--env
-    |  `--run.yml
+    |--api1.yml
+    |--api2.yml
     `--api3.yml
 
-If using a directory the name of the directory will be used to reference the
-service to be daemonized only if within the directory exists a proper
-`run.yml` file.
+The name of the `file.yml` will be used to reference the service to be daemonized.
 
 ## /var/run/immortal/<name>
 
@@ -40,12 +34,11 @@ service to be daemonized only if within the directory exists a proper
        |-lock
        `-immortal.sock
 
-Considering the use of dir `/var/run/immortal/<service>/` when using `immortal-dir`
 
 ## immortal like non-root user
 
-When running like non-root user or not by ``immortal-dir`` there will be no lock
-so command can be run multiple times:
+Any service launched like not using using ``immortaldir`` will follow this
+structure:
 
     ~/.immortal
     |--(pid)
@@ -58,6 +51,9 @@ so command can be run multiple times:
        `--supervise
           `--immortal.sock
 
+# immortalctl
+
+Will print current status and allow to manage the services
 
 # debug
 
