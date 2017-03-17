@@ -16,14 +16,13 @@ import (
 
 // Daemon struct
 type Daemon struct {
-	cfg            *Config
-	count          uint32
-	lock, lockOnce uint32
-	process        *process
-	quit           chan struct{}
-	run            chan struct{}
-	sTime          time.Time
-	supDir         string
+	cfg                   *Config
+	count, lock, lockOnce uint32
+	fpid                  bool
+	process               *process
+	quit, run             chan struct{}
+	sTime                 time.Time
+	supDir                string
 }
 
 // Run returns a process instance
@@ -58,6 +57,9 @@ func (d *Daemon) Run(p Process) (*process, error) {
 			log.Println(err)
 		}
 	}
+
+	// not following a pid
+	d.fpid = false
 
 	return d.process, nil
 }

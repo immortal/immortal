@@ -2,7 +2,6 @@ package immortal
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -21,11 +20,10 @@ type Process interface {
 type process struct {
 	*Config
 	Logger
-	cmd   *exec.Cmd
-	eTime time.Time
-	errch chan error
-	quit  chan struct{}
-	sTime time.Time
+	cmd          *exec.Cmd
+	errch        chan error
+	quit         chan struct{}
+	sTime, eTime time.Time
 }
 
 // Start runs the command
@@ -74,36 +72,40 @@ func (p *process) Start() (*process, error) {
 
 	// log only if are available loggers
 	var (
-		r *io.PipeReader
-		w *io.PipeWriter
+		pr, pw *os.File
+		e      error
 	)
 	if p.Logger.IsLogging() {
-		r, w = io.Pipe()
-		p.cmd.Stdout = w
-		p.cmd.Stderr = w
-		go p.Logger.Log(r)
-	} else {
-		p.cmd.Stdin = nil
-		p.cmd.Stdout = nil
-		p.cmd.Stderr = nil
+		// create the pipes
+		pr, pw, e = os.Pipe()
+		if e == nil {
+			p.cmd.Stdout = pw
+			p.cmd.Stderr = pw
+			go p.Logger.Log(pr)
+		}
 	}
 
 	// Start the process
 	if err := p.cmd.Start(); err != nil {
 		return nil, err
 	}
+
+	// set start time
 	p.sTime = time.Now()
 
+	// create error channel
 	p.errch = make(chan error, 1)
-	go func(w *io.PipeWriter) {
+
+	// wait process to finish
+	go func(w *os.File) {
 		err := p.cmd.Wait()
-		p.eTime = time.Now()
 		if w != nil {
 			w.Close()
 			close(p.quit)
 		}
 		p.errch <- err
-	}(w)
+	}(pw)
+
 	return p, nil
 }
 
