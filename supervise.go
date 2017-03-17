@@ -47,6 +47,8 @@ func Supervise(d *Daemon) {
 				}
 			}
 		case err := <-p.errch:
+			// set end time
+			p.eTime = time.Now()
 			// unlock, or lock once
 			atomic.StoreUint32(&d.lock, d.lockOnce)
 			if err != nil && err.Error() == "EXIT" {
@@ -78,6 +80,8 @@ func Supervise(d *Daemon) {
 					if pid > 1 && pid != p.Pid() && d.IsRunning(pid) {
 						log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
 						d.fpid = true
+						// overwrite original (defunct) pid with the fpid in order to be available to send signals
+						p.cmd.Process.Pid = pid
 						d.WatchPid(pid, p.errch)
 					} else {
 						// if cmd exits or process is kill

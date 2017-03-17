@@ -37,8 +37,9 @@ func (d *Daemon) Listen() error {
 // HandleStatus return process status
 func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	status := Status{
-		Pid: d.process.Pid(),
-		Cmd: strings.Join(d.cfg.command, " "),
+		Cmd:  strings.Join(d.cfg.command, " "),
+		Fpid: d.fpid,
+		Pid:  d.process.Pid(),
 	}
 	if d.process.eTime.IsZero() {
 		status.Up = AbsSince(d.process.sTime)
