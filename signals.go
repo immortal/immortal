@@ -51,7 +51,11 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 
 		// k: Kill. Send the service a KILL signal.
 	case "k", "kill", "KILL":
-		err = d.process.Kill()
+		if d.fpid {
+			err = d.process.Signal(syscall.SIGKILL)
+		} else {
+			err = d.process.Kill()
+		}
 
 	// o: Once. If the service is not running, start it. Do not restart it if it stops.
 	case "o", "once":

@@ -235,20 +235,29 @@ func main() {
 	fmt.Printf(format+"\n", "PID", "Up", "Down", "Name", "CMD")
 	for _, s := range services {
 		if s.Status.Pid > 0 {
-			if s.Status.Down != "" {
+			if s.Status.Fpid {
 				fmt.Printf(format,
 					s.Status.Pid,
 					s.Status.Up,
 					s.Status.Down,
-					immortal.Red(fmt.Sprintf("%-*s", pname, s.Name)),
+					immortal.Yellow(fmt.Sprintf("%-*s", pname, s.Name)),
 					s.Status.Cmd)
 			} else {
-				fmt.Printf(format,
-					s.Status.Pid,
-					s.Status.Up,
-					s.Status.Down,
-					immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)),
-					s.Status.Cmd)
+				if s.Status.Down != "" {
+					fmt.Printf(format,
+						s.Status.Pid,
+						s.Status.Up,
+						s.Status.Down,
+						immortal.Red(fmt.Sprintf("%-*s", pname, s.Name)),
+						s.Status.Cmd)
+				} else {
+					fmt.Printf(format,
+						s.Status.Pid,
+						s.Status.Up,
+						s.Status.Down,
+						immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)),
+						s.Status.Cmd)
+				}
 			}
 			if s.SignalResponse != nil && s.SignalResponse.Err != "" {
 				println(immortal.Yellow(fmt.Sprintf(" - %s", s.SignalResponse.Err)))
