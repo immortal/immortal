@@ -3,6 +3,7 @@ package immortal
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"strconv"
@@ -21,11 +22,10 @@ type Process interface {
 type process struct {
 	*Config
 	Logger
-	cmd   *exec.Cmd
-	eTime time.Time
-	errch chan error
-	quit  chan struct{}
-	sTime time.Time
+	cmd          *exec.Cmd
+	errch        chan error
+	quit         chan struct{}
+	sTime, eTime time.Time
 }
 
 // Start runs the command
@@ -92,11 +92,17 @@ func (p *process) Start() (*process, error) {
 	if err := p.cmd.Start(); err != nil {
 		return nil, err
 	}
+
+	// set start time
 	p.sTime = time.Now()
 
 	p.errch = make(chan error, 1)
 	go func(w *io.PipeWriter) {
+		ioutil.WriteFile("/tmp/i.log", []byte("waiting for process to finish..."), 0644)
 		err := p.cmd.Wait()
+		// set end time
+		x := fmt.Sprintf("error: %v\n", err)
+		ioutil.WriteFile("/tmp/i.log", []byte(x), 0644)
 		p.eTime = time.Now()
 		if w != nil {
 			w.Close()

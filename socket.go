@@ -17,6 +17,7 @@ type Status struct {
 	Up   string `json:"up,omitempty"`
 	Down string `json:"down,omitempty"`
 	Cmd  string `json:"cmd"`
+	Fpid bool   `json:"fpid"`
 }
 
 // Listen creates a unix socket used for control the daemon
