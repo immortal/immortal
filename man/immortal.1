@@ -1,0 +1,95 @@
+\" Manpage for immortal.
+.\" Contact nbari@tequila.io to correct errors or typos.
+.TH man 8 "18 Mar 2017" "1.0" "immortal man page"
+.SH NAME
+immortal \- starts and monitor a service
+.SH SYNOPSIS
+immortal [options] command arguments ...
+.SH DESCRIPTION
+immortal runs a command or script detached from the controlling terminal as a Unix daemon, it will supervise and restart the service if it has been terminated.
+.br
+The service can be controled by querying a Unix socket "immortal.sock" or by using immortalctl(8).
+.SH OPTIONS
+Options start with one dash. Many of the options require an additional value next to them.
+
+
+-d <dir>
+        Change to directory <dir> before starting the command.
+
+-e <dir>
+        Set environment variables specified by files within the <dir>.
+
+-f <pidfile>
+        Follow PID in <pidfile>
+
+-l <logfile>
+        Write stdout/stderr to <logfile>
+
+-logger <command>
+        A command <command> to pipe stdout/stderr from stdin
+
+-P <pidfile>
+        Path to write the supervisor pidfile
+
+-p <pidfile>
+        Path to write the child pidfile
+
+-s <seconds>
+        Seconds (int) <secods> to wait before starting
+
+-u <user>
+        Execute the command on behalf <user>
+
+-v
+        Print version
+
+-c <service name>.yml
+        A configuration file with valid YAML syntax, when using this option, it will overwrite other options, configuration format:
+
+        cmd: <command to execute>
+        cwd: <change workding directory> # option -d
+        env:                             # option -e
+            <key>: <value>
+        pid:
+            follow: <pidfile>            # option -f
+            parent: <pidfile>            # option -P
+            child: <pidfile>             # option -p
+        log:
+            file: <path>                 # option -l
+            age: <int>   # seconds
+            num: <int>   # int
+            size: <int>  # MegaBytes
+        logger: <command>                # option -logger
+        user: <user>                     # option -u
+        wait: <int>                      # option -s
+
+
+-ctl /var/run/immortal/<service>
+        Path where the supervise directory will be created. This directory is unique per service and is used to manage the service via a Unix socket besides preventing running multiple times the same service by using a lock.
+
+        A supervise directory containing two files:
+           lock
+           immortal.sock
+
+        When calling immortal from the command line, not by using immortaldir(8) as root, the supervise directory, will be created on a hidden directory named ".immortal" within the $HOME of the user:
+
+        ~/.immortal/<PID>
+
+        This helps to run and supervise the same command multiple times without colliding, useful for testing or for temporary services that will exit when server reboots.
+
+        To keep services up and running on boot time, is better to create a configuration file "run.yml" and use immortaldir(8).
+
+
+.SH EXAMPLES
+dd
+.SH SEE ALSO
+immortalctl(8), immortaldir(8)
+.SH BUGS
+https://github.com/immortal/immortal/issues
+.SH AUTHOR
+.PP
+Nicolas Embriz <nbari@tequila.io>
+.br
+For more information, see the immortal homepage at
+.br
+https://immortal.run
