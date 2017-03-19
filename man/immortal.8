@@ -7,10 +7,9 @@ immortal \- starts and monitor a service
 immortal [options] command arguments ...
 .SH DESCRIPTION
 immortal runs a command or script detached from the controlling terminal as a Unix daemon, it will supervise and restart the service if it has been terminated.
-The service can be controlled by querying a Unix socket "immortal.sock", this allows to remotely have full control over the service if required by exposing the socket using a web server like Nginx. see examples below, also immortalctl(8)
+The service can be controlled by querying a Unix socket "immortal.sock", this allows to remotely have full control over the service if required by exposing the socket using a web server like Nginx. see examples section, also immortalctl(8).
 .SH OPTIONS
 Options start with one dash. Many of the options require an additional value next to them.
-
 
 -d <dir>
         Change to directory <dir> before starting the command.
@@ -160,6 +159,18 @@ Configuration example:
 Nginx example to manage remotely the service:
 
     immortal -l /tmp/sleep.log -ctl /tmp/immortal/sleep /bin/sh -c "sleep 5 && date"
+
+    Based on your shell set IMMORTAL_SDIR
+
+        setenv IMMORTAL_SDIR /tmp/immortal
+
+    or
+
+        export IMMORTAL_SDIR=/tmp/immortal
+
+    * This is only required for making immortalctl(8) to work, you can query directly the socket using curl, for example:
+
+        curl --unix-socket immortal.sock http:/status -s
 
 Nginx configuration:
 
