@@ -7,7 +7,6 @@ immortal \- starts and monitor a service
 immortal [options] command arguments ...
 .SH DESCRIPTION
 immortal runs a command or script detached from the controlling terminal as a Unix daemon, it will supervise and restart the service if it has been terminated.
-.br
 The service can be controled by querying a Unix socket "immortal.sock" or by using immortalctl(8).
 .SH OPTIONS
 Options start with one dash. Many of the options require an additional value next to them.
@@ -18,30 +17,57 @@ Options start with one dash. Many of the options require an additional value nex
 
 -e <dir>
         Set environment variables specified by files within the <dir>.
+        For example, if <dir> is /tmp/env and contains 3 files:
+
+        /tmp/env
+            |--DEBUG  (contains true)
+            |--DBHOST (contains 10.0.0.1)
+            `--DBPASS (contains secret)
+
+        An environment var is going to be created for each file, in this case:
+            DEBUG=true
+            DBHOST=10.0.0.1
+            DBPASS=secret
+
 
 -f <pidfile>
-        Follow PID in <pidfile>
+        Follow PID in <pidfile>.
+        In some cases it is required to supervise applications that daemonize by default. Normally this kind of applications create a pidfile every time they fork, the one can be used to follow subsequent forks and avoid creating a race condition between the supervisor trying to start again the process and the forks created by the application.
+
+        If using immortalctl(8) the color yellow on the Down column, helps to identify does process that have been forked and that currently are been supervised by the PID on the <pidfile>.
+        When the supervised application forks and creates a <pidfile> a log entry (level DAEMON) will be created:
+
+            Watching pid <int> on file <pidfile>
+
+        The follow pid option has better performance on Unix/BSD due the kernel event notification mechanism kqueue(2).
 
 -l <logfile>
-        Write stdout/stderr to <logfile>
+        Write stdout/stderr to <logfile>.
 
 -logger <command>
-        A command <command> to pipe stdout/stderr from stdin
+        A command <command> to pipe stdout/stderr from stdin.
+        Besides writing logs locally by using the option -l, they can be sent to a remote host or by processed by another tool, for example to write logs locally and send logs remotely using logger this could be used:
+
+            -l /var/log/app.log --logger "logger -h 10.0.0.1 -t app"
+
+        To only send log remotely using filebeat:
+
+            --logger "filebeat -c filebeat.yml -v -once"
 
 -P <pidfile>
-        Path to write the supervisor pidfile
+        Path to write the supervisor pidfile.
 
 -p <pidfile>
-        Path to write the child pidfile
+        Path to write the child pidfile.
 
 -s <seconds>
-        Seconds (int) <secods> to wait before starting
+        Seconds (int) <secods> to wait before starting.
 
 -u <user>
-        Execute the command on behalf <user>
+        Execute the command on behalf <user>.
 
 -v
-        Print version
+        Print version.
 
 -c <service name>.yml
         A configuration file with valid YAML syntax, when using this option, it will overwrite other options, configuration format:
