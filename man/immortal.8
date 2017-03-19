@@ -128,6 +128,12 @@ Run a command, restart it when finishes, log output to file, and follow pid if i
 
     immortal -l /tmp/x.log -logger "tee /tmp/y.log" -f ./unicorn.pid  bundle exec unicorn -c unicorn.rb
 
+Run a command, restart it when finishes, log output to file and create supervice dir in /tmp/immortal/sleep
+
+    immortal -l /tmp/sleep.log -ctl /tmp/immortal/sleep /bin/sh -c "sleep 5 && date"
+
+    For making immortalctl(8) work using the -ctl <dir> the IMMORTAL_SDIR environment var should be set to /tmp/immortal
+
 Configuration example:
 
     cmd: bundle exec unicorn -c unicorn.rb
