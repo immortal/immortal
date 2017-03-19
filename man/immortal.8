@@ -7,7 +7,7 @@ immortal \- starts and monitor a service
 immortal [options] command arguments ...
 .SH DESCRIPTION
 immortal runs a command or script detached from the controlling terminal as a Unix daemon, it will supervise and restart the service if it has been terminated.
-The service can be controled by querying a Unix socket "immortal.sock" or by using immortalctl(8).
+The service can be controlled by querying a Unix socket "immortal.sock", this allows to remotely have full control over the service if required by exposing the socket using a web server like Nginx. see examples below, also immortalctl(8)
 .SH OPTIONS
 Options start with one dash. Many of the options require an additional value next to them.
 
@@ -154,7 +154,58 @@ Configuration example:
     user: www
     wait: 1
 
-Notice that when using the option -u/user, superuser privileges will be required
+    * Notice that when using the option -u/user, superuser privileges will be required
+
+
+Nginx example to manage remotely the service:
+
+    immortal -l /tmp/sleep.log -ctl /tmp/immortal/sleep /bin/sh -c "sleep 5 && date"
+
+Nginx configuration:
+
+    upstream immortal {
+        server unix:/tmp/immortal/sleep/immortal.sock;
+    }
+
+    server {
+    listen 80 default_server;
+    server_name _;
+    location / {
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-NginX-Proxy true;
+        proxy_http_version 1.1; # for keep-alive
+        proxy_pass http://immortal/;
+        proxy_redirect off;
+        }
+    }
+
+    * In some cases you may have to change permissions of the socket:
+
+        chmod 766 /tmp/immortal/sleep/immortal.sock
+
+To check the status:
+
+    http://<domain>/
+
+To send signals:
+
+    http://<domain>/signal/<signal>
+
+For example to stop the service:
+
+    http://<domain>/signal/stop
+
+To start the service:
+
+    http://<domain>/signal/start
+
+To stop the supervisor:
+
+    http://<domain>/signal/exit
+
+Output is in JSON format.
 .SH SEE ALSO
 immortalctl(8), immortaldir(8)
 .SH BUGS
