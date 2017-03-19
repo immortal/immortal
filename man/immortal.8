@@ -50,10 +50,6 @@ Options start with one dash. Many of the options require an additional value nex
 
             -l /var/log/app.log --logger "logger -h 10.0.0.1 -t app"
 
-        To only send log remotely using filebeat:
-
-            --logger "filebeat -c filebeat.yml -v -once"
-
 -P <pidfile>
         Path to write the supervisor pidfile.
 
@@ -106,8 +102,53 @@ Options start with one dash. Many of the options require an additional value nex
         To keep services up and running on boot time, is better to create a configuration file "run.yml" and use immortaldir(8).
 
 
+.SH ENVIRONMENT
+.TP
+.B IMMORTAL_SDIR
+This environment variable allows to override the default supervise directory /var/run/immortal, used also by immortalctl(8) and immortaldir(8)
+
 .SH EXAMPLES
-dd
+Run command and restart it when finishes:
+
+    immortal /bin/sh -c "date && sleep 5 > /tmp/sleep.log"
+
+Run command, restart it when finishes and log output to file:
+
+    immortal -l /tmp/sleep.log /bin/sh -c "date && sleep 5"
+
+Run command, restart it when finishes, log output to file and to external logger:
+
+    immortal -l /tmp/sleep.log -logger "tee /tmp/sleep2.log" /bin/sh -c "date && sleep 5"
+
+Run command, restart it when finishes, log output to file, wait 2 seconds before start:
+
+    immortal -s 2 -l /tmp/sleep.log /bin/sh -c "date && sleep 5"
+
+Run a command, restart it when finishes, log output to file, and follow pid if it forks:
+
+    immortal -l /tmp/x.log -logger "tee /tmp/y.log" -f ./unicorn.pid  bundle exec unicorn -c unicorn.rb
+
+Configuration example:
+
+    cmd: bundle exec unicorn -c unicorn.rb
+    cwd: /test/unicorn
+    env:
+        DEBUG: 1
+        ENVIROMENT: production
+    pid:
+        follow: /test/unicorn/unicorn.pid
+        parent: /tmp/parent.pid
+        child: /tmp/child.pid
+    log:
+        file: /tmp/app.log
+        age: 86400 # seconds
+        num: 7     # int
+        size: 1    # MegaBytes
+    logger: filebeat -c filebeat.yml -v -once
+    user: www
+    wait: 1
+
+Notice that when using the option -u/user, superuser privileges will be required
 .SH SEE ALSO
 immortalctl(8), immortaldir(8)
 .SH BUGS
