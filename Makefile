@@ -1,4 +1,4 @@
-.PHONY: all get test clean build cover compile goxc bintray install
+.PHONY: all get test clean build cover compile goxc bintray install uninstall
 
 GO ?= go
 GO_XC = ${GOPATH}/bin/goxc -os="freebsd netbsd openbsd darwin linux"
@@ -68,3 +68,9 @@ install: all
 	install immortalctl ${DESTDIR}/bin
 	install immortaldir ${DESTDIR}/bin
 	cp -R man/*.8 ${DESTDIR}/share/man/man8
+
+uninstall: clean
+	@rm -f ${DESTDIR}/bin/immortal
+	@rm -f ${DESTDIR}/bin/immortalctl
+	@rm -f ${DESTDIR}/bin/immortaldir
+	@rm -f ${DESTDIR}/share/man/man8/immortal*

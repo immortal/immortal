@@ -99,13 +99,10 @@ Options start with one dash. Many of the options require an additional value nex
         This helps to run and supervise the same command multiple times without colliding, useful for testing or for temporary services that will exit when server reboots.
 
         To keep services up and running on boot time, is better to create a configuration file "run.yml" and use immortaldir(8).
-
-
 .SH ENVIRONMENT
 .TP
 .B IMMORTAL_SDIR
 This environment variable allows to override the default supervise directory /var/run/immortal, used also by immortalctl(8) and immortaldir(8)
-
 .SH EXAMPLES
 Run command and restart it when finishes:
 
