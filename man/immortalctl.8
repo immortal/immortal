@@ -1,0 +1,82 @@
+\" Manpage for immortal.
+.\" To correct errors or typos please use https://github.com/immortal/immortal/issues
+.TH man 8 "March 2017" "immortalctl" "immortalctl man page"
+.SH NAME
+immortalctl \- control services started by immortal(8)
+.SH SYNOPSIS
+immortalctl [options] [-12achikinouqstvw] [*|service]
+.SH DESCRIPTION
+immortalctl by default prints the status of any available processes started by immortal(8), it first searches for user process located in $HOME/.immortal and next on the system global services started by immortaldir(8) located by default in /var/run/immortal unless this has been changed by defining the environment var IMMORTAL_SDIR.
+
+When no services found the output will be a single row only with the headers:
+
+            PID   Up   Down   Name   CMD
+
+    PID    Print the current pid of the service that is been supervised
+
+    Up     Display the time the application has been running and in color green
+
+    Down   Display the time the application has been down and in color red, when in color yellow means that immortal(8) is following a pid, see immortal(8) option -f.
+
+    Name   If the service has been started with immortaldir(8) it will be a string matching the name of the service.yml file, if the service has been run from command line calling directly immortal(8) it will be a PID
+
+    CMD    The command that is been supervised
+
+An option or signal can be sent to all the services by using a * instead of the service name.
+
+.SH OPTIONS
+
+exit      Stop service and supervisor, when following a pid it will only exit the supervisor, normally this option should not be used since the required behavior is to keep the service running forever.
+
+once      If the service is not running, it will be started, if for some reason the process stops, it wont be starte again.
+
+start     Start the service.
+
+status    Print status.
+
+stop      Stop the service, will terminate the service and display the down time in the Down column when printing the status.
+
+Signals:
+    When sending signals, options start with one dash.
+
+    -1        USR1
+    -2        USR2
+    -a        ALRM
+    -c        CONT
+    -h        HUP
+    -i        INT
+    -k        KILL
+    -in       TTIN
+    -ou       TTOU
+    -q        QUIT
+    -s        STOP
+    -t        TERM
+    -w        WINCH
+
+-v will print the current version
+
+.SH ENVIRONMENT
+.TP
+.B IMMORTAL_SDIR
+This environment variable allows to override the default supervise directory /var/run/immortal, used also by immortal(8) and immortaldir(8)
+
+.SH EXAMPLES
+
+Send signal USR2:
+
+	immortalctl -2 service
+
+Stop all services, normally this is not the required behavior, since will exit the supervisor:
+
+	immortalctl exit "*"
+.SH SEE ALSO
+immortal(8), immortaldir(8)
+.SH BUGS
+https://github.com/immortal/immortal/issues
+.SH AUTHOR
+.PP
+Nicolas Embriz <nbari@tequila.io>
+.br
+For more information, see the immortal homepage at
+.br
+https://immortal.run

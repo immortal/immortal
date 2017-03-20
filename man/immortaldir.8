@@ -1,0 +1,68 @@
+\" Manpage for immortal.
+.\" To correct errors or typos please use https://github.com/immortal/immortal/issues
+.TH man 8 "March 2017" "immortaldir" "immortaldir man page"
+.SH NAME
+immortaldir \- start services located in a specified directory.
+.SH SYNOPSIS
+immortalctl [dir] [-v]
+.SH DESCRIPTION
+immortaldir will scan every 5 seconds a directory searching for files ending in .yml and track changes. The YAML files should conform the immortal(8) configuration format.
+
+If a file changes the service will be restarted, perform and immortalctl(8) exit and stop.
+
+If a file is touched and service is down, it will be started immortalctl(8) start.
+
+Based on your operating system the directory containing the services could be:
+
+    /usr/local/etc/immortal
+
+or
+
+    /etc/immortal
+
+Based on your operating system a startup script should be used to run on boot time immortaldir in order to start services automatically, superuser privileges may be required.
+
+.SH OPTIONS
+dir Path of directory containing immortal configuration files "*.yml"
+
+-v print current version
+
+.SH ENVIRONMENT
+.TP
+.B IMMORTAL_SDIR
+This environment variable allows to override the default supervise directory /var/run/immortal, used also by immortalctl(8) and immortal(8)
+By default immortaldir after finding a configuration file "service.yml" will invoke immortal(8) and pass to it the option:
+
+    -ctl <service>
+
+This will create a directory in:
+
+    /var/run/immortal/service
+
+With a lock and an immortal.sock
+
+If a different path instead of /var/run/immortal is required the IMMORTAL_SDIR can be used.
+
+.SH EXAMPLES
+
+Read configuration files from /etc/immortal:
+
+    immortaldir /etc/immortal
+
+Read configuration files from /srv/immortal and create supervise directories on /var/www/immortal
+
+    export IMMORTAL_SDIR=/var/www/immortal
+
+    immortaldir /srv/immortal
+
+.SH SEE ALSO
+immortal(8), immortalctl(8)
+.SH BUGS
+https://github.com/immortal/immortal/issues
+.SH AUTHOR
+.PP
+Nicolas Embriz <nbari@tequila.io>
+.br
+For more information, see the immortal homepage at
+.br
+https://immortal.run

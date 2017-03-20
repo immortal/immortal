@@ -1,0 +1,230 @@
+\" Manpage for immortal.
+.\" To correct errors or typos please use https://github.com/immortal/immortal/issues
+.TH man 8 "March 2017" "immortal" "immortal man page"
+.SH NAME
+immortal \- starts and monitor a service
+.SH SYNOPSIS
+immortal [options] command arguments ...
+.SH DESCRIPTION
+immortal runs a command or script detached from the controlling terminal as a Unix daemon, it will supervise and restart the service if it has been terminated.
+The service can be controlled by querying a Unix socket "immortal.sock", this allows to remotely have full control over the service if required by exposing the socket using a web server like Nginx. see examples section, also immortalctl(8).
+.SH OPTIONS
+Options start with one dash. Many of the options require an additional value next to them.
+
+-d <dir>
+        Change to directory <dir> before starting the command.
+
+-e <dir>
+        Set environment variables specified by files within the <dir>.
+        For example, if <dir> is /tmp/env and contains 3 files:
+
+        /tmp/env
+            |--DEBUG  (contains true)
+            |--DBHOST (contains 10.0.0.1)
+            `--DBPASS (contains secret)
+
+        An environment var is going to be created for each file, in this case:
+            DEBUG=true
+            DBHOST=10.0.0.1
+            DBPASS=secret
+
+
+-f <pidfile>
+        Follow PID in <pidfile>.
+        In some cases it is required to supervise applications that daemonize by default. Normally this kind of applications create a pidfile every time they fork, the one can be used to follow subsequent forks and avoid creating a race condition between the supervisor trying to start again the process and the forks created by the application.
+
+        If using immortalctl(8) the color yellow on the Down column, helps to identify does process that have been forked and that currently are been supervised by the PID on the <pidfile>.
+        When the supervised application forks and creates a <pidfile> a log entry (level DAEMON) will be created:
+
+            Watching pid <int> on file <pidfile>
+
+        The follow pid option has better performance on Unix/BSD due the kernel event notification mechanism kqueue(2).
+
+-l <logfile>
+        Write stdout/stderr to <logfile>.
+
+-logger <command>
+        A command <command> to pipe stdout/stderr from stdin.
+        Besides writing logs locally by using the option -l, they can be sent to a remote host or by processed by another tool, for example to write logs locally and send logs remotely using logger this could be used:
+
+            -l /var/log/app.log --logger "logger -h 10.0.0.1 -t app"
+
+-P <pidfile>
+        Path to write the supervisor pidfile.
+
+-p <pidfile>
+        Path to write the child pidfile.
+
+-s <seconds>
+        Seconds (int) <secods> to wait before starting.
+
+-u <user>
+        Execute the command on behalf <user>.
+
+-v
+        Print version.
+
+-c <service name>.yml
+        A configuration file with valid YAML syntax, when using this option, it will overwrite other options, configuration format:
+
+        cmd: <command to execute>
+        cwd: <change workding directory> # option -d
+        env:                             # option -e
+            <key>: <value>
+        pid:
+            follow: <pidfile>            # option -f
+            parent: <pidfile>            # option -P
+            child: <pidfile>             # option -p
+        log:
+            file: <path>                 # option -l
+            age: <int>   # seconds
+            num: <int>   # int
+            size: <int>  # MegaBytes
+        logger: <command>                # option -logger
+        user: <user>                     # option -u
+        wait: <int>                      # option -s
+
+
+-ctl /var/run/immortal/<service>
+        Path where the supervise directory will be created. This directory is unique per service and is used to manage the service via a Unix socket besides preventing running multiple times the same service by using a lock.
+
+        A supervise directory containing two files:
+           lock
+           immortal.sock
+
+        When calling immortal from the command line, not by using immortaldir(8) as root, the supervise directory, will be created on a hidden directory named ".immortal" within the $HOME of the user:
+
+        ~/.immortal/<PID>
+
+        This helps to run and supervise the same command multiple times without colliding, useful for testing or for temporary services that will exit when server reboots.
+
+        To keep services up and running on boot time, is better to create a configuration file "run.yml" and use immortaldir(8).
+
+
+.SH ENVIRONMENT
+.TP
+.B IMMORTAL_SDIR
+This environment variable allows to override the default supervise directory /var/run/immortal, used also by immortalctl(8) and immortaldir(8)
+
+.SH EXAMPLES
+Run command and restart it when finishes:
+
+    immortal /bin/sh -c "date && sleep 5 > /tmp/sleep.log"
+
+Run command, restart it when finishes and log output to file:
+
+    immortal -l /tmp/sleep.log /bin/sh -c "date && sleep 5"
+
+Run command, restart it when finishes, log output to file and to external logger:
+
+    immortal -l /tmp/sleep.log -logger "tee /tmp/sleep2.log" /bin/sh -c "date && sleep 5"
+
+Run command, restart it when finishes, log output to file, wait 2 seconds before start:
+
+    immortal -s 2 -l /tmp/sleep.log /bin/sh -c "date && sleep 5"
+
+Run a command, restart it when finishes, log output to file, and follow pid if it forks:
+
+    immortal -l /tmp/x.log -logger "tee /tmp/y.log" -f ./unicorn.pid  bundle exec unicorn -c unicorn.rb
+
+Run a command, restart it when finishes, log output to file and create supervice dir in /tmp/immortal/sleep
+
+    immortal -l /tmp/sleep.log -ctl /tmp/immortal/sleep /bin/sh -c "sleep 5 && date"
+
+    For making immortalctl(8) work using the -ctl <dir> the IMMORTAL_SDIR environment var should be set to /tmp/immortal
+
+Configuration example:
+
+    cmd: bundle exec unicorn -c unicorn.rb
+    cwd: /test/unicorn
+    env:
+        DEBUG: 1
+        ENVIROMENT: production
+    pid:
+        follow: /test/unicorn/unicorn.pid
+        parent: /tmp/parent.pid
+        child: /tmp/child.pid
+    log:
+        file: /tmp/app.log
+        age: 86400 # seconds
+        num: 7     # int
+        size: 1    # MegaBytes
+    logger: filebeat -c filebeat.yml -v -once
+    user: www
+    wait: 1
+
+    * Notice that when using the option -u/user, superuser privileges will be required
+
+
+Nginx example to manage remotely the service:
+
+    immortal -l /tmp/sleep.log -ctl /tmp/immortal/sleep /bin/sh -c "sleep 5 && date"
+
+    Based on your shell set IMMORTAL_SDIR
+
+        setenv IMMORTAL_SDIR /tmp/immortal
+
+    or
+
+        export IMMORTAL_SDIR=/tmp/immortal
+
+    * This is only required for making immortalctl(8) to work, you can query directly the socket using curl, for example:
+
+        curl --unix-socket immortal.sock http:/status -s
+
+Nginx configuration:
+
+    upstream immortal {
+        server unix:/tmp/immortal/sleep/immortal.sock;
+    }
+
+    server {
+    listen 80 default_server;
+    server_name _;
+    location / {
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-NginX-Proxy true;
+        proxy_http_version 1.1; # for keep-alive
+        proxy_pass http://immortal/;
+        proxy_redirect off;
+        }
+    }
+
+    * In some cases you may have to change permissions of the socket:
+
+        chmod 766 /tmp/immortal/sleep/immortal.sock
+
+To check the status:
+
+    http://<domain>/
+
+To send signals:
+
+    http://<domain>/signal/<signal>
+
+For example to stop the service:
+
+    http://<domain>/signal/stop
+
+To start the service:
+
+    http://<domain>/signal/start
+
+To stop the supervisor:
+
+    http://<domain>/signal/exit
+
+Output is in JSON format.
+.SH SEE ALSO
+immortalctl(8), immortaldir(8)
+.SH BUGS
+https://github.com/immortal/immortal/issues
+.SH AUTHOR
+.PP
+Nicolas Embriz <nbari@tequila.io>
+.br
+For more information, see the immortal homepage at
+.br
+https://immortal.run
