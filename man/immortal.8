@@ -167,7 +167,17 @@ Nginx example to manage remotely the service:
 
     * This is only required for making immortalctl(8) to work, you can query directly the socket using curl, for example:
 
-        curl --unix-socket immortal.sock http:/status -s
+        curl --unix-socket immortal.sock http:/status -s | jq
+
+        Will output something like:
+
+            {
+              "pid": 7713,
+              "up": "4.2s",
+              "cmd": "sleep 5",
+              "fpid": false,
+              "count": 4
+            }
 
 Nginx configuration:
 

@@ -7,17 +7,19 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/nbari/violetear"
 )
 
 // Status struct
 type Status struct {
-	Pid  int    `json:"pid"`
-	Up   string `json:"up,omitempty"`
-	Down string `json:"down,omitempty"`
-	Cmd  string `json:"cmd"`
-	Fpid bool   `json:"fpid"`
+	Pid   int    `json:"pid"`
+	Up    string `json:"up,omitempty"`
+	Down  string `json:"down,omitempty"`
+	Cmd   string `json:"cmd"`
+	Fpid  bool   `json:"fpid"`
+	Count uint32 `json:"count"`
 }
 
 // Listen creates a unix socket used for control the daemon
@@ -37,9 +39,10 @@ func (d *Daemon) Listen() error {
 // HandleStatus return process status
 func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	status := Status{
-		Cmd:  strings.Join(d.cfg.command, " "),
-		Fpid: d.fpid,
-		Pid:  d.process.Pid(),
+		Cmd:   strings.Join(d.cfg.command, " "),
+		Fpid:  d.fpid,
+		Pid:   d.process.Pid(),
+		Count: atomic.LoadUint32(&d.count),
 	}
 	if d.process.eTime.IsZero() {
 		status.Up = AbsSince(d.process.sTime)
