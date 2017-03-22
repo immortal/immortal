@@ -132,19 +132,9 @@ func (s *ScanDir) Scaner() {
 		log.Println(err)
 	}
 
-	// contains find if an item exists on an slice
-	contains := func(s []string, item string) bool {
-		for _, i := range s {
-			if i == item {
-				return true
-			}
-		}
-		return false
-	}
-
 	// exit services that don't exist anymore
 	for service := range s.services {
-		if !contains(services, service) {
+		if !inSlice(services, service) {
 			delete(s.services, service)
 			SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
 			log.Printf("Exiting: %s\n", service)
