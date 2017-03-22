@@ -138,12 +138,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// new controller
+	ctl := &immortal.Controller{}
+
 	// get status for all services
-	services, _ := immortal.FindServices(sdir)
+	services, _ := ctl.FindServices(sdir)
 
 	// get user $HOME/.immortal services
 	if usr, err := user.Current(); err == nil {
-		if userServices, err := immortal.FindServices(
+		if userServices, err := ctl.FindServices(
 			filepath.Join(usr.HomeDir, ".immortal"),
 		); err == nil {
 			services = append(services, userServices...)
@@ -173,14 +176,14 @@ func main() {
 				res *immortal.SignalResponse
 			)
 			if signal != "status" {
-				res, err = immortal.SendSignal(s.Socket, signal)
+				res, err = ctl.SendSignal(s.Socket, signal)
 				if err == nil {
 					time.Sleep(time.Millisecond)
 				}
 			}
-			status, err := immortal.GetStatus(s.Socket)
+			status, err := ctl.GetStatus(s.Socket)
 			if err != nil {
-				immortal.PurgeServices(s.Socket)
+				ctl.PurgeServices(s.Socket)
 				// mainly for signal exit
 				queue <- &Pad{}
 			} else {
