@@ -62,3 +62,22 @@ func TestMd5sum(t *testing.T) {
 	}
 	expect(t, "9e107d9d372bb6826bd81d3542a419d6", md5)
 }
+
+func TestInSlice(t *testing.T) {
+	var test = []struct {
+		slice  []string
+		item   string
+		expect bool
+	}{
+		{[]string{"a", "b", "c"}, "x", false},
+		{[]string{"a", "b", "c"}, "a", true},
+		{[]string{"a a", "b b", "c c"}, "b b", true},
+		{[]string{" a", " b", " c"}, "a", false},
+		{[]string{" a ", " b ", " c "}, " a ", true},
+	}
+	for _, tt := range test {
+		if i := inSlice(tt.slice, tt.item); i != tt.expect {
+			t.Error(tt.slice)
+		}
+	}
+}
