@@ -17,6 +17,7 @@ type ScanDir struct {
 	scandir  string
 	sdir     string
 	services map[string]string
+	ctl      Control
 }
 
 // NewScanDir returns ScanDir struct
@@ -56,6 +57,7 @@ func NewScanDir(path string) (*ScanDir, error) {
 		scandir:  dir,
 		sdir:     sdir,
 		services: map[string]string{},
+		ctl:      &Controller{},
 	}, nil
 }
 
@@ -107,12 +109,12 @@ func (s *ScanDir) Scaner() {
 				if exit {
 					// restart = exit + start
 					log.Printf("Restarting: %s\n", name)
-					SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
+					s.ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
 					time.Sleep(time.Second)
 				}
 				log.Printf("Starting: %s\n", name)
 				// try to start before via socket
-				if _, err := SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
+				if _, err := s.ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
 					cmd := exec.Command("immortal", "-c", path, "-ctl", name)
 					cmd.Env = os.Environ()
 					stdoutStderr, err := cmd.CombinedOutput()
@@ -136,7 +138,7 @@ func (s *ScanDir) Scaner() {
 	for service := range s.services {
 		if !inSlice(services, service) {
 			delete(s.services, service)
-			SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
+			s.ctl.SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
 			log.Printf("Exiting: %s\n", service)
 		}
 	}

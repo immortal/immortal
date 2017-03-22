@@ -7,6 +7,13 @@ import (
 	"path/filepath"
 )
 
+type Control interface {
+	GetStatus(socket string) (*Status, error)
+	SendSignal(socket, signal string) (*SignalResponse, error)
+	FindServices(dir string) ([]*ServiceStatus, error)
+	PurgeServices(dir string) error
+}
+
 // ServiceStatus struct
 type ServiceStatus struct {
 	Name           string
@@ -15,8 +22,10 @@ type ServiceStatus struct {
 	SignalResponse *SignalResponse
 }
 
+type Controller struct{}
+
 // GetStatus returns service status in json format
-func GetStatus(socket string) (*Status, error) {
+func (c *Controller) GetStatus(socket string) (*Status, error) {
 	status := &Status{}
 	if err := GetJSON(socket, "/", status); err != nil {
 		return nil, err
@@ -25,7 +34,7 @@ func GetStatus(socket string) (*Status, error) {
 }
 
 // SendSignal send signal to process
-func SendSignal(socket, signal string) (*SignalResponse, error) {
+func (c *Controller) SendSignal(socket, signal string) (*SignalResponse, error) {
 	res := &SignalResponse{}
 	if err := GetJSON(socket, fmt.Sprintf("/signal/%s", signal), res); err != nil {
 		return nil, err
@@ -34,7 +43,7 @@ func SendSignal(socket, signal string) (*SignalResponse, error) {
 }
 
 // FindServices return [name, socket path] of service
-func FindServices(dir string) ([]*ServiceStatus, error) {
+func (c *Controller) FindServices(dir string) ([]*ServiceStatus, error) {
 	sdir, err := ioutil.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -61,6 +70,6 @@ func FindServices(dir string) ([]*ServiceStatus, error) {
 }
 
 // PurgeServices remove unused service directory
-func PurgeServices(dir string) error {
+func (c *Controller) PurgeServices(dir string) error {
 	return os.RemoveAll(filepath.Dir(dir))
 }
