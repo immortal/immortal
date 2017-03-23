@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+	"time"
 )
 
 func TestNewScanDir(t *testing.T) {
@@ -30,8 +31,9 @@ type mockController struct {
 	i, j   int
 	expect []struct {
 		socket      string
-		signal, err []string
-		cmd         string
+		signal      []string
+		signalErr   bool
+		cmd, runErr string
 	}
 }
 
@@ -44,8 +46,8 @@ func (mc *mockController) SendSignal(socket, signal string) (*SignalResponse, er
 	mc.j++
 	expect(mc.t, mc.expect[mc.i].socket, socket)
 	expect(mc.t, mc.expect[mc.i].signal[mc.j], signal)
-	if mc.expect[mc.i].err[mc.j] != "" {
-		return nil, fmt.Errorf(mc.expect[mc.i].err[mc.j])
+	if mc.expect[mc.i].signalErr {
+		return nil, fmt.Errorf("error")
 	}
 	return nil, nil
 }
@@ -61,6 +63,9 @@ func (mc *mockController) PurgeServices(dir string) error {
 func (mc *mockController) Run(command string) ([]byte, error) {
 	cmd := fmt.Sprintf("immortal -c %s/run.yml -ctl run", mc.expect[mc.i].cmd)
 	expect(mc.t, cmd, command)
+	if mc.expect[mc.i].runErr != "" {
+		return nil, fmt.Errorf("%s\n", mc.expect[mc.i].runErr)
+	}
 	return []byte(fmt.Sprintf("started %d", mc.i)), nil
 }
 
@@ -72,10 +77,8 @@ func TestScaner(t *testing.T) {
 		log.Fatal(err)
 	}
 	defer os.RemoveAll(dir) // clean up
-	if dir, err = filepath.EvalSymlinks(dir); err != nil {
-		t.Fatal(err)
-	}
 	s, err := NewScanDir(dir)
+	s.TimeMultipler = 1
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,11 +92,17 @@ func TestScaner(t *testing.T) {
 		j: -1, // number of calls within the same  Scan
 		expect: []struct {
 			socket      string
-			signal, err []string
-			cmd         string
+			signal      []string
+			signalErr   bool
+			cmd, runErr string
 		}{
-			{"/var/run/immortal/run/immortal.sock", []string{"start"}, []string{"starting 0"}, dir},
-			{"/var/run/immortal/run/immortal.sock", []string{"exit", "start"}, []string{"this one is ignored", "starting 1"}, dir},
+			{"/var/run/immortal/run/immortal.sock", []string{"start"}, true, s.scandir, ""},
+			{"/var/run/immortal/run/immortal.sock", []string{"exit", "start"}, true, s.scandir, "return error 1"},
+			{"/var/run/immortal/run/immortal.sock", []string{"exit"}, false, "", ""},
+			{"/var/run/immortal/run/immortal.sock", []string{"start"}, true, s.scandir, "can't start"},
+			{"/var/run/immortal/run/immortal.sock", []string{"start"}, false, "", ""},
+			{"/var/run/immortal/run/immortal.sock", []string{"none"}, false, "", ""},
+			{"/var/run/immortal/run/immortal.sock", []string{"exit"}, false, "", ""},
 		},
 	}
 	// first call to scanner, should start services and create hashes
@@ -109,10 +118,59 @@ func TestScaner(t *testing.T) {
 	err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 1"), 0644)
 	s.Scaner(ctl)
 	expect(t, "0af0f52bb73880b58d20ec86a9c5b1dc", s.services["run"])
-	re = regexp.MustCompile(`started 1`)
-	expect(t, "started 1", re.FindString(buf.String()))
+	re = regexp.MustCompile(`return error 1`)
+	expect(t, "return error 1", re.FindString(buf.String()))
 	buf.Reset()
 	ctl.i++
 	ctl.j = -1
-	fmt.Printf("s.services = %+v\n", s.services)
+
+	// remove service, exit
+	if err := os.Remove(filepath.Join(dir, "run.yml")); err != nil {
+		t.Fatal(err)
+	}
+	s.Scaner(ctl)
+	re = regexp.MustCompile(`Exiting: run`)
+	expect(t, "Exiting: run", re.FindString(buf.String()))
+	buf.Reset()
+	ctl.i++
+	ctl.j = -1
+	expect(t, 0, len(s.services))
+
+	// new service
+	err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 2"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Scaner(ctl)
+	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
+	re = regexp.MustCompile(`Starting: run`)
+	expect(t, "Starting: run", re.FindString(buf.String()))
+	re = regexp.MustCompile(`can't start`)
+	expect(t, "can't start", re.FindString(buf.String()))
+	buf.Reset()
+	ctl.i++
+	ctl.j = -1
+	expect(t, 1, len(s.services))
+
+	// scan again and send signal START because it has passed less than 5 sec
+	s.Scaner(ctl)
+	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
+	expect(t, 1, len(s.services))
+	buf.Reset()
+	ctl.i++
+	ctl.j = -1
+
+	// NO refresh
+	time.Sleep(time.Second * 2)
+	s.Scaner(ctl)
+	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
+	expect(t, 1, len(s.services))
+	buf.Reset()
+	ctl.i++
+	ctl.j = -1
+
+	// permission log
+	s.scandir = "/dev/null/non-existent"
+	s.Scaner(ctl)
+	expect(t, 0, len(s.services))
 }

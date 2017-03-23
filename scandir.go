@@ -13,9 +13,10 @@ import (
 
 // ScanDir struct
 type ScanDir struct {
-	scandir  string
-	sdir     string
-	services map[string]string
+	scandir       string
+	sdir          string
+	services      map[string]string
+	TimeMultipler time.Duration
 }
 
 // NewScanDir returns ScanDir struct
@@ -31,7 +32,7 @@ func NewScanDir(path string) (*ScanDir, error) {
 		return nil, err
 	}
 
-	dir, err = filepath.Abs(filepath.Clean(dir))
+	dir, err = filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -52,9 +53,10 @@ func NewScanDir(path string) (*ScanDir, error) {
 	}
 
 	return &ScanDir{
-		scandir:  dir,
-		sdir:     sdir,
-		services: map[string]string{},
+		scandir:       dir,
+		sdir:          sdir,
+		services:      map[string]string{},
+		TimeMultipler: 5,
 	}, nil
 }
 
@@ -62,7 +64,7 @@ func NewScanDir(path string) (*ScanDir, error) {
 func (s *ScanDir) Start(ctl Control) {
 	log.Printf("immortal scandir: %s", s.scandir)
 	s.Scaner(ctl)
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(time.Second * s.TimeMultipler)
 	for {
 		select {
 		case <-ticker.C:
@@ -103,7 +105,7 @@ func (s *ScanDir) Scaner(ctl Control) {
 				exit = true
 			}
 			// check if file hasn't been changed since last tick (5 seconds)
-			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= 5
+			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= int64(s.TimeMultipler)
 			if refresh || start {
 				if exit {
 					// restart = exit + start
