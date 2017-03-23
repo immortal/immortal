@@ -98,6 +98,8 @@ func (s *ScanDir) Scaner(ctl Control) {
 				s.services[name] = md5
 				start = true
 			} else if hash != md5 {
+				// update to new hash
+				s.services[name] = md5
 				exit = true
 			}
 			// check if file hasn't been changed since last tick (5 seconds)
@@ -116,7 +118,7 @@ func (s *ScanDir) Scaner(ctl Control) {
 					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
 						log.Println(err)
 					} else {
-						log.Println(out)
+						log.Printf("%s\n", out)
 					}
 				}
 			}
