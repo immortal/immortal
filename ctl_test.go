@@ -73,3 +73,16 @@ func TestPurgeServices(t *testing.T) {
 	files, _ = ioutil.ReadDir(tdir)
 	expect(t, 0, len(files))
 }
+
+func TestRun(t *testing.T) {
+	ctl := &Controller{}
+	out, err := ctl.Run("echo -n immortal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, "immortal", string(out))
+	_, err = ctl.Run("/dev/null/non-existent -n immortal")
+	if err == nil {
+		t.Fatal("Expecting an errro")
+	}
+}
