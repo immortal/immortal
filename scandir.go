@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,7 +16,6 @@ type ScanDir struct {
 	scandir  string
 	sdir     string
 	services map[string]string
-	ctl      Control
 }
 
 // NewScanDir returns ScanDir struct
@@ -57,25 +55,24 @@ func NewScanDir(path string) (*ScanDir, error) {
 		scandir:  dir,
 		sdir:     sdir,
 		services: map[string]string{},
-		ctl:      &Controller{},
 	}, nil
 }
 
 // Start scans directory every 5 seconds
-func (s *ScanDir) Start() {
+func (s *ScanDir) Start(ctl Control) {
 	log.Printf("immortal scandir: %s", s.scandir)
-	s.Scaner()
+	s.Scaner(ctl)
 	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
 		case <-ticker.C:
-			s.Scaner()
+			s.Scaner(ctl)
 		}
 	}
 }
 
 // Scaner searches for run.yml if file changes it will reload(exit-start)
-func (s *ScanDir) Scaner() {
+func (s *ScanDir) Scaner(ctl Control) {
 	// var services used to keep track of what services should be removed if they don't
 	// exist any more
 	var services []string
@@ -109,19 +106,18 @@ func (s *ScanDir) Scaner() {
 				if exit {
 					// restart = exit + start
 					log.Printf("Restarting: %s\n", name)
-					s.ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
+					ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
+					// Give time to the OS to relieve
 					time.Sleep(time.Second)
 				}
 				log.Printf("Starting: %s\n", name)
 				// try to start before via socket
-				if _, err := s.ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
-					cmd := exec.Command("immortal", "-c", path, "-ctl", name)
-					cmd.Env = os.Environ()
-					stdoutStderr, err := cmd.CombinedOutput()
-					if err != nil {
-						return err
+				if _, err := ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
+					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
+						log.Println(err)
+					} else {
+						log.Println(out)
 					}
-					log.Printf("%s\n", stdoutStderr)
 				}
 			}
 		}
@@ -138,7 +134,7 @@ func (s *ScanDir) Scaner() {
 	for service := range s.services {
 		if !inSlice(services, service) {
 			delete(s.services, service)
-			s.ctl.SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
+			ctl.SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
 			log.Printf("Exiting: %s\n", service)
 		}
 	}

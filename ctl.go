@@ -4,14 +4,18 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
+// Control interface
 type Control interface {
 	GetStatus(socket string) (*Status, error)
 	SendSignal(socket, signal string) (*SignalResponse, error)
 	FindServices(dir string) ([]*ServiceStatus, error)
 	PurgeServices(dir string) error
+	Run(command string) ([]byte, error)
 }
 
 // ServiceStatus struct
@@ -22,6 +26,7 @@ type ServiceStatus struct {
 	SignalResponse *SignalResponse
 }
 
+// Controller implements Control
 type Controller struct{}
 
 // GetStatus returns service status in json format
@@ -72,4 +77,18 @@ func (c *Controller) FindServices(dir string) ([]*ServiceStatus, error) {
 // PurgeServices remove unused service directory
 func (c *Controller) PurgeServices(dir string) error {
 	return os.RemoveAll(filepath.Dir(dir))
+}
+
+// Run executes a command and print combinedOutput
+func (c *Controller) Run(command string) ([]byte, error) {
+	parts := strings.Fields(command)
+	cmd := parts[0]
+	arg := parts[1:len(parts)]
+	run := exec.Command(cmd, arg...)
+	run.Env = os.Environ()
+	stdoutStderr, err := run.CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+	return stdoutStderr, err
 }

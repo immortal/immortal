@@ -42,5 +42,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	cmd.Start()
+	ctl := &immortal.Controller{}
+	cmd.Start(ctl)
 }
