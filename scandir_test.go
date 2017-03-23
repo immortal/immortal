@@ -101,7 +101,9 @@ func TestScaner(t *testing.T) {
 			{"/var/run/immortal/run/immortal.sock", []string{"exit"}, false, "", ""},
 			{"/var/run/immortal/run/immortal.sock", []string{"start"}, true, s.scandir, "can't start"},
 			{"/var/run/immortal/run/immortal.sock", []string{"start"}, false, "", ""},
-			{"/var/run/immortal/run/immortal.sock", []string{"none"}, false, "", ""},
+			{"/var/run/immortal/run/immortal.sock", []string{}, false, "", ""},
+			{"/var/run/immortal/run/immortal.sock", []string{}, false, "", ""},
+			{"/var/run/immortal/run/immortal.sock", []string{"start"}, false, "", ""},
 			{"/var/run/immortal/run/immortal.sock", []string{"exit"}, false, "", ""},
 		},
 	}
@@ -169,7 +171,28 @@ func TestScaner(t *testing.T) {
 	ctl.i++
 	ctl.j = -1
 
-	// permission log
+	// NO refresh 2
+	s.Scaner(ctl)
+	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
+	expect(t, 1, len(s.services))
+	buf.Reset()
+	ctl.i++
+	ctl.j = -1
+
+	// Touch expect a start
+	mtime := time.Now().UTC()
+	atime := time.Now().UTC()
+	if err := os.Chtimes(filepath.Join(dir, "run.yml"), atime, mtime); err != nil {
+		log.Fatal(err)
+	}
+	s.Scaner(ctl)
+	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
+	expect(t, 1, len(s.services))
+	buf.Reset()
+	ctl.i++
+	ctl.j = -1
+
+	//permission log
 	s.scandir = "/dev/null/non-existent"
 	s.Scaner(ctl)
 	expect(t, 0, len(s.services))
