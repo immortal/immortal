@@ -78,12 +78,11 @@ func TestScaner(t *testing.T) {
 	}
 	defer os.RemoveAll(dir) // clean up
 	s, err := NewScanDir(dir)
-	s.TimeMultipler = 1
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 0"), 0644)
-	if err != nil {
+	s.timeMultipler = 1
+	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 0"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	ctl := &mockController{
@@ -117,7 +116,9 @@ func TestScaner(t *testing.T) {
 	ctl.j = -1
 
 	// change service contents, a restart (exit, start) is expected
-	err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 1"), 0644)
+	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 1"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	s.Scaner(ctl)
 	expect(t, "0af0f52bb73880b58d20ec86a9c5b1dc", s.services["run"])
 	re = regexp.MustCompile(`return error 1`)
@@ -139,8 +140,7 @@ func TestScaner(t *testing.T) {
 	expect(t, 0, len(s.services))
 
 	// new service
-	err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 2"), 0644)
-	if err != nil {
+	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 2"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	s.Scaner(ctl)

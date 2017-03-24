@@ -16,7 +16,8 @@ type ScanDir struct {
 	scandir       string
 	sdir          string
 	services      map[string]string
-	TimeMultipler time.Duration
+	timeMultipler time.Duration
+	stop          bool
 }
 
 // NewScanDir returns ScanDir struct
@@ -56,7 +57,7 @@ func NewScanDir(path string) (*ScanDir, error) {
 		scandir:       dir,
 		sdir:          sdir,
 		services:      map[string]string{},
-		TimeMultipler: 5,
+		timeMultipler: 5,
 	}, nil
 }
 
@@ -64,7 +65,7 @@ func NewScanDir(path string) (*ScanDir, error) {
 func (s *ScanDir) Start(ctl Control) {
 	log.Printf("immortal scandir: %s", s.scandir)
 	s.Scaner(ctl)
-	ticker := time.NewTicker(time.Second * s.TimeMultipler)
+	ticker := time.NewTicker(time.Second * s.timeMultipler)
 	for {
 		select {
 		case <-ticker.C:
@@ -105,7 +106,7 @@ func (s *ScanDir) Scaner(ctl Control) {
 				exit = true
 			}
 			// check if file hasn't been changed since last tick (5 seconds)
-			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= int64(s.TimeMultipler)
+			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= int64(s.timeMultipler)
 			if refresh || start {
 				if exit {
 					// restart = exit + start
