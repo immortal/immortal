@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // Control interface
@@ -28,10 +27,7 @@ type ServiceStatus struct {
 }
 
 // Controller implements Control
-type Controller struct {
-	tickDuration time.Duration
-	stop         bool
-}
+type Controller struct{}
 
 // GetStatus returns service status in json format
 func (c *Controller) GetStatus(socket string) (*Status, error) {
