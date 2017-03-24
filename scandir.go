@@ -17,7 +17,6 @@ type ScanDir struct {
 	sdir          string
 	services      map[string]string
 	timeMultipler time.Duration
-	stop          bool
 }
 
 // NewScanDir returns ScanDir struct
