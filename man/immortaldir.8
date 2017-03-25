@@ -8,9 +8,11 @@ immortalctl [dir] [-v]
 .SH DESCRIPTION
 immortaldir will scan every 5 seconds a directory searching for files ending in .yml and track changes. The YAML files should conform the immortal(8) configuration format.
 
-If a file changes the service will be restarted, perform and immortalctl(8) exit and stop.
+If a file changes the service will be restarted, immortalctl(8) exit and stop.
 
-If a file is touched and service is down, it will be started immortalctl(8) start.
+If a file is touched and service is down, it will be started, immortalctl(8) start.
+
+If a file is removed, the supervisor will exit, immortalctl(8) exit, this may end the existing process but in cases when the pid is been followed, only the supervisor will exit.
 
 Based on your operating system the directory containing the services could be:
 
@@ -20,13 +22,11 @@ or
 
     /etc/immortal
 
-Based on your operating system a startup script should be used to run on boot time immortaldir in order to start services automatically, superuser privileges may be required.
-
+To keep services persistent across reboots a startup script should be used to run immortaldir on boot time.
 .SH OPTIONS
 dir Path of directory containing immortal configuration files "*.yml"
 
 -v print current version
-
 .SH ENVIRONMENT
 .TP
 .B IMMORTAL_SDIR
@@ -35,16 +35,27 @@ By default immortaldir after finding a configuration file "service.yml" will inv
 
     -ctl <service>
 
-This will create a directory in:
+This will create the  directory "service" in /var/run/immortal:
 
     /var/run/immortal/service
+                     |--lock
+                     `--immortal.sock
 
-With a lock and an immortal.sock
+    lock is a file that prevents running more than once the same service
+    immortal.sock is a Unis socket that can be used to manage the process, example:
 
-If a different path instead of /var/run/immortal is required the IMMORTAL_SDIR can be used.
+    Get status:
+        curl --unix-socket immortal.sock http:/status -s
 
+    Down. If the service is running, send it a TERM signal. After it stops, do not restart it
+        curl --unix-socket immortal.sock http://im/signal/down -s
+
+    Start
+        curl --unix-socket immortal.sock http://im/signal/start -s
+
+
+If a different path instead of /var/run/immortal is required, the IMMORTAL_SDIR can be used.
 .SH EXAMPLES
-
 Read configuration files from /etc/immortal:
 
     immortaldir /etc/immortal

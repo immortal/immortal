@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,17 +13,18 @@ import (
 
 // ScanDir struct
 type ScanDir struct {
-	scandir  string
-	sdir     string
-	services map[string]string
+	scandir       string
+	sdir          string
+	services      map[string]string
+	timeMultipler time.Duration
 }
 
 // NewScanDir returns ScanDir struct
 func NewScanDir(path string) (*ScanDir, error) {
 	if info, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("%q no such file or directory.", path)
+		return nil, fmt.Errorf("%q no such file or directory", path)
 	} else if !info.IsDir() {
-		return nil, fmt.Errorf("%q is not a directory.", path)
+		return nil, fmt.Errorf("%q is not a directory", path)
 	}
 
 	dir, err := filepath.EvalSymlinks(path)
@@ -32,7 +32,7 @@ func NewScanDir(path string) (*ScanDir, error) {
 		return nil, err
 	}
 
-	dir, err = filepath.Abs(filepath.Clean(dir))
+	dir, err = filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -53,27 +53,28 @@ func NewScanDir(path string) (*ScanDir, error) {
 	}
 
 	return &ScanDir{
-		scandir:  dir,
-		sdir:     sdir,
-		services: map[string]string{},
+		scandir:       dir,
+		sdir:          sdir,
+		services:      map[string]string{},
+		timeMultipler: 5,
 	}, nil
 }
 
 // Start scans directory every 5 seconds
-func (s *ScanDir) Start() {
+func (s *ScanDir) Start(ctl Control) {
 	log.Printf("immortal scandir: %s", s.scandir)
-	s.Scaner()
-	ticker := time.NewTicker(5 * time.Second)
+	s.Scaner(ctl)
+	ticker := time.NewTicker(time.Second * s.timeMultipler)
 	for {
 		select {
 		case <-ticker.C:
-			s.Scaner()
+			s.Scaner(ctl)
 		}
 	}
 }
 
 // Scaner searches for run.yml if file changes it will reload(exit-start)
-func (s *ScanDir) Scaner() {
+func (s *ScanDir) Scaner(ctl Control) {
 	// var services used to keep track of what services should be removed if they don't
 	// exist any more
 	var services []string
@@ -99,27 +100,28 @@ func (s *ScanDir) Scaner() {
 				s.services[name] = md5
 				start = true
 			} else if hash != md5 {
+				// update to new hash
+				s.services[name] = md5
 				exit = true
 			}
 			// check if file hasn't been changed since last tick (5 seconds)
-			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= 5
+			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= int64(s.timeMultipler)
 			if refresh || start {
 				if exit {
 					// restart = exit + start
 					log.Printf("Restarting: %s\n", name)
-					SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
+					ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
+					// Give time to the OS to relieve
 					time.Sleep(time.Second)
 				}
 				log.Printf("Starting: %s\n", name)
 				// try to start before via socket
-				if _, err := SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
-					cmd := exec.Command("immortal", "-c", path, "-ctl", name)
-					cmd.Env = os.Environ()
-					stdoutStderr, err := cmd.CombinedOutput()
-					if err != nil {
-						return err
+				if _, err := ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
+					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
+						log.Println(err)
+					} else {
+						log.Printf("%s\n", out)
 					}
-					log.Printf("%s\n", stdoutStderr)
 				}
 			}
 		}
@@ -132,21 +134,11 @@ func (s *ScanDir) Scaner() {
 		log.Println(err)
 	}
 
-	// contains find if an item exists on an slice
-	contains := func(s []string, item string) bool {
-		for _, i := range s {
-			if i == item {
-				return true
-			}
-		}
-		return false
-	}
-
 	// exit services that don't exist anymore
 	for service := range s.services {
-		if !contains(services, service) {
+		if !inSlice(services, service) {
 			delete(s.services, service)
-			SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
+			ctl.SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
 			log.Printf("Exiting: %s\n", service)
 		}
 	}

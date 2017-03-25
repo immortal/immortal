@@ -22,8 +22,25 @@ When no services found the output will be a single row only with the headers:
 
     CMD    The command that is been supervised
 
-An option or signal can be sent to all the services by using a * instead of the service name.
+By queering the socket of the service directly, extra information can be obtained in JSON format, for example when using curl:
 
+        curl --unix-socket immortal.sock http:/status -s | jq
+
+        Will output something like:
+
+            {
+              "pid": 7713,
+              "up": "4.2s",
+              "cmd": "sleep 5",
+              "fpid": false,
+              "count": 4
+            }
+
+    fpid   True when following a pid.
+
+    count The number of times the service has been restarted, if this number is to high something maybe wrong with your service since is dying frequently.
+
+An option or signal can be sent to all the services by using a * instead of the service name.
 .SH OPTIONS
 
 exit      Stop service and supervisor, when following a pid it will only exit the supervisor, normally this option should not be used since the required behavior is to keep the service running forever.
@@ -54,14 +71,11 @@ Signals:
     -w        WINCH
 
 -v will print the current version
-
 .SH ENVIRONMENT
 .TP
 .B IMMORTAL_SDIR
 This environment variable allows to override the default supervise directory /var/run/immortal, used also by immortal(8) and immortaldir(8)
-
 .SH EXAMPLES
-
 Send signal USR2:
 
 	immortalctl -2 service

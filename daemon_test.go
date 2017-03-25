@@ -293,18 +293,24 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 
 	status := &Status{}
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "", status); err != nil {
+	ctl := &Controller{}
+	signalResponse := &SignalResponse{}
+	if status, err = ctl.GetStatus(filepath.Join(sdir, "immortal.sock")); err != nil {
 		t.Fatal(err)
 	}
+	expect(t, "_test/immortal.test -test.run=TestHelperProcessSignalsUDOT --", status.Cmd)
+	expect(t, 1, int(status.Count))
 
 	// http socket client
 	// test "k", process should restart and get a new pid
 	t.Log("testing k")
 	expect(t, p.Pid(), status.Pid)
 
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/k", status); err != nil {
+	if signalResponse, err = ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "k"); err != nil {
 		t.Fatal(err)
 	}
+	expect(t, "", signalResponse.Err)
+
 	// wait for process to finish
 	err = <-p.errch
 	atomic.StoreUint32(&d.lock, d.lockOnce)
@@ -323,7 +329,7 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "d", (keep it down and don't restart)
 	t.Log("testing d")
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/d", status); err != nil {
+	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "d"); err != nil {
 		t.Fatal(err)
 	}
 	// wait for process to finish
@@ -340,7 +346,7 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "u"
 	t.Log("testing up")
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/up", status); err != nil {
+	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "up"); err != nil {
 		t.Fatal(err)
 	}
 	<-d.run
@@ -351,10 +357,10 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "once", process should not restart after going down
 	t.Log("testing once")
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/o", status); err != nil {
+	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "o"); err != nil {
 		t.Fatal(err)
 	}
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/k", status); err != nil {
+	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "k"); err != nil {
 		t.Fatal(err)
 	}
 	// wait for process to finish
@@ -369,9 +375,14 @@ func TestSignalsUDOT(t *testing.T) {
 		close(np.quit)
 	}
 
+	if status, err = ctl.GetStatus(filepath.Join(sdir, "immortal.sock")); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, 3, int(status.Count))
+
 	// test "u"
 	t.Log("testing u")
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/u", status); err != nil {
+	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "u"); err != nil {
 		t.Fatal(err)
 	}
 	<-d.run
@@ -383,7 +394,7 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "t"
 	t.Log("testing t")
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/t", status); err != nil {
+	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "t"); err != nil {
 		t.Fatal(err)
 	}
 	err = <-p.errch
@@ -398,7 +409,7 @@ func TestSignalsUDOT(t *testing.T) {
 	if oldPid == p.Pid() {
 		t.Fatal("Expecting a new pid")
 	}
-	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/kill", status); err != nil {
+	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "kill"); err != nil {
 		t.Fatal(err)
 	}
 	err = <-p.errch
@@ -415,10 +426,15 @@ func TestSignalsUDOT(t *testing.T) {
 	case err := <-p.errch:
 		expect(t, "signal: killed", err.Error())
 	case <-time.After(1 * time.Second):
-		if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/kill", status); err != nil {
+		if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "kill"); err != nil {
 			t.Fatal(err)
 		}
 	}
+
+	if status, err = ctl.GetStatus(filepath.Join(sdir, "immortal.sock")); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, 6, int(status.Count))
 
 	// test log content
 	t.Log("testing logfile")

@@ -93,3 +93,13 @@ func md5sum(filePath string) (string, error) {
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
+
+// inSlice find if item is in slice
+func inSlice(s []string, item string) bool {
+	for _, i := range s {
+		if i == item {
+			return true
+		}
+	}
+	return false
+}
