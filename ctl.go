@@ -83,7 +83,7 @@ func (c *Controller) PurgeServices(dir string) error {
 func (c *Controller) Run(command string) ([]byte, error) {
 	parts := strings.Fields(command)
 	cmd := parts[0]
-	arg := parts[1:len(parts)]
+	arg := parts[1:]
 	run := exec.Command(cmd, arg...)
 	run.Env = os.Environ()
 	stdoutStderr, err := run.CombinedOutput()
