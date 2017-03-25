@@ -22,9 +22,9 @@ type ScanDir struct {
 // NewScanDir returns ScanDir struct
 func NewScanDir(path string) (*ScanDir, error) {
 	if info, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("%q no such file or directory.", path)
+		return nil, fmt.Errorf("%q no such file or directory", path)
 	} else if !info.IsDir() {
-		return nil, fmt.Errorf("%q is not a directory.", path)
+		return nil, fmt.Errorf("%q is not a directory", path)
 	}
 
 	dir, err := filepath.EvalSymlinks(path)
