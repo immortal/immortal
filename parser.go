@@ -90,14 +90,14 @@ func (p *Parse) parseYml(file string) (*Config, error) {
 
 func (p *Parse) checkWrkdir(dir string) (err error) {
 	if !p.isDir(dir) {
-		err = fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help.", dir, os.Args[0])
+		err = fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help", dir, os.Args[0])
 	}
 	return
 }
 
 func (p *Parse) parseEnvdir(dir string) (map[string]string, error) {
 	if !p.isDir(dir) {
-		return nil, fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help.", dir, os.Args[0])
+		return nil, fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help", dir, os.Args[0])
 	}
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
