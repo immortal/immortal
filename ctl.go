@@ -76,7 +76,23 @@ func (c *Controller) FindServices(dir string) ([]*ServiceStatus, error) {
 
 // PurgeServices remove unused service directory
 func (c *Controller) PurgeServices(dir string) error {
-	return os.RemoveAll(filepath.Dir(dir))
+	sdir := []string{"lock", "immortal.sock"}
+	files, err := ioutil.ReadDir(filepath.Dir(dir))
+	if err != nil {
+		return err
+	}
+	if len(files) == 2 {
+		for _, f := range files {
+			if inSlice(sdir, f.Name()) {
+				continue
+			}
+			if f.IsDir() {
+				return fmt.Errorf("Could not purge dir: %s", dir)
+			}
+		}
+		return os.RemoveAll(filepath.Dir(dir))
+	}
+	return fmt.Errorf("Could not purge dir: %s", dir)
 }
 
 // Run executes a command and print combinedOutput
