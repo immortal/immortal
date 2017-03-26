@@ -59,19 +59,45 @@ func TestPurgeServices(t *testing.T) {
 		t.Error(err)
 	}
 	defer os.RemoveAll(dir)
+	err = ctl.PurgeServices(dir)
+	if err == nil {
+		t.Error("Expecting an error")
+	}
 	tdir := filepath.Join(dir, "test")
 	os.Mkdir(tdir, 0700)
-	os.OpenFile(filepath.Join(tdir, "f1"), os.O_RDONLY|os.O_CREATE, 0640)
-	os.OpenFile(filepath.Join(tdir, "f2"), os.O_RDONLY|os.O_CREATE, 0640)
-	os.OpenFile(filepath.Join(tdir, "f3"), os.O_RDONLY|os.O_CREATE, 0640)
+	os.Create(filepath.Join(tdir, "lock"))
+	os.Create(filepath.Join(tdir, "immortal.sock"))
+	os.Create(filepath.Join(tdir, "f3"))
 	files, _ := ioutil.ReadDir(tdir)
 	expect(t, 3, len(files))
 	err = ctl.PurgeServices(tdir)
+	if err == nil {
+		t.Error("Expecting and error")
+	}
+	files, _ = ioutil.ReadDir(tdir)
+	expect(t, 3, len(files))
+	err = ctl.PurgeServices(filepath.Join(tdir, "f3"))
+	if err == nil {
+		t.Error("Expecting and error")
+	}
+	os.Remove(filepath.Join(tdir, "f3"))
+	err = ctl.PurgeServices(filepath.Join(tdir, "f3"))
 	if err != nil {
 		t.Error(err)
 	}
 	files, _ = ioutil.ReadDir(tdir)
 	expect(t, 0, len(files))
+	tdir = filepath.Join(dir, "test", "root")
+	os.MkdirAll(tdir, 0700)
+	os.Create(filepath.Join(dir, "test", "lock"))
+	err = ctl.PurgeServices(filepath.Join(dir, "test", "immortal.sock"))
+	if err == nil {
+		t.Error("Expecting and error")
+	}
+	err = ctl.PurgeServices("/dev/null/non-existent")
+	if err == nil {
+		t.Error("Expecting and error")
+	}
 }
 
 func TestRun(t *testing.T) {
