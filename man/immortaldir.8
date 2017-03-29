@@ -12,7 +12,7 @@ If a file changes the service will be restarted, immortalctl(8) exit and stop.
 
 If a file is touched and service is down, it will be started, immortalctl(8) start.
 
-If a file is removed, the supervisor will exit, immortalctl(8) exit, this may end the existing process but in cases when the pid is been followed, only the supervisor will exit.
+If a file is removed, the supervisor will exit, immortalctl(8) exit, this may end the existing process but in cases where the PID is been followed, only the supervisor will exit.
 
 Based on your operating system the directory containing the services could be:
 
@@ -21,6 +21,8 @@ Based on your operating system the directory containing the services could be:
 or
 
     /etc/immortal
+
+When dealing with multiple operating systems could be handy to use a unique location like /immortal
 
 To keep services persistent across reboots a startup script should be used to run immortaldir on boot time.
 .SH OPTIONS
@@ -42,19 +44,19 @@ This will create the  directory "service" in /var/run/immortal:
                      `--immortal.sock
 
     lock is a file that prevents running more than once the same service
-    immortal.sock is a Unis socket that can be used to manage the process, example:
+    immortal.sock is a Unix socket that can be used to manage the process, example:
 
     Get status:
         curl --unix-socket immortal.sock http:/status -s
 
-    Down. If the service is running, send it a TERM signal. After it stops, do not restart it
+    Down. If the service is running, send it a TERM signal. After it stops, do not restart it:
         curl --unix-socket immortal.sock http://im/signal/down -s
 
-    Start
+    Start:
         curl --unix-socket immortal.sock http://im/signal/start -s
 
 
-If a different path instead of /var/run/immortal is required, the IMMORTAL_SDIR can be used.
+If a different path instead of /var/run/immortal is required, the IMMORTAL_SDIR environment variable can be used.
 .SH EXAMPLES
 Read configuration files from /etc/immortal:
 

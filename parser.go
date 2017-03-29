@@ -88,11 +88,11 @@ func (p *Parse) parseYml(file string) (*Config, error) {
 	return &cfg, nil
 }
 
-func (p *Parse) checkWrkdir(dir string) (err error) {
+func (p *Parse) checkWrkdir(dir string) error {
 	if !p.isDir(dir) {
-		err = fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help", dir, os.Args[0])
+		return fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help", dir, os.Args[0])
 	}
-	return
+	return nil
 }
 
 func (p *Parse) parseEnvdir(dir string) (map[string]string, error) {
@@ -125,17 +125,16 @@ func (p *Parse) parseEnvdir(dir string) (map[string]string, error) {
 	return env, nil
 }
 
-func (p *Parse) checkUser(u string) (usr *user.User, err error) {
-	usr, err = p.UserLookup(u)
+// checkUser needs cgo
+func (p *Parse) checkUser(u string) (*user.User, error) {
+	usr, err := p.UserLookup(u)
 	if err != nil {
 		if _, ok := err.(user.UnknownUserError); ok {
-			err = fmt.Errorf("User %q does not exist.", u)
-		} else if err != nil {
-			err = fmt.Errorf("Error looking up user: %q", u)
+			return nil, fmt.Errorf("User %q does not exist.", u)
 		}
-		return
+		return nil, fmt.Errorf("Error looking up user: %q. %s", u, err)
 	}
-	return
+	return usr, nil
 }
 
 // Usage prints to standard error a usage message

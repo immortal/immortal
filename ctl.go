@@ -104,7 +104,7 @@ func (c *Controller) Run(command string) ([]byte, error) {
 	run.Env = os.Environ()
 	stdoutStderr, err := run.CombinedOutput()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s", stdoutStderr)
 	}
 	return stdoutStderr, err
 }
