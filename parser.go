@@ -125,6 +125,7 @@ func (p *Parse) parseEnvdir(dir string) (map[string]string, error) {
 	return env, nil
 }
 
+// checkUser needs cgo
 func (p *Parse) checkUser(u string) (*user.User, error) {
 	usr, err := p.UserLookup(u)
 	if err != nil {
