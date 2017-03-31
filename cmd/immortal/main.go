@@ -58,7 +58,7 @@ func main() {
 			}
 		}
 		if halt {
-			log.Fatalf("required services are not UP: %s", strings.Join(cfg.Require))
+			log.Fatalf("required services are not UP: %s", strings.Join(cfg.Require, ", "))
 		}
 	}
 
