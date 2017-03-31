@@ -11,8 +11,8 @@ https://immortal.run/
 [ ![Download](https://api.bintray.com/packages/nbari/immortal/immortal/images/download.svg) ](https://bintray.com/nbari/immortal/immortal/_latestVersion)
 
 If services need to run on behalf other system user `www, nobody, www-data`,
-not root, Immortal should be compiled from source for the desired
-target/architecture, otherwise this error maybe returned:
+not `root`, **immortal** should be compiled from source for the desired
+target/architecture, otherwise, this error may be returned:
 
     Error looking up user: "www". user: Lookup requires cgo
 
