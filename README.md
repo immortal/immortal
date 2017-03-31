@@ -131,7 +131,7 @@ Will print current status and allow to manage the services
 
 status:
 
-    curl --unix-socket immortal.sock http:/status -s | jq
+    curl --unix-socket immortal.sock http://status -s | jq
 
 down:
 
