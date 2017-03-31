@@ -112,6 +112,8 @@ func (s *ScanDir) Scaner(ctl Control) {
 				// try to start before via socket
 				if _, err := ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
 					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
+						// keep retrying
+						delete(s.services, name)
 						log.Println(err)
 					} else {
 						log.Printf("%s\n", out)

@@ -10,27 +10,56 @@ https://immortal.run/
 
 [ ![Download](https://api.bintray.com/packages/nbari/immortal/immortal/images/download.svg) ](https://bintray.com/nbari/immortal/immortal/_latestVersion)
 
+# configuration example
+
+Content of file `/usr/local/etc/immortal/www.yml`:
+
+```yaml
+# pkg install go-www
+cmd: www
+cwd: /usr/ports
+log:
+    file: /var/log/www.log
+    age: 10  # seconds
+    num: 7   # int
+    size: 1  # MegaBytes
+wait: 1
+require:
+  - foo
+  - bar
+```
+
+If `foo` and `bar` not up, the service `www` will not be started.
+
+> `foo` and `bar` are the names for the services defined on the same path www.yaml is located, foo.yml & bar.yml
+
+
 # Paths
 
 When using immortaldir:
 
     /usr/local/etc/immortal
-    |--api1.yml
-    |--api2.yml
-    `--api3.yml
+    |--foo.yml
+    |--bar.yml
+    `--www.yml
 
-The name of the `file.yml` will be used to reference the service to be daemonized.
+The name of the `file.yml` will be used to reference the service to be
+daemonized excluding the extension `.yml`.:
+
+    foo
+    bar
+    www
 
 ## /var/run/immortal/<name>
 
     /var/run/immortal
-    |--api1
+    |--foo
     |  |-lock
     |  `-immortal.sock
-    |--api2
+    |--bar
     |  |-lock
     |  `-immortal.sock
-    `--api3
+    `--www
        |-lock
        `-immortal.sock
 
@@ -42,14 +71,14 @@ structure:
 
     ~/.immortal
     |--(pid)
-    |  `--supervise
-    |     `--immortal.sock
+    |  |--lock
+    |  `--immortal.sock
     |--(pid)
-    |  `--supervise
-    |     `--immortal.sock
+    |  |--lock
+    |  `--immortal.sock
     `--(pid)
-       `--supervise
-          `--immortal.sock
+       |--lock
+       `--immortal.sock
 
 # immortalctl
 
