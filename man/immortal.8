@@ -28,7 +28,6 @@ Options start with one dash. Many of the options require an additional value nex
             DBHOST=10.0.0.1
             DBPASS=secret
 
-
 -f <pidfile>
         Follow PID in <pidfile>.
         In some cases it is required to supervise applications that daemonize by default. Normally this kind of applications create a pidfile every time they fork, the one can be used to follow subsequent forks and avoid creating a race condition between the supervisor trying to start again the process and the forks created by the application.
@@ -83,7 +82,9 @@ Options start with one dash. Many of the options require an additional value nex
         logger: <command>                # option -logger
         user: <user>                     # option -u
         wait: <int>                      # option -s
-
+        require:                         # list of services that need to be running before starting
+          - foo
+          - bar
 
 -ctl /var/run/immortal/<service>
         Path where the supervise directory will be created. This directory is unique per service and is used to manage the service via a Unix socket besides preventing running multiple times the same service by using a lock.
