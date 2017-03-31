@@ -10,6 +10,46 @@ https://immortal.run/
 
 [ ![Download](https://api.bintray.com/packages/nbari/immortal/immortal/images/download.svg) ](https://bintray.com/nbari/immortal/immortal/_latestVersion)
 
+If services need to run on behalf other system user `www, nobody, www-data`,
+not root, Immortal should be compiled from source for the desired
+target/architecture, otherwise this error maybe returned:
+
+    Error looking up user: "www". user: Lookup requires cgo
+
+See more: https://golang.org/cmd/cgo/
+
+If using FreeBSD or macOS you can install using [pkg/ports](http://immortal.run/freebsd/)
+or [homebrew](http://immortal.run/mac/), for other platforms  work is in progress,
+any help for would be appreciated.
+
+## Compile from source
+
+Setup go environment https://golang.org/doc/install
+
+> go >= 1.7 is required
+
+For example using $HOME/go for your workspace
+
+    $ export GOPATH=$HOME/go
+
+Create the directory:
+
+    $ mkdir -p $HOME/go/src/github.com/immortal
+
+Clone project into that directory:
+
+    $ git clone git@github.com:immortal/immortal.git $HOME/go/src/github.com/immortal/immortal
+
+Build by just typing make:
+
+    $ cd $HOME/go/src/github.com/immortal/immortal
+    $ make
+
+To install/uninstall:
+
+    $ make install
+    $ make uninstall
+
 # configuration example
 
 Content of file `/usr/local/etc/immortal/www.yml`:
@@ -29,10 +69,9 @@ require:
   - bar
 ```
 
-If `foo` and `bar` not up, the service `www` will not be started.
+If `foo` and `bar` are not running, the service `www` will not be started.
 
 > `foo` and `bar` are the names for the services defined on the same path www.yaml is located, foo.yml & bar.yml
-
 
 # Paths
 
