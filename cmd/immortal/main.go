@@ -7,6 +7,8 @@ import (
 	"log/syslog"
 	"os"
 	"os/user"
+	"path/filepath"
+	"strings"
 
 	"github.com/immortal/immortal"
 )
@@ -41,6 +43,23 @@ func main() {
 		log.SetFlags(0)
 	} else {
 		defer logger.Close()
+	}
+
+	// check for required services to be UP otherwise don't start
+	if len(cfg.Require) > 0 {
+		down := []string{}
+		ctl := &immortal.Controller{}
+		for _, r := range cfg.Require {
+			socket := filepath.Join(immortal.GetSdir(), r, "immortal.sock")
+			if status, err := ctl.GetStatus(socket); err != nil {
+				down = append(down, r)
+			} else if status.Up == "" {
+				down = append(down, r)
+			}
+		}
+		if len(down) > 0 {
+			log.Fatalf("required services are not UP: %s", strings.Join(down, ", "))
+		}
 	}
 
 	// fork

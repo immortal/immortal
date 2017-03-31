@@ -103,3 +103,13 @@ func inSlice(s []string, item string) bool {
 	}
 	return false
 }
+
+// GetSdir return the main supervise directory, defaults to /var/run/immortal
+func GetSdir() string {
+	// if IMMORTAL_SDIR env is set, use it as default sdir
+	sdir := os.Getenv("IMMORTAL_SDIR")
+	if sdir == "" {
+		sdir = "/var/run/immortal"
+	}
+	return sdir
+}

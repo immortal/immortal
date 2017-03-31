@@ -120,7 +120,8 @@ func TestScaner(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Scaner(ctl)
-	expect(t, "0af0f52bb73880b58d20ec86a9c5b1dc", s.services["run"])
+	// if error while starting, the service will be removed in order to keep retrying
+	expect(t, len(s.services), 0)
 	re = regexp.MustCompile(`return error 1`)
 	expect(t, "return error 1", re.FindString(buf.String()))
 	buf.Reset()
@@ -132,9 +133,6 @@ func TestScaner(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Scaner(ctl)
-	re = regexp.MustCompile(`Exiting: run`)
-	expect(t, "Exiting: run", re.FindString(buf.String()))
-	buf.Reset()
 	ctl.i++
 	ctl.j = -1
 	expect(t, 0, len(s.services))
@@ -144,7 +142,7 @@ func TestScaner(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Scaner(ctl)
-	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
+	expect(t, len(s.services), 0)
 	re = regexp.MustCompile(`Starting: run`)
 	expect(t, "Starting: run", re.FindString(buf.String()))
 	re = regexp.MustCompile(`can't start`)
@@ -152,7 +150,6 @@ func TestScaner(t *testing.T) {
 	buf.Reset()
 	ctl.i++
 	ctl.j = -1
-	expect(t, 1, len(s.services))
 
 	// scan again and send signal START because it has passed less than 5 sec
 	s.Scaner(ctl)
