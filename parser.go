@@ -176,17 +176,13 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		return
 	}
 
-	// if -ctl defaults to /var/run/immortal
+	// if -ctl, defaults to /var/run/immortal
 	var sdir string
 	if flags.Ctl != "" {
 		if s := filepath.Clean(flags.Ctl); strings.HasPrefix(s, "/") {
 			sdir = s
 		} else {
-			sdirEnv := os.Getenv("IMMORTAL_SDIR")
-			if sdirEnv == "" {
-				sdirEnv = "/var/run/immortal"
-			}
-			sdir = filepath.Join(sdirEnv, filepath.Base(s))
+			sdir = filepath.Join(GetSdir(), filepath.Base(s))
 		}
 	}
 
