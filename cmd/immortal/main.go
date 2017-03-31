@@ -45,20 +45,20 @@ func main() {
 		defer logger.Close()
 	}
 
-	// check for dependencies to be up and running otherwise don't start
+	// check for required services to be UP otherwise don't start
 	if len(cfg.Require) > 0 {
-		halt := false
+		down := []string{}
 		ctl := &immortal.Controller{}
 		for _, r := range cfg.Require {
 			socket := filepath.Join(immortal.GetSdir(), r, "immortal.sock")
 			if status, err := ctl.GetStatus(socket); err != nil {
-				halt = true
+				down = append(down, r)
 			} else if status.Up == "" {
-				halt = true
+				down = append(down, r)
 			}
 		}
-		if halt {
-			log.Fatalf("required services are not UP: %s", strings.Join(cfg.Require, ", "))
+		if len(down) > 0 {
+			log.Fatalf("required services are not UP: %s", strings.Join(down, ", "))
 		}
 	}
 
