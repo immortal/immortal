@@ -46,15 +46,9 @@ func NewScanDir(path string) (*ScanDir, error) {
 	}
 	defer d.Close()
 
-	// if IMMORTAL_SDIR env is set, use it as default sdir
-	sdir := os.Getenv("IMMORTAL_SDIR")
-	if sdir == "" {
-		sdir = "/var/run/immortal"
-	}
-
 	return &ScanDir{
 		scandir:       dir,
-		sdir:          sdir,
+		sdir:          GetSdir(),
 		services:      map[string]string{},
 		timeMultipler: 5,
 	}, nil
