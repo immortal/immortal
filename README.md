@@ -20,7 +20,7 @@ See more: https://golang.org/cmd/cgo/
 
 If using FreeBSD or macOS you can install using [pkg/ports](http://immortal.run/freebsd/)
 or [homebrew](http://immortal.run/mac/), for other platforms  work is in progress,
-any help for would be appreciated.
+any help for helping making the port/package would be appreciated.
 
 ## Compile from source
 
@@ -127,11 +127,14 @@ Will print current status and allow to manage the services
 
     pgrep -fl "immortal -ctl"  | awk '{print $1}' | xargs watch -n .1 pstree -p
 
-# Test status using curl
+# Test status using curl & [jq](https://stedolan.github.io/jq/)
 
 status:
 
     curl --unix-socket immortal.sock http:/status -s | jq
+
+> note the single '/' https://superuser.com/a/925610/284722
+
 
 down:
 
