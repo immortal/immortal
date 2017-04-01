@@ -10,6 +10,7 @@ A *nix cross-platform (OS agnostic) supervisor
 https://immortal.run/
 
 [![GitHub release](https://img.shields.io/github/release/immortal/immortal.svg)](https://github.com/immortal/immortal/releases)
+[![GoDoc](https://godoc.org/github.com/immortal/immortal?status.svg)](https://godoc.org/github.com/immortal/immortal)
 
 If services need to run on behalf other system user `www, nobody, www-data`,
 not `root`, **immortal** should be compiled from source for the desired
