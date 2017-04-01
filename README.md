@@ -8,7 +8,7 @@ A *nix cross-platform (OS agnostic) supervisor
 
 https://immortal.run/
 
-[ ![Download](https://api.bintray.com/packages/nbari/immortal/immortal/images/download.svg) ](https://bintray.com/nbari/immortal/immortal/_latestVersion)
+[![GitHub release](https://img.shields.io/github/release/immortal/immortal.svg)](https://github.com/immortal/immortal/releases)
 
 If services need to run on behalf other system user `www, nobody, www-data`,
 not `root`, **immortal** should be compiled from source for the desired
