@@ -18,9 +18,12 @@ target/architecture, otherwise, this error may be returned:
 
 See more: https://golang.org/cmd/cgo/
 
-If using FreeBSD or macOS you can install using [pkg/ports](http://immortal.run/freebsd/)
-or [homebrew](http://immortal.run/mac/), for other platforms  work is in progress,
-any help for helping making the port/package would be appreciated.
+If using [FreeBSD](https://github.com/freebsd/freebsd-ports/tree/master/sysutils/immortal)
+or [macOS](https://github.com/immortal/homebrew-tap)
+you can install using [pkg/ports](http://immortal.run/freebsd/)
+or [homebrew](http://immortal.run/mac/), for other platforms work is in
+progress, any help for making the port/package for other systems would be
+appreciated.
 
 ## Compile from source
 
