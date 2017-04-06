@@ -96,7 +96,7 @@ func TestScaner(t *testing.T) {
 			cmd, runErr string
 		}{
 			{"/var/run/immortal/run/immortal.sock", []string{"start"}, true, s.scandir, ""},
-			{"/var/run/immortal/run/immortal.sock", []string{"exit", "start"}, true, s.scandir, "return error 1"},
+			{"/var/run/immortal/run/immortal.sock", []string{"term", "start"}, true, s.scandir, "return error 1"},
 			{"/var/run/immortal/run/immortal.sock", []string{"exit"}, false, "", ""},
 			{"/var/run/immortal/run/immortal.sock", []string{"start"}, true, s.scandir, "can't start"},
 			{"/var/run/immortal/run/immortal.sock", []string{"start"}, false, "", ""},
