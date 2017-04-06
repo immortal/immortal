@@ -67,7 +67,7 @@ func (s *ScanDir) Start(ctl Control) {
 	}
 }
 
-// Scaner searches for run.yml if file changes it will reload(exit-start)
+// Scaner searches for run.yml if file changes it will reload(stop-start)
 func (s *ScanDir) Scaner(ctl Control) {
 	// var services used to keep track of what services should be removed if they don't
 	// exist any more
@@ -75,7 +75,7 @@ func (s *ScanDir) Scaner(ctl Control) {
 
 	find := func(path string, f os.FileInfo, err error) error {
 		var (
-			exit, start bool
+			stop, start bool
 			md5, name   string
 		)
 		if err != nil {
@@ -96,17 +96,15 @@ func (s *ScanDir) Scaner(ctl Control) {
 			} else if hash != md5 {
 				// update to new hash
 				s.services[name] = md5
-				exit = true
+				stop = true
 			}
 			// check if file hasn't been changed since last tick (5 seconds)
 			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= int64(s.timeMultipler)
 			if refresh || start {
-				if exit {
-					// restart = exit + start
+				if stop {
+					// restart = term + start
 					log.Printf("Restarting: %s\n", name)
-					ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
-					// Give time to the OS to relieve
-					time.Sleep(time.Second)
+					ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "halt")
 				}
 				log.Printf("Starting: %s\n", name)
 				// try to start before via socket
@@ -130,11 +128,11 @@ func (s *ScanDir) Scaner(ctl Control) {
 		log.Println(err)
 	}
 
-	// exit services that don't exist anymore
+	// halts services that don't exist anymore
 	for service := range s.services {
 		if !inSlice(services, service) {
 			delete(s.services, service)
-			ctl.SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
+			ctl.SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "halt")
 			log.Printf("Exiting: %s\n", service)
 		}
 	}

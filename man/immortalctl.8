@@ -43,7 +43,9 @@ By queering the socket of the service directly, extra information can be obtaine
 An option or signal can be sent to all the services by using a * instead of the service name.
 .SH OPTIONS
 
-exit      Stop service and supervisor, when following a pid it will only exit the supervisor, normally this option should not be used since the required behavior is to keep the service running forever.
+exit      Exits supervisor, when following a pid it will only exit the supervisor, normally this option should not be used since the required behavior is to keep the service running forever.
+
+halt      Stop the service by sending a TERM signal, and exist the supervisor.
 
 once      If the service is not running, it will be started, if for some reason the process stops, it wont be starte again.
 
@@ -51,7 +53,7 @@ start     Start the service.
 
 status    Print status.
 
-stop      Stop the service, will terminate the service and display the down time in the Down column when printing the status.
+stop      Stop the service by sending a TERM signal, will display the down time in the Down column when printing the status.
 
 Signals:
     When sending signals, options start with one dash.
@@ -80,9 +82,9 @@ Send signal USR2:
 
 	immortalctl -2 service
 
-Stop all services, normally this is not the required behavior, since will exit the supervisor:
+Stop all services, normally this is not the required behavior, since will exit the supervisor and terminate all services:
 
-	immortalctl exit "*"
+	immortalctl halt "*"
 .SH SEE ALSO
 immortal(8), immortaldir(8)
 .SH BUGS
