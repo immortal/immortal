@@ -184,7 +184,7 @@ func TestSuperviseWait(t *testing.T) {
 	}()
 	time.Sleep(2 * time.Second)
 	status := &Status{}
-	GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/exit", status)
+	GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/halt", status)
 	wg.Wait()
 	expect(t, true, d.count >= 2)
 }
