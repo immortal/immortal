@@ -41,6 +41,12 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 	case "h", "hup", "HUP":
 		err = d.process.Signal(syscall.SIGHUP)
 
+	// halt: down + exit
+	case "halt":
+		d.lockOnce = 1
+		err = d.process.Signal(syscall.SIGTERM)
+		close(d.quit)
+
 	// i: Interrupt. Send the service an INT signal.
 	case "i", "int", "INT":
 		err = d.process.Signal(syscall.SIGINT)

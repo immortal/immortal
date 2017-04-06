@@ -104,9 +104,7 @@ func (s *ScanDir) Scaner(ctl Control) {
 				if exit {
 					// restart = term + start
 					log.Printf("Restarting: %s\n", name)
-					ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "term")
-					// Give time to the OS to relieve
-					time.Sleep(time.Second)
+					ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "halt")
 				}
 				log.Printf("Starting: %s\n", name)
 				// try to start before via socket
