@@ -128,11 +128,11 @@ func (s *ScanDir) Scaner(ctl Control) {
 		log.Println(err)
 	}
 
-	// exit services that don't exist anymore
+	// halts services that don't exist anymore
 	for service := range s.services {
 		if !inSlice(services, service) {
 			delete(s.services, service)
-			ctl.SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "exit")
+			ctl.SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "halt")
 			log.Printf("Exiting: %s\n", service)
 		}
 	}

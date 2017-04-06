@@ -97,13 +97,13 @@ func TestScaner(t *testing.T) {
 		}{
 			{"/var/run/immortal/run/immortal.sock", []string{"start"}, true, s.scandir, ""},
 			{"/var/run/immortal/run/immortal.sock", []string{"halt", "start"}, true, s.scandir, "return error 1"},
-			{"/var/run/immortal/run/immortal.sock", []string{"exit"}, false, "", ""},
+			{"/var/run/immortal/run/immortal.sock", []string{"halt"}, false, "", ""},
 			{"/var/run/immortal/run/immortal.sock", []string{"start"}, true, s.scandir, "can't start"},
 			{"/var/run/immortal/run/immortal.sock", []string{"start"}, false, "", ""},
 			{"/var/run/immortal/run/immortal.sock", []string{}, false, "", ""},
 			{"/var/run/immortal/run/immortal.sock", []string{}, false, "", ""},
 			{"/var/run/immortal/run/immortal.sock", []string{"start"}, false, "", ""},
-			{"/var/run/immortal/run/immortal.sock", []string{"exit"}, false, "", ""},
+			{"/var/run/immortal/run/immortal.sock", []string{"halt"}, false, "", ""},
 		},
 	}
 	// first call to scanner, should start services and create hashes
