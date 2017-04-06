@@ -102,9 +102,9 @@ func (s *ScanDir) Scaner(ctl Control) {
 			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= int64(s.timeMultipler)
 			if refresh || start {
 				if exit {
-					// restart = exit + start
+					// restart = term + start
 					log.Printf("Restarting: %s\n", name)
-					ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "exit")
+					ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "term")
 					// Give time to the OS to relieve
 					time.Sleep(time.Second)
 				}
