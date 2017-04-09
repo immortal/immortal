@@ -67,14 +67,15 @@ func (s *ScanDir) Start(ctl Control) {
 	for {
 		select {
 		case <-s.watchDir:
+			log.Printf("Starting scaning= %s\n", s.scandir)
 			if err := s.Scandir(s.scandir); err != nil && !os.IsPermission(err) {
 				log.Fatal(err)
 			}
 			for service := range s.services {
-				if sv, ok := activeServices[service]; !ok {
-					activeServices[sv] = filepath.Join(s.scandir, fmt.Sprintf("%s.yml", sv))
-					log.Printf("Starting service: %s\n", sv)
-					go WatchFile(activeServices[sv], s.watchFile)
+				if _, ok := activeServices[service]; !ok {
+					activeServices[service] = filepath.Join(s.scandir, fmt.Sprintf("%s.yml", service))
+					log.Printf("Starting service: %s\n", service)
+					go WatchFile(activeServices[service], s.watchFile)
 				}
 			}
 			go WatchDir(s.scandir, s.watchDir)
@@ -82,9 +83,9 @@ func (s *ScanDir) Start(ctl Control) {
 			serviceFile := filepath.Base(file)
 			serviceName := strings.TrimSuffix(serviceFile, filepath.Ext(serviceFile))
 			if isFile(file) {
-				md5, err := md5sum(serviceFile)
+				md5, err := md5sum(file)
 				if err != nil {
-					log.Fatal(err)
+					log.Fatalf("Error getting the md5sum: %s", err)
 				}
 				// restart if file changed
 				if md5 != s.services[serviceName] {
@@ -115,7 +116,7 @@ func (s *ScanDir) Scandir(dir string) error {
 				name := strings.TrimSuffix(f.Name(), filepath.Ext(f.Name()))
 				md5, err := md5sum(path)
 				if err != nil {
-					return err
+					return fmt.Errorf("Error getting the md5sum: %s", err)
 				}
 				if _, ok := s.services[name]; !ok {
 					s.services[name] = md5
