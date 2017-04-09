@@ -21,20 +21,6 @@ func MockLookup(username string) (*user.User, error) {
 	return nil, fmt.Errorf("error")
 }
 
-func TestParseisDir(t *testing.T) {
-	p := Parse{}
-	expect(t, false, p.isDir("/dev/null"))
-	expect(t, true, p.isDir("/"))
-	expect(t, false, p.isDir("/etc/hosts"))
-}
-
-func TestParseisFile(t *testing.T) {
-	p := Parse{}
-	expect(t, false, p.isFile("/dev/null"))
-	expect(t, false, p.isFile("/"))
-	expect(t, true, p.isFile("/etc/hosts"))
-}
-
 func TestParseHelp(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()

@@ -81,3 +81,15 @@ func TestInSlice(t *testing.T) {
 		}
 	}
 }
+
+func TestisDir(t *testing.T) {
+	expect(t, false, isDir("/dev/null"))
+	expect(t, true, isDir("/"))
+	expect(t, false, isDir("/etc/hosts"))
+}
+
+func TestisFile(t *testing.T) {
+	expect(t, false, isFile("/dev/null"))
+	expect(t, false, isFile("/"))
+	expect(t, true, isFile("/etc/hosts"))
+}

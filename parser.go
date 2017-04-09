@@ -18,8 +18,6 @@ import (
 // Parser interface
 type Parser interface {
 	Parse(fs *flag.FlagSet) (*Flags, error)
-	isDir(path string) bool
-	isFile(path string) bool
 	parseYml(file string) (*Config, error)
 	checkWrkdir(dir string) error
 	parseEnvdir(dir string) (map[string]string, error)
@@ -54,28 +52,6 @@ func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	return &p.Flags, nil
 }
 
-func (p *Parse) isDir(path string) bool {
-	f, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	if m := f.Mode(); m.IsDir() && m&400 != 0 {
-		return true
-	}
-	return false
-}
-
-func (p *Parse) isFile(path string) bool {
-	f, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	if m := f.Mode(); !m.IsDir() && m.IsRegular() && m&400 != 0 {
-		return true
-	}
-	return false
-}
-
 func (p *Parse) parseYml(file string) (*Config, error) {
 	f, err := ioutil.ReadFile(file)
 	if err != nil {
@@ -89,14 +65,14 @@ func (p *Parse) parseYml(file string) (*Config, error) {
 }
 
 func (p *Parse) checkWrkdir(dir string) error {
-	if !p.isDir(dir) {
+	if !isDir(dir) {
 		return fmt.Errorf("-d %q does not exist or has wrong permissions, use (\"%s -h\") for help", dir, os.Args[0])
 	}
 	return nil
 }
 
 func (p *Parse) parseEnvdir(dir string) (map[string]string, error) {
-	if !p.isDir(dir) {
+	if !isDir(dir) {
 		return nil, fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help", dir, os.Args[0])
 	}
 	files, err := ioutil.ReadDir(dir)
@@ -188,7 +164,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 
 	// if -c
 	if flags.Configfile != "" {
-		if !p.isFile(flags.Configfile) {
+		if !isFile(flags.Configfile) {
 			err = fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", flags.Configfile, os.Args[0])
 			return
 		}
