@@ -82,7 +82,6 @@ func (s *ScanDir) Start(ctl Control) {
 					log.Printf("Restarting (halt): %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
 				}
 				log.Printf("Starting: %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
-				fmt.Printf("%s = %s\n", file, md5)
 				go WatchFile(file, s.watchFile)
 			} else {
 				// remove service
