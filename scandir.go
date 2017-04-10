@@ -121,15 +121,12 @@ func (s *ScanDir) Scandir(ctl Control) error {
 				if _, ok := s.services[name]; !ok {
 					s.services[name] = md5
 					log.Printf("Starting: %s\n", name)
-					// try to start before via socket
-					if _, err := ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
-						if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
-							// keep retrying
-							delete(s.services, name)
-							log.Println(err)
-						} else {
-							log.Printf("%s\n", out)
-						}
+					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
+						// keep retrying
+						delete(s.services, name)
+						log.Println(err)
+					} else {
+						log.Printf("%s\n", out)
 					}
 					go WatchFile(path, s.watchFile)
 				}
