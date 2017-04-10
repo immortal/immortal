@@ -58,25 +58,14 @@ func NewScanDir(path string) (*ScanDir, error) {
 
 // Start check for changes on directory
 func (s *ScanDir) Start(ctl Control) {
-	var activeServices = make(map[string]string)
-
 	log.Printf("immortal scandir: %s", s.scandir)
-
 	s.watchDir <- struct{}{}
-
 	for {
 		select {
 		case <-s.watchDir:
 			log.Printf("Starting scaning= %s\n", s.scandir)
 			if err := s.Scandir(s.scandir); err != nil && !os.IsPermission(err) {
 				log.Fatal(err)
-			}
-			for service := range s.services {
-				if _, ok := activeServices[service]; !ok {
-					activeServices[service] = filepath.Join(s.scandir, fmt.Sprintf("%s.yml", service))
-					log.Printf("Starting service: %s socket: %s\n", service, filepath.Join(s.sdir, service, "immortal.sock"))
-					go WatchFile(activeServices[service], s.watchFile)
-				}
 			}
 			go WatchDir(s.scandir, s.watchDir)
 		case file := <-s.watchFile:
@@ -93,14 +82,12 @@ func (s *ScanDir) Start(ctl Control) {
 					log.Printf("Restarting (halt): %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
 				}
 				log.Printf("Starting: %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
-
 				fmt.Printf("%s = %s\n", file, md5)
 				go WatchFile(file, s.watchFile)
 			} else {
 				// remove service
 				log.Printf("Exiting: %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
 				delete(s.services, serviceName)
-				delete(activeServices, serviceName)
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -122,6 +109,8 @@ func (s *ScanDir) Scandir(dir string) error {
 				}
 				if _, ok := s.services[name]; !ok {
 					s.services[name] = md5
+					log.Printf("Starting service: %s socket: %s\n", name, filepath.Join(s.sdir, name, "immortal.sock"))
+					go WatchFile(path, s.watchFile)
 				}
 			}
 		}
