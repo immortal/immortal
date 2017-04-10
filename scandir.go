@@ -74,7 +74,7 @@ func (s *ScanDir) Start(ctl Control) {
 			for service := range s.services {
 				if _, ok := activeServices[service]; !ok {
 					activeServices[service] = filepath.Join(s.scandir, fmt.Sprintf("%s.yml", service))
-					log.Printf("Starting service: %s\n", service)
+					log.Printf("Starting service: %s socket: %s\n", service, filepath.Join(s.sdir, service, "immortal.sock"))
 					go WatchFile(activeServices[service], s.watchFile)
 				}
 			}
@@ -90,15 +90,16 @@ func (s *ScanDir) Start(ctl Control) {
 				// restart if file changed
 				if md5 != s.services[serviceName] {
 					s.services[serviceName] = md5
-					log.Printf("Restarting: %s\n", serviceName)
-				} else {
-					log.Printf("Starting: %s\n", serviceName)
+					log.Printf("Restarting (halt): %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
 				}
+				log.Printf("Starting: %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
+
 				fmt.Printf("%s = %s\n", file, md5)
 				go WatchFile(file, s.watchFile)
 			} else {
 				// remove service
-				log.Printf("Exiting: %s\n", serviceName)
+				log.Printf("Exiting: %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
+				delete(s.services, serviceName)
 				delete(activeServices, serviceName)
 			}
 		}
