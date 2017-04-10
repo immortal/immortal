@@ -94,11 +94,12 @@ func (s *ScanDir) Start(ctl Control) {
 				} else {
 					log.Printf("Starting: %s\n", serviceName)
 				}
+				fmt.Printf("%s = %s\n", file, md5)
 				go WatchFile(file, s.watchFile)
 			} else {
 				// remove service
 				log.Printf("Exiting: %s\n", serviceName)
-				delete(s.services, serviceName)
+				delete(activeServices, serviceName)
 			}
 		}
 		time.Sleep(100 * time.Millisecond)

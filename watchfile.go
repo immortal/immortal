@@ -20,12 +20,12 @@ func WatchFile(f string, ch chan<- string) error {
 		return err
 	}
 
-	// Not using NOTE_WRITE because when use with NOTE_ATTRIB returns twice
+	// NOTE_WRITE and NOTE_ATTRIB returns twice, removing NOTE_ATTRIB (touch) will not work
 	ev1 := syscall.Kevent_t{
 		Ident:  uint64(file.Fd()),
 		Filter: syscall.EVFILT_VNODE,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
-		Fflags: syscall.NOTE_DELETE | syscall.NOTE_ATTRIB | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
+		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
 		Data:   0,
 		Udata:  nil,
 	}
