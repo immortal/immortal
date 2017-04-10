@@ -64,7 +64,7 @@ func (s *ScanDir) Start(ctl Control) {
 		select {
 		case <-s.watchDir:
 			log.Printf("Starting scaning= %s\n", s.scandir)
-			if err := s.Scandir(s.scandir); err != nil && !os.IsPermission(err) {
+			if err := s.Scandir(ctl); err != nil && !os.IsPermission(err) {
 				log.Fatal(err)
 			}
 			go WatchDir(s.scandir, s.watchDir)
@@ -79,14 +79,26 @@ func (s *ScanDir) Start(ctl Control) {
 				// restart if file changed
 				if md5 != s.services[serviceName] {
 					s.services[serviceName] = md5
-					log.Printf("Restarting (halt): %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
+					log.Printf("Restarting: %s\n", serviceName)
+					ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
 				}
 				log.Printf("Starting: %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
+				// try to start before via socket
+				if _, err := ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "start"); err != nil {
+					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", file, serviceName)); err != nil {
+						// keep retrying
+						delete(s.services, serviceName)
+						log.Println(err)
+					} else {
+						log.Printf("%s\n", out)
+					}
+				}
 				go WatchFile(file, s.watchFile)
 			} else {
 				// remove service
-				log.Printf("Exiting: %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
 				delete(s.services, serviceName)
+				ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
+				log.Printf("Exiting: %s\n", serviceName)
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -94,7 +106,7 @@ func (s *ScanDir) Start(ctl Control) {
 }
 
 // Scaner searches for *.yml if file changes it will reload(stop-start)
-func (s *ScanDir) Scandir(dir string) error {
+func (s *ScanDir) Scandir(ctl Control) error {
 	find := func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -108,7 +120,17 @@ func (s *ScanDir) Scandir(dir string) error {
 				}
 				if _, ok := s.services[name]; !ok {
 					s.services[name] = md5
-					log.Printf("Starting service: %s socket: %s\n", name, filepath.Join(s.sdir, name, "immortal.sock"))
+					log.Printf("Starting: %s\n", name)
+					// try to start before via socket
+					if _, err := ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
+						if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
+							// keep retrying
+							delete(s.services, name)
+							log.Println(err)
+						} else {
+							log.Printf("%s\n", out)
+						}
+					}
 					go WatchFile(path, s.watchFile)
 				}
 			}
