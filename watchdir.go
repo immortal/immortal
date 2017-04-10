@@ -30,8 +30,8 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 	}
 
 	// create kevent
-	events := make([]syscall.Kevent_t, 1)
-	n, err := syscall.Kevent(kq, []syscall.Kevent_t{ev1}, events, nil)
+	events := []syscall.Kevent_t{ev1}
+	n, err := syscall.Kevent(kq, events, events, nil)
 	if err != nil {
 		return err
 	}
