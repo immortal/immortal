@@ -1,3 +1,5 @@
+// +build freebsd netbsd openbsd dragonfly darwin
+
 package immortal
 
 import (
