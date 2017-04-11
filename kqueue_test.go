@@ -64,6 +64,8 @@ func TestWatchFile(t *testing.T) {
 		}
 	}()
 
+	time.Sleep(100 * time.Millisecond)
+
 	err = ioutil.WriteFile(tmpfile.Name(), []byte("foo"), 0644)
 	if err != nil {
 		t.Error(err)

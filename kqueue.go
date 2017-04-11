@@ -39,6 +39,7 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 	// wait for an event
 	for {
 		if n > 0 {
+			syscall.Close(kq)
 			file.Close()
 			ch <- struct{}{}
 			return nil
@@ -78,6 +79,7 @@ func WatchFile(f string, ch chan<- string) error {
 	// wait for an event
 	for {
 		if n > 0 {
+			syscall.Close(kq)
 			file.Close()
 			ch <- f
 			return nil

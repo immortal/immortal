@@ -30,14 +30,16 @@ func (d *Daemon) WatchPid(pid int, ch chan<- error) {
 		Data:   0,
 	}
 
+	// create kevent
+	events := []syscall.Kevent_t{ev1}
+	n, err := syscall.Kevent(kq, events, events, nil)
+	if err != nil {
+		ch <- os.NewSyscallError("kqueue", err)
+		return
+	}
+
 	for {
-		events := make([]syscall.Kevent_t, 1)
-		n, err := syscall.Kevent(kq, []syscall.Kevent_t{ev1}, events, nil)
-		if err != nil {
-			ch <- os.NewSyscallError("kqueue", err)
-			return
-		}
-		for i := 0; i < n; i++ {
+		if n > 0 {
 			syscall.Close(kq)
 			ch <- fmt.Errorf("EXIT")
 			return
