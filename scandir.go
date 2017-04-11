@@ -63,7 +63,6 @@ func (s *ScanDir) Start(ctl Control) {
 	for {
 		select {
 		case <-s.watchDir:
-			log.Printf("Starting scaning= %s\n", s.scandir)
 			if err := s.Scandir(ctl); err != nil && !os.IsPermission(err) {
 				log.Fatal(err)
 			}
@@ -82,7 +81,7 @@ func (s *ScanDir) Start(ctl Control) {
 					log.Printf("Restarting: %s\n", serviceName)
 					ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
 				}
-				log.Printf("Starting: %s socket: %s\n", serviceName, filepath.Join(s.sdir, serviceName, "immortal.sock"))
+				log.Printf("Starting: %s\n", serviceName)
 				// try to start before via socket
 				if _, err := ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "start"); err != nil {
 					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", file, serviceName)); err != nil {
