@@ -26,7 +26,6 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
 		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_ATTRIB | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
 		Data:   0,
-		Udata:  nil,
 	}
 
 	// create kevent
@@ -66,7 +65,6 @@ func WatchFile(f string, ch chan<- string) error {
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
 		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
 		Data:   0,
-		Udata:  nil,
 	}
 
 	// create kevent
