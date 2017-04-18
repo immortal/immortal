@@ -3,7 +3,10 @@
 
 package immortal
 
-import "syscall"
+import (
+	"syscall"
+	"time"
+)
 
 // WatchDir check for changes on a directory via Kqueue EVFILT_VNODE
 func WatchDir(dir string, ch chan<- struct{}) error {
@@ -20,29 +23,34 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 	ev1 := syscall.Kevent_t{
 		Ident:  uint64(watchfd),
 		Filter: syscall.EVFILT_VNODE,
-		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
-		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_ATTRIB | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
+		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_CLEAR,
+		Fflags: syscall.NOTE_WRITE | syscall.NOTE_ATTRIB,
 		Data:   0,
 	}
 
-	// create kevent
-	kevents := []syscall.Kevent_t{ev1}
-	n, err := syscall.Kevent(kq, kevents, kevents, nil)
-	if err != nil {
-		syscall.Close(watchfd)
-		return err
+	for {
+		// create kevent
+		kevents := []syscall.Kevent_t{ev1}
+		n, err := syscall.Kevent(kq, kevents, kevents, nil)
+		if err != nil {
+			syscall.Close(watchfd)
+			return err
+		}
+
+		// wait for an event
+		for len(kevents) > 0 {
+			if n > 0 {
+				ch <- struct{}{}
+			}
+			// Move to next event
+			kevents = kevents[1:]
+		}
+
+		// Block for 100 ms on each call to kevent
+		time.Sleep(100 * time.Millisecond)
 	}
 
-	// wait for an event
-	for len(kevents) > 0 {
-		if n > 0 {
-			// do something
-		}
-		// Move to next event
-		kevents = kevents[1:]
-	}
 	syscall.Close(watchfd)
-	ch <- struct{}{}
 	return nil
 }
 

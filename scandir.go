@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,7 @@ type ScanDir struct {
 	services  map[string]string
 	watchDir  chan struct{}
 	watchFile chan string
+	sync.Mutex
 }
 
 // NewScanDir returns ScanDir struct
@@ -59,14 +61,17 @@ func NewScanDir(path string) (*ScanDir, error) {
 // Start check for changes on directory
 func (s *ScanDir) Start(ctl Control) {
 	log.Printf("immortal scandir: %s", s.scandir)
+
+	// check for new services on scandir
+	go WatchDir(s.scandir, s.watchDir)
 	s.watchDir <- struct{}{}
+
 	for {
 		select {
 		case <-s.watchDir:
 			if err := s.Scandir(ctl); err != nil && !os.IsPermission(err) {
-				log.Fatal(err)
+				log.Printf("Scandir error: %s", err)
 			}
-			go WatchDir(s.scandir, s.watchDir)
 		case file := <-s.watchFile:
 			serviceFile := filepath.Base(file)
 			serviceName := strings.TrimSuffix(serviceFile, filepath.Ext(serviceFile))
@@ -107,6 +112,8 @@ func (s *ScanDir) Start(ctl Control) {
 
 // Scaner searches for *.yml if file changes it will reload(stop-start)
 func (s *ScanDir) Scandir(ctl Control) error {
+	s.Lock()
+	defer s.Unlock()
 	find := func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
