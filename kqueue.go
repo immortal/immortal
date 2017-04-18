@@ -49,9 +49,6 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 		// Block for 100 ms on each call to kevent
 		time.Sleep(100 * time.Millisecond)
 	}
-
-	syscall.Close(watchfd)
-	return nil
 }
 
 // WatchFile check for changes on a file via kqueue EVFILT_VNODE
