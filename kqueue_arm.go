@@ -3,14 +3,11 @@
 
 package immortal
 
-import (
-	"os"
-	"syscall"
-)
+import "syscall"
 
 // WatchDir check for changes on a directory via Kqueue EVFILT_VNODE
 func WatchDir(dir string, ch chan<- struct{}) error {
-	file, err := os.Open(dir)
+	watchfd, err := syscall.Open(dir, openMode, 0700)
 	if err != nil {
 		return err
 	}
@@ -21,7 +18,7 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 	}
 
 	ev1 := syscall.Kevent_t{
-		Ident:  uint32(file.Fd()),
+		Ident:  uint32(watchfd),
 		Filter: syscall.EVFILT_VNODE,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
 		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_ATTRIB | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
@@ -29,25 +26,29 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 	}
 
 	// create kevent
-	events := []syscall.Kevent_t{ev1}
-	n, err := syscall.Kevent(kq, events, events, nil)
+	kevents := []syscall.Kevent_t{ev1}
+	n, err := syscall.Kevent(kq, kevents, kevents, nil)
 	if err != nil {
+		syscall.Close(watchfd)
 		return err
 	}
 
 	// wait for an event
-	for {
+	for len(kevents) > 0 {
 		if n > 0 {
-			file.Close()
-			ch <- struct{}{}
-			return nil
+			// do something
 		}
+		// Move to next event
+		kevents = kevents[1:]
 	}
+	syscall.Close(watchfd)
+	ch <- struct{}{}
+	return nil
 }
 
 // WatchFile check for changes on a file via kqueue EVFILT_VNODE
 func WatchFile(f string, ch chan<- string) error {
-	file, err := os.Open(f)
+	watchfd, err := syscall.Open(f, openMode, 0700)
 	if err != nil {
 		return err
 	}
@@ -57,28 +58,32 @@ func WatchFile(f string, ch chan<- string) error {
 		return err
 	}
 
-	// NOTE_WRITE and NOTE_ATTRIB returns twice, removing NOTE_ATTRIB (touch) will not work
+	// NOTE_WRITE and NOTE_ATTRIB returns twice, if removing NOTE_ATTRIB (touch) will not work
 	ev1 := syscall.Kevent_t{
-		Ident:  uint32(file.Fd()),
+		Ident:  uint32(watchfd),
 		Filter: syscall.EVFILT_VNODE,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
-		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
+		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_ATTRIB | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
 		Data:   0,
 	}
 
 	// create kevent
-	events := []syscall.Kevent_t{ev1}
-	n, err := syscall.Kevent(kq, events, events, nil)
+	kevents := []syscall.Kevent_t{ev1}
+	n, err := syscall.Kevent(kq, kevents, kevents, nil)
 	if err != nil {
+		syscall.Close(watchfd)
 		return err
 	}
 
 	// wait for an event
-	for {
+	for len(kevents) > 0 {
 		if n > 0 {
-			file.Close()
-			ch <- f
-			return nil
+			// do something
 		}
+		// Move to next event
+		kevents = kevents[1:]
 	}
+	syscall.Close(watchfd)
+	ch <- f
+	return nil
 }

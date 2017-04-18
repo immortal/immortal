@@ -100,6 +100,7 @@ func (s *ScanDir) Start(ctl Control) {
 				log.Printf("Exiting: %s\n", serviceName)
 			}
 		}
+		// Block for 100 ms on each call to kevent
 		time.Sleep(100 * time.Millisecond)
 	}
 }
