@@ -4,4 +4,7 @@ package immortal
 
 import "syscall"
 
-const openMode = syscall.O_NONBLOCK | syscall.O_RDONLY
+const (
+	openModeDir  = syscall.O_NONBLOCK | syscall.O_RDONLY | syscall.O_DIRECTORY
+	openModeFile = syscall.O_NONBLOCK | syscall.O_RDONLY
+)

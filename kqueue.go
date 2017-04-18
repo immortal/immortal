@@ -10,7 +10,7 @@ import (
 
 // WatchDir check for changes on a directory via Kqueue EVFILT_VNODE
 func WatchDir(dir string, ch chan<- struct{}) error {
-	watchfd, err := syscall.Open(dir, openMode, 0700)
+	watchfd, err := syscall.Open(dir, openModeDir, 0700)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 
 // WatchFile check for changes on a file via kqueue EVFILT_VNODE
 func WatchFile(f string, ch chan<- string) error {
-	watchfd, err := syscall.Open(f, openMode, 0700)
+	watchfd, err := syscall.Open(f, openModeFile, 0700)
 	if err != nil {
 		return err
 	}

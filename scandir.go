@@ -105,7 +105,7 @@ func (s *ScanDir) Start(ctl Control) {
 				log.Printf("Exiting: %s\n", serviceName)
 			}
 		}
-		// Block for 100 ms on each call to kevent
+		// Block for 100 ms on each call to kevent (WatchFile)
 		time.Sleep(100 * time.Millisecond)
 	}
 }
@@ -129,8 +129,6 @@ func (s *ScanDir) Scandir(ctl Control) error {
 					s.services[name] = md5
 					log.Printf("Starting: %s\n", name)
 					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
-						// keep retrying
-						delete(s.services, name)
 						log.Println(err)
 					} else {
 						log.Printf("%s\n", out)
