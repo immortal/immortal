@@ -110,11 +110,11 @@ func (s *ScanDir) Start(ctl Control) {
 						log.Printf("Could not watch file %q error: %s", file, err)
 					}
 				}()
-				// Block for 100 ms on each call to kevent (WatchFile)
-				//				time.Sleep(100 * time.Millisecond)
 			} else {
 				// remove service
+				s.Lock()
 				delete(s.services, serviceName)
+				s.Unlock()
 				ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
 				log.Printf("Exiting: %s\n", serviceName)
 			}
