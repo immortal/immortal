@@ -3,25 +3,65 @@
 
 package immortal
 
-import (
-	"os"
-	"syscall"
-)
+import "syscall"
 
 // WatchDir check for changes on a directory via Kqueue EVFILT_VNODE
 func WatchDir(dir string, ch chan<- struct{}) error {
-	file, err := os.Open(dir)
+	watchfd, err := syscall.Open(dir, openModeDir, 0700)
 	if err != nil {
 		return err
 	}
 
 	kq, err := syscall.Kqueue()
 	if err != nil {
+		syscall.Close(watchfd)
 		return err
 	}
 
 	ev1 := syscall.Kevent_t{
-		Ident:  uint32(file.Fd()),
+		Ident:  uint32(watchfd),
+		Filter: syscall.EVFILT_VNODE,
+		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
+		Fflags: syscall.NOTE_WRITE | syscall.NOTE_ATTRIB,
+		Data:   0,
+	}
+
+	for {
+		// create kevent
+		kevents := []syscall.Kevent_t{ev1}
+		n, err := syscall.Kevent(kq, kevents, kevents, nil)
+		if err != nil {
+			syscall.Close(watchfd)
+			return err
+		}
+
+		// wait for an event
+		for len(kevents) > 0 {
+			if n > 0 {
+				ch <- struct{}{}
+			}
+			// Move to next event
+			kevents = kevents[1:]
+		}
+	}
+}
+
+// WatchFile check for changes on a file via kqueue EVFILT_VNODE
+func WatchFile(f string, ch chan<- string) error {
+	watchfd, err := syscall.Open(f, openModeFile, 0700)
+	if err != nil {
+		return err
+	}
+
+	kq, err := syscall.Kqueue()
+	if err != nil {
+		syscall.Close(watchfd)
+		return err
+	}
+
+	// NOTE_WRITE and NOTE_ATTRIB returns twice, if removing NOTE_ATTRIB (touch) will not work
+	ev1 := syscall.Kevent_t{
+		Ident:  uint32(watchfd),
 		Filter: syscall.EVFILT_VNODE,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
 		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_ATTRIB | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
@@ -29,56 +69,22 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 	}
 
 	// create kevent
-	events := []syscall.Kevent_t{ev1}
-	n, err := syscall.Kevent(kq, events, events, nil)
+	kevents := []syscall.Kevent_t{ev1}
+	n, err := syscall.Kevent(kq, kevents, kevents, nil)
 	if err != nil {
+		syscall.Close(watchfd)
 		return err
 	}
 
 	// wait for an event
-	for {
+	for len(kevents) > 0 {
 		if n > 0 {
-			file.Close()
-			ch <- struct{}{}
-			return nil
+			// do something
 		}
+		// Move to next event
+		kevents = kevents[1:]
 	}
-}
-
-// WatchFile check for changes on a file via kqueue EVFILT_VNODE
-func WatchFile(f string, ch chan<- string) error {
-	file, err := os.Open(f)
-	if err != nil {
-		return err
-	}
-
-	kq, err := syscall.Kqueue()
-	if err != nil {
-		return err
-	}
-
-	// NOTE_WRITE and NOTE_ATTRIB returns twice, removing NOTE_ATTRIB (touch) will not work
-	ev1 := syscall.Kevent_t{
-		Ident:  uint32(file.Fd()),
-		Filter: syscall.EVFILT_VNODE,
-		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
-		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_LINK | syscall.NOTE_RENAME | syscall.NOTE_REVOKE,
-		Data:   0,
-	}
-
-	// create kevent
-	events := []syscall.Kevent_t{ev1}
-	n, err := syscall.Kevent(kq, events, events, nil)
-	if err != nil {
-		return err
-	}
-
-	// wait for an event
-	for {
-		if n > 0 {
-			file.Close()
-			ch <- f
-			return nil
-		}
-	}
+	syscall.Close(watchfd)
+	ch <- f
+	return nil
 }

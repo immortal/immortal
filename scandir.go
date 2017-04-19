@@ -5,9 +5,11 @@ package immortal
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,13 +20,12 @@ type ScanDir struct {
 	services  map[string]string
 	watchDir  chan struct{}
 	watchFile chan string
+	sync.Mutex
 }
 
 // NewScanDir returns ScanDir struct
 func NewScanDir(path string) (*ScanDir, error) {
-	if info, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("%q no such file or directory", path)
-	} else if !info.IsDir() {
+	if !isDir(path) {
 		return nil, fmt.Errorf("%q is not a directory", path)
 	}
 
@@ -59,14 +60,17 @@ func NewScanDir(path string) (*ScanDir, error) {
 // Start check for changes on directory
 func (s *ScanDir) Start(ctl Control) {
 	log.Printf("immortal scandir: %s", s.scandir)
+
+	// check for new services on scandir
+	go WatchDir(s.scandir, s.watchDir)
 	s.watchDir <- struct{}{}
+
 	for {
 		select {
 		case <-s.watchDir:
 			if err := s.Scandir(ctl); err != nil && !os.IsPermission(err) {
-				log.Fatal(err)
+				log.Printf("Scandir error: %s", err)
 			}
-			go WatchDir(s.scandir, s.watchDir)
 		case file := <-s.watchFile:
 			serviceFile := filepath.Base(file)
 			serviceName := strings.TrimSuffix(serviceFile, filepath.Ext(serviceFile))
@@ -92,20 +96,36 @@ func (s *ScanDir) Start(ctl Control) {
 						log.Printf("%s\n", out)
 					}
 				}
-				go WatchFile(file, s.watchFile)
+				go func() {
+					if err := WatchFile(file, s.watchFile); err != nil {
+						log.Printf("WatchFile error: %s", err)
+						// try 3 times sleeping i*100ms between retries
+						for i := int32(100); i <= 300; i += 100 {
+							time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
+							err := WatchFile(file, s.watchFile)
+							if err == nil {
+								return
+							}
+						}
+						log.Printf("Could not watch file %q error: %s", file, err)
+					}
+				}()
 			} else {
 				// remove service
+				s.Lock()
 				delete(s.services, serviceName)
+				s.Unlock()
 				ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
 				log.Printf("Exiting: %s\n", serviceName)
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
 // Scaner searches for *.yml if file changes it will reload(stop-start)
 func (s *ScanDir) Scandir(ctl Control) error {
+	s.Lock()
+	defer s.Unlock()
 	find := func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -121,16 +141,31 @@ func (s *ScanDir) Scandir(ctl Control) error {
 					s.services[name] = md5
 					log.Printf("Starting: %s\n", name)
 					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
-						// keep retrying
-						delete(s.services, name)
 						log.Println(err)
 					} else {
 						log.Printf("%s\n", out)
 					}
-					go WatchFile(path, s.watchFile)
+					go func() {
+						if err := WatchFile(path, s.watchFile); err != nil {
+							log.Printf("WatchFile error: %s", err)
+							// try 3 times sleeping i*100ms between retries
+							for i := int32(100); i <= 300; i += 100 {
+								time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
+								err := WatchFile(path, s.watchFile)
+								if err == nil {
+									return
+								}
+							}
+							log.Printf("Could not watch file %q error: %s", path, err)
+						}
+					}()
 				}
 			}
 		}
+
+		// Block for 100 ms on each call to kevent (WatchFile)
+		time.Sleep(100 * time.Millisecond)
+
 		return err
 	}
 	return filepath.Walk(s.scandir, find)
