@@ -24,9 +24,7 @@ type ScanDir struct {
 
 // NewScanDir returns ScanDir struct
 func NewScanDir(path string) (*ScanDir, error) {
-	if info, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("%q no such file or directory", path)
-	} else if !info.IsDir() {
+	if !isDir(path) {
 		return nil, fmt.Errorf("%q is not a directory", path)
 	}
 
@@ -97,7 +95,13 @@ func (s *ScanDir) Start(ctl Control) {
 						log.Printf("%s\n", out)
 					}
 				}
-				go WatchFile(file, s.watchFile)
+				go func() {
+					if err := WatchFile(file, s.watchFile); err != nil {
+						log.Printf("WatchFile error: %s", err)
+					}
+				}()
+				// Block for 100 ms on each call to kevent (WatchFile)
+				time.Sleep(100 * time.Millisecond)
 			} else {
 				// remove service
 				delete(s.services, serviceName)
@@ -105,8 +109,6 @@ func (s *ScanDir) Start(ctl Control) {
 				log.Printf("Exiting: %s\n", serviceName)
 			}
 		}
-		// Block for 100 ms on each call to kevent (WatchFile)
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -133,10 +135,18 @@ func (s *ScanDir) Scandir(ctl Control) error {
 					} else {
 						log.Printf("%s\n", out)
 					}
-					go WatchFile(path, s.watchFile)
+					go func() {
+						if err := WatchFile(path, s.watchFile); err != nil {
+							log.Printf("WatchFile error: %s", err)
+						}
+					}()
 				}
 			}
 		}
+
+		// Block for 500 ms on each call to kevent (WatchFile)
+		time.Sleep(100 * time.Millisecond)
+
 		return err
 	}
 	return filepath.Walk(s.scandir, find)
