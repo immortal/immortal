@@ -14,6 +14,7 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 
 	kq, err := syscall.Kqueue()
 	if err != nil {
+		syscall.Close(watchfd)
 		return err
 	}
 
@@ -54,6 +55,7 @@ func WatchFile(f string, ch chan<- string) error {
 
 	kq, err := syscall.Kqueue()
 	if err != nil {
+		syscall.Close(watchfd)
 		return err
 	}
 

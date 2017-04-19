@@ -5,6 +5,7 @@ package immortal
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,10 +99,19 @@ func (s *ScanDir) Start(ctl Control) {
 				go func() {
 					if err := WatchFile(file, s.watchFile); err != nil {
 						log.Printf("WatchFile error: %s", err)
+						// try 3 times sleeping i*100ms between retries
+						for i := int32(100); i <= 300; i += 100 {
+							time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
+							err := WatchFile(file, s.watchFile)
+							if err == nil {
+								return
+							}
+						}
+						log.Printf("Could not watch file %q error: %s", file, err)
 					}
 				}()
 				// Block for 100 ms on each call to kevent (WatchFile)
-				time.Sleep(100 * time.Millisecond)
+				//				time.Sleep(100 * time.Millisecond)
 			} else {
 				// remove service
 				delete(s.services, serviceName)
@@ -138,13 +148,22 @@ func (s *ScanDir) Scandir(ctl Control) error {
 					go func() {
 						if err := WatchFile(path, s.watchFile); err != nil {
 							log.Printf("WatchFile error: %s", err)
+							// try 3 times sleeping i*100ms between retries
+							for i := int32(100); i <= 300; i += 100 {
+								time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
+								err := WatchFile(path, s.watchFile)
+								if err == nil {
+									return
+								}
+							}
+							log.Printf("Could not watch file %q error: %s", path, err)
 						}
 					}()
 				}
 			}
 		}
 
-		// Block for 500 ms on each call to kevent (WatchFile)
+		// Block for 100 ms on each call to kevent (WatchFile)
 		time.Sleep(100 * time.Millisecond)
 
 		return err

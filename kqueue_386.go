@@ -3,10 +3,7 @@
 
 package immortal
 
-import (
-	"syscall"
-	"time"
-)
+import "syscall"
 
 // WatchDir check for changes on a directory via Kqueue EVFILT_VNODE
 func WatchDir(dir string, ch chan<- struct{}) error {
@@ -17,6 +14,7 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 
 	kq, err := syscall.Kqueue()
 	if err != nil {
+		syscall.Close(watchfd)
 		return err
 	}
 
@@ -45,9 +43,6 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 			// Move to next event
 			kevents = kevents[1:]
 		}
-
-		// Block for 100 ms on each call to kevent
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -60,6 +55,7 @@ func WatchFile(f string, ch chan<- string) error {
 
 	kq, err := syscall.Kqueue()
 	if err != nil {
+		syscall.Close(watchfd)
 		return err
 	}
 
