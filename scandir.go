@@ -15,11 +15,10 @@ import (
 
 // ScanDir struct
 type ScanDir struct {
-	scandir   string
-	sdir      string
-	services  map[string]string
-	watchDir  chan struct{}
-	watchFile chan string
+	scandir  string
+	sdir     string
+	services map[string]string
+	watch    chan string
 	sync.Mutex
 }
 
@@ -49,11 +48,10 @@ func NewScanDir(path string) (*ScanDir, error) {
 	defer d.Close()
 
 	return &ScanDir{
-		scandir:   dir,
-		sdir:      GetSdir(),
-		services:  map[string]string{},
-		watchDir:  make(chan struct{}, 1),
-		watchFile: make(chan string, 1),
+		scandir:  dir,
+		sdir:     GetSdir(),
+		services: map[string]string{},
+		watch:    make(chan string, 1),
 	}, nil
 }
 
@@ -62,61 +60,64 @@ func (s *ScanDir) Start(ctl Control) {
 	log.Printf("immortal scandir: %s", s.scandir)
 
 	// check for new services on scandir
-	go WatchDir(s.scandir, s.watchDir)
-	s.watchDir <- struct{}{}
+	go WatchDir(s.scandir, s.watch)
+	s.watch <- s.scandir
 
 	for {
 		select {
-		case <-s.watchDir:
-			if err := s.Scandir(ctl); err != nil && !os.IsPermission(err) {
-				log.Printf("Scandir error: %s", err)
-			}
-		case file := <-s.watchFile:
-			serviceFile := filepath.Base(file)
-			serviceName := strings.TrimSuffix(serviceFile, filepath.Ext(serviceFile))
-			if isFile(file) {
-				md5, err := md5sum(file)
-				if err != nil {
-					log.Fatalf("Error getting the md5sum: %s", err)
+		case watch := <-s.watch:
+			switch watch {
+			case s.scandir:
+				if err := s.Scandir(ctl); err != nil && !os.IsPermission(err) {
+					log.Printf("Scandir error: %s", err)
 				}
-				// restart if file changed
-				if md5 != s.services[serviceName] {
-					s.services[serviceName] = md5
-					log.Printf("Restarting: %s\n", serviceName)
-					ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
-				}
-				log.Printf("Starting: %s\n", serviceName)
-				// try to start before via socket
-				if _, err := ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "start"); err != nil {
-					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", file, serviceName)); err != nil {
-						// keep retrying
-						delete(s.services, serviceName)
-						log.Println(err)
-					} else {
-						log.Printf("%s\n", out)
+			default:
+				serviceFile := filepath.Base(watch)
+				serviceName := strings.TrimSuffix(serviceFile, filepath.Ext(serviceFile))
+				if isFile(watch) {
+					md5, err := md5sum(watch)
+					if err != nil {
+						log.Fatalf("Error getting the md5sum: %s", err)
 					}
-				}
-				go func() {
-					if err := WatchFile(file, s.watchFile); err != nil {
-						log.Printf("WatchFile error: %s", err)
-						// try 3 times sleeping i*100ms between retries
-						for i := int32(100); i <= 300; i += 100 {
-							time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
-							err := WatchFile(file, s.watchFile)
-							if err == nil {
-								return
-							}
+					// restart if file changed
+					if md5 != s.services[serviceName] {
+						s.services[serviceName] = md5
+						log.Printf("Restarting: %s\n", serviceName)
+						ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
+					}
+					log.Printf("Starting: %s\n", serviceName)
+					// try to start before via socket
+					if _, err := ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "start"); err != nil {
+						if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", watch, serviceName)); err != nil {
+							// keep retrying
+							delete(s.services, serviceName)
+							log.Println(err)
+						} else {
+							log.Printf("%s\n", out)
 						}
-						log.Printf("Could not watch file %q error: %s", file, err)
 					}
-				}()
-			} else {
-				// remove service
-				s.Lock()
-				delete(s.services, serviceName)
-				s.Unlock()
-				ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
-				log.Printf("Exiting: %s\n", serviceName)
+					go func() {
+						if err := WatchFile(watch, s.watch); err != nil {
+							log.Printf("WatchFile error: %s", err)
+							// try 3 times sleeping i*100ms between retries
+							for i := int32(100); i <= 300; i += 100 {
+								time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
+								err := WatchFile(watch, s.watch)
+								if err == nil {
+									return
+								}
+							}
+							log.Printf("Could not watch file %q error: %s", watch, err)
+						}
+					}()
+				} else {
+					// remove service
+					s.Lock()
+					delete(s.services, serviceName)
+					s.Unlock()
+					ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
+					log.Printf("Exiting: %s\n", serviceName)
+				}
 			}
 		}
 	}
@@ -146,12 +147,12 @@ func (s *ScanDir) Scandir(ctl Control) error {
 						log.Printf("%s\n", out)
 					}
 					go func() {
-						if err := WatchFile(path, s.watchFile); err != nil {
+						if err := WatchFile(path, s.watch); err != nil {
 							log.Printf("WatchFile error: %s", err)
 							// try 3 times sleeping i*100ms between retries
 							for i := int32(100); i <= 300; i += 100 {
 								time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
-								err := WatchFile(path, s.watchFile)
+								err := WatchFile(path, s.watch)
 								if err == nil {
 									return
 								}

@@ -6,7 +6,7 @@ package immortal
 import "syscall"
 
 // WatchDir check for changes on a directory via Kqueue EVFILT_VNODE
-func WatchDir(dir string, ch chan<- struct{}) error {
+func WatchDir(dir string, ch chan<- string) error {
 	watchfd, err := syscall.Open(dir, openModeDir, 0700)
 	if err != nil {
 		return err
@@ -38,7 +38,7 @@ func WatchDir(dir string, ch chan<- struct{}) error {
 		// wait for an event
 		for len(kevents) > 0 {
 			if n > 0 {
-				ch <- struct{}{}
+				ch <- dir
 			}
 			// Move to next event
 			kevents = kevents[1:]

@@ -12,7 +12,7 @@ import (
 )
 
 func TestWatchDir(t *testing.T) {
-	ch := make(chan struct{})
+	ch := make(chan string)
 	dir, err := ioutil.TempDir("", "TestWatchDir")
 	if err != nil {
 		t.Error(err)
@@ -38,7 +38,7 @@ func TestWatchDir(t *testing.T) {
 }
 
 func TestWatchDirBadDir(t *testing.T) {
-	ch := make(chan struct{})
+	ch := make(chan string)
 	err := WatchDir("/dev/null/none/existent", ch)
 	if err == nil {
 		t.Error("Expecting error")
