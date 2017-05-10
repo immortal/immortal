@@ -13,7 +13,7 @@ get:
 	${GO} get
 
 build: get
-	${GO} get -u gopkg.in/yaml.v2;
+	${GO} get -u github.com/go-yaml/yaml;
 	${GO} get -u github.com/nbari/violetear;
 	${GO} get -u github.com/immortal/logrotate;
 	${GO} get -u github.com/immortal/multiwriter;
