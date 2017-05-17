@@ -79,12 +79,14 @@ func (s *ScanDir) Start(ctl Control) {
 					if err != nil {
 						log.Fatalf("Error getting the md5sum: %s", err)
 					}
+					s.Lock()
 					// restart if file changed
 					if md5 != s.services[serviceName] {
 						s.services[serviceName] = md5
 						log.Printf("Stopping: %s\n", serviceName)
 						ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
 					}
+					s.Unlock()
 					log.Printf("Starting: %s\n", serviceName)
 					// try to start before via socket
 					if _, err := ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "start"); err != nil {
