@@ -76,12 +76,13 @@ func TestScanner(t *testing.T) {
 	ctl := &mockController{
 		status: make(chan string),
 	}
-	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 0"), 0644); err != nil {
-		t.Fatal(err)
-	}
 
 	// start scanner loop
 	go s.Start(ctl)
+
+	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 0"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	var status string
 	status = <-ctl.status
