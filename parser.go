@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/go-yaml/yaml"
 	"github.com/immortal/natcasesort"
-	"gopkg.in/yaml.v2"
 )
 
 // Parser interface
