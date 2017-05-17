@@ -82,7 +82,7 @@ func (s *ScanDir) Start(ctl Control) {
 					// restart if file changed
 					if md5 != s.services[serviceName] {
 						s.services[serviceName] = md5
-						log.Printf("Restarting: %s\n", serviceName)
+						log.Printf("Stopping: %s\n", serviceName)
 						ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
 					}
 					log.Printf("Starting: %s\n", serviceName)
