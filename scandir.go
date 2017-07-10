@@ -158,7 +158,8 @@ func (s *ScanDir) Scandir(ctl Control) error {
 				if err != nil {
 					return fmt.Errorf("Error getting the md5sum: %s", err)
 				}
-				if _, ok := s.services[name]; !ok {
+				// start or restart if service is not in map or file lock don't exists
+				if _, ok := s.services[name]; !ok || !isFile(filepath.Join(s.sdir, name, "lock")) {
 					s.services[name] = md5
 					log.Printf("Starting: %s\n", name)
 					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
