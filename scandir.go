@@ -169,7 +169,6 @@ func (s *ScanDir) Scandir(ctl Control) error {
 					}
 					go func() {
 						if err := WatchFile(path, s.watch); err != nil {
-							log.Printf("WatchFile error: %s", err)
 							// try 3 times sleeping i*100ms between retries
 							for i := int32(100); i <= 300; i += 100 {
 								time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
