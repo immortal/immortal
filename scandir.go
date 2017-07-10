@@ -59,22 +59,33 @@ func NewScanDir(path string) (*ScanDir, error) {
 func (s *ScanDir) Start(ctl Control) {
 	log.Printf("immortal scandir: %s", s.scandir)
 
+	// create supervise directory (/var/run/immortal) if doesn't exists
+	// IMMORTAL_SDIR
+	if !isDir(s.sdir) {
+		if err := os.MkdirAll(s.sdir, os.ModePerm); err != nil {
+			log.Fatalf("Could not create supervise dir: %q, %v", s.sdir, err)
+		}
+	}
+
+	// check for changes on sdir helps to restart stoped services
+	go WatchDir(s.sdir, s.watch)
+
 	// check for new services on scandir
 	go WatchDir(s.scandir, s.watch)
 	s.watch <- s.scandir
-
-	// check for changes in sdir (/var/run/immortal)
-	fmt.Printf("s.sdir = %+v\n", s.sdir)
-	go WatchDir(s.sdir, s.watch)
 
 	for {
 		select {
 		case watch := <-s.watch:
 			switch watch {
 			case s.sdir:
-				fmt.Printf("s.sdir = %+v\n", s.sdir)
+				// RESTART, after halting a service, this will
+				// start stopped services after 1 second of receiving the signal
+				time.Sleep(time.Second)
+				if err := s.Scandir(ctl); err != nil && !os.IsPermission(err) {
+					log.Printf("Scandir error: %s", err)
+				}
 			case s.scandir:
-				fmt.Printf("s.scandir = %+v\n", s.scandir)
 				if err := s.Scandir(ctl); err != nil && !os.IsPermission(err) {
 					log.Printf("Scandir error: %s", err)
 				}
