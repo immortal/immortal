@@ -92,7 +92,7 @@ func (s *ScanDir) Scaner(ctl Control) {
 			}
 			// add service to services map or reload if file has been changed
 			services = append(services, name)
-			if hash, ok := s.services[name]; !ok {
+			if hash, ok := s.services[name]; !ok || !isFile(filepath.Join(s.sdir, name, "lock")) {
 				s.services[name] = md5
 				start = true
 			} else if hash != md5 {
