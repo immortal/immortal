@@ -63,11 +63,18 @@ func (s *ScanDir) Start(ctl Control) {
 	go WatchDir(s.scandir, s.watch)
 	s.watch <- s.scandir
 
+	// check for changes in sdir (/var/run/immortal)
+	fmt.Printf("s.sdir = %+v\n", s.sdir)
+	go WatchDir(s.sdir, s.watch)
+
 	for {
 		select {
 		case watch := <-s.watch:
 			switch watch {
+			case s.sdir:
+				fmt.Printf("s.sdir = %+v\n", s.sdir)
 			case s.scandir:
+				fmt.Printf("s.scandir = %+v\n", s.scandir)
 				if err := s.Scandir(ctl); err != nil && !os.IsPermission(err) {
 					log.Printf("Scandir error: %s", err)
 				}

@@ -22,7 +22,7 @@ func WatchDir(dir string, ch chan<- string) error {
 		Ident:  uint64(watchfd),
 		Filter: syscall.EVFILT_VNODE,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_CLEAR,
-		Fflags: syscall.NOTE_WRITE | syscall.NOTE_ATTRIB,
+		Fflags: syscall.NOTE_DELETE | syscall.NOTE_WRITE | syscall.NOTE_ATTRIB,
 		Data:   0,
 	}
 
@@ -59,7 +59,6 @@ func WatchFile(f string, ch chan<- string) error {
 		return err
 	}
 
-	// NOTE_WRITE and NOTE_ATTRIB returns twice, if removing NOTE_ATTRIB (touch) will not work
 	ev1 := syscall.Kevent_t{
 		Ident:  uint64(watchfd),
 		Filter: syscall.EVFILT_VNODE,
