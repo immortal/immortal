@@ -22,6 +22,8 @@ or
 
     /etc/immortal
 
+immortaldir checks for changes also in the IMMORTAL_SDIR directory in order to restart services that are not anymore running, for example when a service has been halted (signal halt) this helps to automatically restart the service.
+
 When dealing with multiple operating systems could be handy to use a unique location like /immortal
 
 To keep services persistent across reboots a startup script should be used to run immortaldir on boot time.

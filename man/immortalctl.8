@@ -45,7 +45,7 @@ An option or signal can be sent to all the services by using a * instead of the 
 
 exit      Exits supervisor, when following a pid it will only exit the supervisor, normally this option should not be used since the required behavior is to keep the service running forever.
 
-halt      Stop the service by sending a TERM signal and exist the supervisor.
+halt      Stop the service by sending a TERM signal and exist the supervisor, if using immortaldir(8) the service will be restarted, first will be stooped and immortaldir(8) will start it up again.
 
 once      If the service is not running, it will be started, if for some reason the process stops, it wont be starte again.
 
