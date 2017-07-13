@@ -113,6 +113,7 @@ func TestScanner(t *testing.T) {
 			{dir + "/run/immortal.sock", []string{}, false, "", ""},
 			{dir + "/run/immortal.sock", []string{}, false, "", ""},
 			{dir + "/run/immortal.sock", []string{"start"}, false, "", ""},
+			{dir + "/run/immortal.sock", []string{"start"}, false, "", ""},
 			{dir + "/run/immortal.sock", []string{"halt"}, false, "", ""},
 		},
 	}
@@ -192,6 +193,15 @@ func TestScanner(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(dir, "run.yml"), atime, mtime); err != nil {
 		log.Fatal(err)
 	}
+	s.Scanner(ctl)
+	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
+	expect(t, 1, len(s.services))
+	buf.Reset()
+	ctl.i++
+	ctl.j = -1
+
+	// start because no lock fouond
+	os.Remove(lockPath)
 	s.Scanner(ctl)
 	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
 	expect(t, 1, len(s.services))
