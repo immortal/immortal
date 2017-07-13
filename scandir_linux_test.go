@@ -69,10 +69,10 @@ func (mc *mockController) Run(command string) ([]byte, error) {
 	return []byte(fmt.Sprintf("started %d", mc.i)), nil
 }
 
-func TestScaner(t *testing.T) {
+func TestScanner(t *testing.T) {
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
-	dir, err := ioutil.TempDir("", "scaner")
+	dir, err := ioutil.TempDir("", "scanner")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -82,6 +82,16 @@ func TestScaner(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.timeMultipler = 1
+
+	// use tmp dir as IMMORTAL_SDIR
+	s.sdir = dir
+	// create lock
+	lockPath := filepath.Join(dir, "run")
+	os.MkdirAll(lockPath, os.ModePerm)
+	if err = ioutil.WriteFile(filepath.Join(lockPath, "lock"), []byte("stage 0"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// create run.yml
 	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 0"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -95,19 +105,19 @@ func TestScaner(t *testing.T) {
 			signalErr   bool
 			cmd, runErr string
 		}{
-			{"/var/run/immortal/run/immortal.sock", []string{"start"}, true, s.scandir, ""},
-			{"/var/run/immortal/run/immortal.sock", []string{"halt", "start"}, true, s.scandir, "return error 1"},
-			{"/var/run/immortal/run/immortal.sock", []string{"halt"}, false, "", ""},
-			{"/var/run/immortal/run/immortal.sock", []string{"start"}, true, s.scandir, "can't start"},
-			{"/var/run/immortal/run/immortal.sock", []string{"start"}, false, "", ""},
-			{"/var/run/immortal/run/immortal.sock", []string{}, false, "", ""},
-			{"/var/run/immortal/run/immortal.sock", []string{}, false, "", ""},
-			{"/var/run/immortal/run/immortal.sock", []string{"start"}, false, "", ""},
-			{"/var/run/immortal/run/immortal.sock", []string{"halt"}, false, "", ""},
+			{dir + "/run/immortal.sock", []string{"start"}, true, s.scandir, ""},
+			{dir + "/run/immortal.sock", []string{"halt", "start"}, true, s.scandir, "return error 1"},
+			{dir + "/run/immortal.sock", []string{"halt"}, false, "", ""},
+			{dir + "/run/immortal.sock", []string{"start"}, true, s.scandir, "can't start"},
+			{dir + "/run/immortal.sock", []string{"start"}, false, "", ""},
+			{dir + "/run/immortal.sock", []string{}, false, "", ""},
+			{dir + "/run/immortal.sock", []string{}, false, "", ""},
+			{dir + "/run/immortal.sock", []string{"start"}, false, "", ""},
+			{dir + "/run/immortal.sock", []string{"halt"}, false, "", ""},
 		},
 	}
 	// first call to scanner, should start services and create hashes
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	expect(t, "2bf41d668dd3b0909d58f982aff35a25", s.services["run"])
 	re := regexp.MustCompile(`started 0`)
 	expect(t, "started 0", re.FindString(buf.String()))
@@ -119,7 +129,7 @@ func TestScaner(t *testing.T) {
 	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 1"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	// if error while starting, the service will be removed in order to keep retrying
 	expect(t, len(s.services), 0)
 	re = regexp.MustCompile(`return error 1`)
@@ -132,7 +142,7 @@ func TestScaner(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "run.yml")); err != nil {
 		t.Fatal(err)
 	}
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	ctl.i++
 	ctl.j = -1
 	expect(t, 0, len(s.services))
@@ -141,7 +151,7 @@ func TestScaner(t *testing.T) {
 	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 2"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	expect(t, len(s.services), 0)
 	re = regexp.MustCompile(`Starting: run`)
 	expect(t, "Starting: run", re.FindString(buf.String()))
@@ -152,7 +162,7 @@ func TestScaner(t *testing.T) {
 	ctl.j = -1
 
 	// scan again and send signal START because it has passed less than 5 sec
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
 	expect(t, 1, len(s.services))
 	buf.Reset()
@@ -161,7 +171,7 @@ func TestScaner(t *testing.T) {
 
 	// NO refresh
 	time.Sleep(time.Second * 2)
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
 	expect(t, 1, len(s.services))
 	buf.Reset()
@@ -169,7 +179,7 @@ func TestScaner(t *testing.T) {
 	ctl.j = -1
 
 	// NO refresh 2
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
 	expect(t, 1, len(s.services))
 	buf.Reset()
@@ -182,7 +192,7 @@ func TestScaner(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(dir, "run.yml"), atime, mtime); err != nil {
 		log.Fatal(err)
 	}
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	expect(t, "9944429f23907af240460d0583a27cd2", s.services["run"])
 	expect(t, 1, len(s.services))
 	buf.Reset()
@@ -191,6 +201,6 @@ func TestScaner(t *testing.T) {
 
 	//permission log
 	s.scandir = "/dev/null/non-existent"
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	expect(t, 0, len(s.services))
 }

@@ -59,18 +59,18 @@ func NewScanDir(path string) (*ScanDir, error) {
 // Start scans directory every 5 seconds
 func (s *ScanDir) Start(ctl Control) {
 	log.Printf("immortal scandir: %s", s.scandir)
-	s.Scaner(ctl)
+	s.Scanner(ctl)
 	ticker := time.NewTicker(time.Second * s.timeMultipler)
 	for {
 		select {
 		case <-ticker.C:
-			s.Scaner(ctl)
+			s.Scanner(ctl)
 		}
 	}
 }
 
-// Scaner searches for run.yml if file changes it will reload(stop-start)
-func (s *ScanDir) Scaner(ctl Control) {
+// Scanner searches for run.yml if file changes it will reload(stop-start)
+func (s *ScanDir) Scanner(ctl Control) {
 	// var services used to keep track of what services should be removed if they don't
 	// exist any more
 	var services []string

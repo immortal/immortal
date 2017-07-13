@@ -143,7 +143,7 @@ func (s *ScanDir) Start(ctl Control) {
 	}
 }
 
-// Scaner searches for *.yml if file changes it will reload(stop-start)
+// Scandir searches for *.yml if file changes it will reload(stop-start)
 func (s *ScanDir) Scandir(ctl Control) error {
 	s.Lock()
 	defer s.Unlock()
