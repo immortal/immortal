@@ -9,27 +9,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 )
-
-const (
-	logo = "2B55"
-)
-
-// Logo print ⭕
-func Logo() rune {
-	return Icon(logo)
-}
-
-// Icon Unicode Hex to string
-func Icon(h string) rune {
-	i, e := strconv.ParseInt(h, 16, 32)
-	if e != nil {
-		return 0
-	}
-	return rune(i)
-}
 
 // GetJSON unix socket web client
 func GetJSON(spath, path string, target interface{}) error {

@@ -79,7 +79,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("%c  %d", immortal.Logo(), os.Getpid())
+	log.Printf("%c  %d", 0x2B55, os.Getpid())
 
 	// listen on socket
 	if err := daemon.Listen(); err != nil {
