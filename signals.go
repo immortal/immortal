@@ -42,7 +42,8 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 		err = d.process.Signal(syscall.SIGHUP)
 
 	// halt: down + exit
-	case "halt":
+	// A restart will only happen when using immortaldir
+	case "halt", "restart":
 		d.lockOnce = 1
 		err = d.process.Signal(syscall.SIGTERM)
 		close(d.quit)

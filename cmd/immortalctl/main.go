@@ -17,7 +17,7 @@ var version string
 func main() {
 	var (
 		sdir, serviceName, signal string
-		options                   = []string{"exit", "halt", "once", "start", "status", "stop"}
+		options                   = []string{"exit", "halt", "once", "restart", "restart", "start", "status", "stop"}
 		ppid, pup, pdown, pname   int
 		wg                        sync.WaitGroup
 		v                         = flag.Bool("v", false, fmt.Sprintf("Print version: %s", version))
@@ -51,7 +51,7 @@ func main() {
 			os.Args[0],
 			"  Options:",
 			"    exit      Exits the supervisor.",
-			"    halt      Stop the service by sending a TERM signal, and exits supervisor.",
+			"    halt      Stop the service by sending a TERM signal, and exits supervisor - restart.",
 			"    once      If the service is not running, start it. Do not restart it if it stops.",
 			"    start     Start the service.",
 			"    status    Print status.",
