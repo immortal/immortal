@@ -30,8 +30,9 @@ type Pid struct {
 
 // Log struct run.yml
 type Log struct {
-	File string `yaml:",omitempty"`
-	Age  int    `yaml:",omitempty"`
-	Num  int    `yaml:",omitempty"`
-	Size int    `yaml:",omitempty"`
+	File      string `yaml:",omitempty"`
+	Age       int    `yaml:",omitempty"`
+	Num       int    `yaml:",omitempty"`
+	Size      int    `yaml:",omitempty"`
+	timestamp bool   `yaml:",omitempty"`
 }
