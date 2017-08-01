@@ -34,5 +34,5 @@ type Log struct {
 	Age       int    `yaml:",omitempty"`
 	Num       int    `yaml:",omitempty"`
 	Size      int    `yaml:",omitempty"`
-	timestamp bool   `yaml:",omitempty"`
+	Timestamp bool   `yaml:",omitempty"`
 }

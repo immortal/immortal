@@ -28,22 +28,22 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	var (
 		err     error
 		file, w io.WriteCloser
+		mw      *multiwriter.MultiWriter
 	)
 
 	// create a multiwriter
 	multi := multiwriter.New()
-	var m *multiwriter.MultiWriter = multi.(*multiwriter.MultiWriter)
+	mw = multi.(*multiwriter.MultiWriter)
 
 	if cfg.Log.File != "" {
-		if file, err = logrotate.New(cfg.Log.File, cfg.Log.Age, cfg.Log.Num, cfg.Log.Size); err != nil {
+		if file, err = logrotate.New(cfg.Log.File, cfg.Log.Age, cfg.Log.Num, cfg.Log.Size, cfg.Log.Timestamp); err != nil {
 			log.Printf("Failed to open log file %q: %s\n", cfg.Log.File, err)
 		} else {
-			m.Append(file)
+			mw.Append(file)
 		}
 	}
 
 	if cfg.Logger != "" {
-
 		ch := make(chan error)
 
 		runLogger := func() error {
@@ -65,7 +65,6 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 		if err := runLogger(); err != nil {
 			log.Printf("logger error: %s", err)
 		} else {
-
 			// keep logger up
 			go func() {
 				for {
@@ -75,21 +74,21 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 						return
 					case err := <-ch:
 						log.Printf("logger %s", err)
-						m.Remove(w)
+						mw.Remove(w)
 						time.Sleep(time.Second)
 						if err := runLogger(); err == nil {
-							m.Append(w)
+							mw.Append(w)
 						}
 					}
 				}
 			}()
 
-			m.Append(w)
+			mw.Append(w)
 		}
 	}
 
 	// create the logger
-	if m.Len() > 0 {
+	if mw.Len() > 0 {
 		return log.New(multi, "", 0)
 	}
 	return nil
