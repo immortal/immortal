@@ -11,14 +11,14 @@ all: clean build
 
 get:
 	${GO} get
-
-build: get
 	${GO} get -u github.com/go-yaml/yaml;
 	${GO} get -u github.com/nbari/violetear;
 	${GO} get -u github.com/immortal/logrotate;
 	${GO} get -u github.com/immortal/multiwriter;
 	${GO} get -u github.com/immortal/natcasesort;
 	${GO} get -u github.com/immortal/xtime;
+
+build: get
 	${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o immortal cmd/immortal/main.go;
 	${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o immortalctl cmd/immortalctl/main.go;
 	${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o immortaldir cmd/immortaldir/main.go;
