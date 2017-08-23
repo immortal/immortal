@@ -225,7 +225,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 
 	// if -l
 	if flags.Logfile != "" {
-		cfg.File = flags.Logfile
+		cfg.Log.File = flags.Logfile
 	}
 
 	// if -logger
