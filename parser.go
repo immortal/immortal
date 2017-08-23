@@ -220,7 +220,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 
 	// if -f
 	if flags.FollowPid != "" {
-		cfg.Follow = flags.FollowPid
+		cfg.Pid.Follow = flags.FollowPid
 	}
 
 	// if -l
@@ -235,12 +235,12 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 
 	// if -P
 	if flags.ParentPid != "" {
-		cfg.Parent = flags.ParentPid
+		cfg.Pid.Parent = flags.ParentPid
 	}
 
 	// if -p
 	if flags.ChildPid != "" {
-		cfg.Child = flags.ChildPid
+		cfg.Pid.Child = flags.ChildPid
 	}
 
 	// if -s

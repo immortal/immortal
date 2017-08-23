@@ -13,10 +13,10 @@ type Config struct {
 	StdErr  Log               `yaml:",omitempty" json:",omitempty"`
 	StdOut  Log               `yaml:",omitempty" json:",omitempty"`
 	Logger  string            `yaml:",omitempty" json:",omitempty"`
+	Require []string          `yaml:",omitempty"`
+	User    string            `yaml:",omitempty" json:",omitempty"`
+	Wait    int               `yaml:",omitempty"`
 	Pid     `yaml:",omitempty" json:",omitempty"`
-	Require []string `yaml:",omitempty"`
-	User    string   `yaml:",omitempty" json:",omitempty"`
-	Wait    int      `yaml:",omitempty"`
 	command []string
 	ctl     string
 	log     bool
