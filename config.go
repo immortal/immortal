@@ -11,7 +11,6 @@ type Config struct {
 	Env     map[string]string `yaml:",omitempty" json:",omitempty"`
 	Log     Log               `yaml:",omitempty" json:",omitempty"`
 	StdErr  Log               `yaml:",omitempty" json:",omitempty"`
-	StdOut  Log               `yaml:",omitempty" json:",omitempty"`
 	Logger  string            `yaml:",omitempty" json:",omitempty"`
 	Require []string          `yaml:",omitempty"`
 	User    string            `yaml:",omitempty" json:",omitempty"`
