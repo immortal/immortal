@@ -135,7 +135,7 @@ func main() {
 		exit = false
 	}
 	if exit {
-		fmt.Printf("Invalid arguments, use (\"%s -help\") for help.\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Invalid arguments, use (\"%s -help\") for help.\n", os.Args[0])
 		os.Exit(1)
 	}
 

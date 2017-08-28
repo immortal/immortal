@@ -38,7 +38,7 @@ func main() {
 
 	cmd, err := immortal.NewScanDir(path)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
