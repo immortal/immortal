@@ -13,6 +13,9 @@ func TestProcessStart(t *testing.T) {
 		Logger: &LogWriter{
 			logger: NewLogger(cfg, quit),
 		},
+		LoggerStderr: &LogWriter{
+			logger: NewStderrLogger(cfg),
+		},
 		quit: quit,
 	}
 	_, err := np.Start()

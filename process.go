@@ -20,6 +20,7 @@ type Process interface {
 type process struct {
 	*Config
 	Logger
+	LoggerStderr Logger
 	cmd          *exec.Cmd
 	errch        chan error
 	quit         chan struct{}
@@ -70,18 +71,37 @@ func (p *process) Start() (*process, error) {
 	// set the attributes
 	p.cmd.SysProcAttr = sysProcAttr
 
-	// log only if are available loggers
 	var (
-		pr, pw *os.File
-		e      error
+		prStdout, prStderr, pwStdout, pwStderr *os.File
+		e                                      error
 	)
-	if p.Logger.IsLogging() {
-		// create the pipes
-		pr, pw, e = os.Pipe()
+	// log only if are available loggers
+	if p.Logger.IsLogging() && p.LoggerStderr.IsLogging() {
+		// create the pipes for Stdout
+		prStdout, pwStdout, e = os.Pipe()
 		if e == nil {
-			p.cmd.Stdout = pw
-			p.cmd.Stderr = pw
-			go p.Logger.Log(pr)
+			p.cmd.Stdout = pwStdout
+			go p.Logger.Log(prStdout)
+		}
+		prStderr, pwStderr, e = os.Pipe()
+		if e == nil {
+			p.cmd.Stderr = pwStderr
+			go p.LoggerStderr.Log(prStderr)
+		}
+	} else if p.Logger.IsLogging() {
+		// create the pipes for Stdout
+		prStdout, pwStdout, e = os.Pipe()
+		if e == nil {
+			p.cmd.Stdout = pwStdout
+			p.cmd.Stderr = pwStdout
+			go p.Logger.Log(prStdout)
+		}
+	} else if p.LoggerStderr.IsLogging() {
+		// create the pipes for Stdout
+		prStderr, pwStderr, e = os.Pipe()
+		if e == nil {
+			p.cmd.Stderr = pwStderr
+			go p.LoggerStderr.Log(prStderr)
 		}
 	}
 
@@ -97,14 +117,17 @@ func (p *process) Start() (*process, error) {
 	p.errch = make(chan error, 1)
 
 	// wait process to finish
-	go func(w *os.File) {
+	go func(wStdout, wStderr *os.File) {
 		err := p.cmd.Wait()
-		if w != nil {
-			w.Close()
+		if wStdout != nil {
+			wStdout.Close()
 			close(p.quit)
 		}
+		if wStderr != nil {
+			wStderr.Close()
+		}
 		p.errch <- err
-	}(pw)
+	}(pwStdout, pwStderr)
 
 	return p, nil
 }
@@ -135,6 +158,9 @@ func NewProcess(cfg *Config) *process {
 		Config: cfg,
 		Logger: &LogWriter{
 			logger: NewLogger(cfg, qch),
+		},
+		LoggerStderr: &LogWriter{
+			logger: NewStderrLogger(cfg),
 		},
 		quit: qch,
 	}

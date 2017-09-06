@@ -23,6 +23,33 @@ type LogWriter struct {
 	logger *log.Logger
 }
 
+// Log write to the logger
+func (l *LogWriter) Log(input io.ReadCloser) {
+	in := bufio.NewScanner(input)
+	for in.Scan() {
+		l.logger.Print(in.Text())
+	}
+	input.Close()
+}
+
+// IsLogging return true if an availale logger exists
+func (l *LogWriter) IsLogging() bool {
+	return l.logger != nil
+}
+
+// NewStderrLogger return  Logger instance
+func NewStderrLogger(cfg *Config) *log.Logger {
+	if cfg.Stderr.File != "" {
+		file, err := logrotate.New(cfg.Stderr.File, cfg.Stderr.Age, cfg.Stderr.Num, cfg.Stderr.Size, cfg.Stderr.Timestamp)
+		if err != nil {
+			log.Printf("Failed to open log file %q: %s\n", cfg.Stderr.File, err)
+			return nil
+		}
+		return log.New(file, "", 0)
+	}
+	return nil
+}
+
 // NewLogger return a Logger instance
 func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 	var (
@@ -92,18 +119,4 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 		return log.New(multi, "", 0)
 	}
 	return nil
-}
-
-// Log write to the logger
-func (l *LogWriter) Log(input io.ReadCloser) {
-	in := bufio.NewScanner(input)
-	for in.Scan() {
-		l.logger.Print(in.Text())
-	}
-	input.Close()
-}
-
-// IsLogging return true if an availale logger exists
-func (l *LogWriter) IsLogging() bool {
-	return l.logger != nil
 }
