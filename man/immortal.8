@@ -1,6 +1,6 @@
 \" Manpage for immortal.
 .\" To correct errors or typos please use https://github.com/immortal/immortal/issues
-.TH man 8 "March 2017" "immortal" "immortal man page"
+.TH man 8 "September 2017" "immortal" "immortal man page"
 .SH NAME
 immortal \- starts and monitor a service
 .SH SYNOPSIS
@@ -80,6 +80,12 @@ Options start with one dash. Many of the options require an additional value nex
             num: <int>   # int
             size: <int>  # MegaBytes
             timestamp: <bool> # prefix log with timestamp
+        stderr:
+            file: <path>
+            age: <int>   # seconds
+            num: <int>   # int
+            size: <int>  # MegaBytes
+            timestamp: <bool> # prefix log with timestamp
         logger: <command>                # option -logger
         user: <user>                     # option -u
         wait: <int>                      # option -s
@@ -154,6 +160,13 @@ Configuration example:
 
     * Notice that when using the option -u/user, superuser privileges will be required
 
+In this example, log will write the combined standard output and standard error to file /tmp/app.log, to write and rotate apart the standard error, use the stderr option, example:
+
+    stderr:
+        file: /tmp/app-err.log
+        age: 86400 # seconds
+        num: 7     # int
+        size: 1    # MegaBytes
 
 Nginx example to manage remotely the service:
 
