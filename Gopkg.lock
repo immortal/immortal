@@ -34,8 +34,8 @@
 [[projects]]
   name = "github.com/nbari/violetear"
   packages = ["."]
-  revision = "13cb9a63c0cb68977810a7f38ced9f93178d5d62"
-  version = "3.1.2"
+  revision = "875703ed7ae9b57e9a19cb18fff2ec362448a7d8"
+  version = "3.1.8"
 
 [solve-meta]
   analyzer-name = "dep"
