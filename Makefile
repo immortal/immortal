@@ -10,7 +10,13 @@ DESTDIR ?= /usr/local
 all: clean build
 
 get:
-	dep ensure
+	${GO} get
+	${GO} get -u github.com/go-yaml/yaml;
+	${GO} get -u github.com/nbari/violetear;
+	${GO} get -u github.com/immortal/logrotate;
+	${GO} get -u github.com/immortal/multiwriter;
+	${GO} get -u github.com/immortal/natcasesort;
+	${GO} get -u github.com/immortal/xtime;
 
 build: get
 	${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o immortal cmd/immortal/main.go;
