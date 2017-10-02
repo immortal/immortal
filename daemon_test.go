@@ -298,7 +298,7 @@ func TestSignalsUDOT(t *testing.T) {
 	if status, err = ctl.GetStatus(filepath.Join(sdir, "immortal.sock")); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, "_test/immortal.test -test.run=TestHelperProcessSignalsUDOT --", status.Cmd)
+	expect(t, true, strings.HasSuffix(status.Cmd, "/immortal.test -test.run=TestHelperProcessSignalsUDOT --"))
 	expect(t, 1, int(status.Count))
 
 	// http socket client
