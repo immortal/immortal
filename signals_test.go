@@ -239,6 +239,7 @@ func waitSig(t *testing.T, fifo *os.File, sig string) {
 		buf = buf[:n]
 		msg := strings.TrimSpace(string(buf))
 		if msg != sig {
+			t.Log(msg, sig)
 			expect(t, sig, msg)
 		}
 		return
