@@ -20,6 +20,7 @@ before_install:
   - go get github.com/mattn/goveralls
   - go get github.com/nbari/violetear
   - if ! go get github.com/golang/tools/cmd/cover; then go get golang.org/x/tools/cmd/cover; fi
+  - dep ensure
 
 script:
   - go test -v -covermode=count -coverprofile=coverage.out

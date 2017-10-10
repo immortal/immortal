@@ -34,12 +34,12 @@
 [[projects]]
   name = "github.com/nbari/violetear"
   packages = ["."]
-  revision = "72cf83a095fe6dcd7bc4bc16d0aac49696b8c614"
-  version = "4.1.0"
+  revision = "128bb205fd36e62abecc955ea6fde72c58e90708"
+  version = "4.1.1"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "12cbf78a7a54ecab16ccfad41821782ff4d59a9d9cf8d7891ce0f227e93068c7"
+  inputs-digest = "487bf31d74bc680c58d37bafb737804cb7a4334c4abb1c13c59403d16f897fd1"
   solver-name = "gps-cdcl"
   solver-version = 1
