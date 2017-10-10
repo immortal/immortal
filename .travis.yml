@@ -8,7 +8,7 @@ go:
   - 1.9.x
   - 1.8.x
   - 1.7.x
-  - tip
+  - master
 
 before_install:
   - go get github.com/axw/gocov/gocov
@@ -20,7 +20,6 @@ before_install:
   - go get github.com/mattn/goveralls
   - go get github.com/nbari/violetear
   - if ! go get github.com/golang/tools/cmd/cover; then go get golang.org/x/tools/cmd/cover; fi
-  - dep ensure
 
 script:
   - go test -v -covermode=count -coverprofile=coverage.out
