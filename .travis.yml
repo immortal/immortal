@@ -12,14 +12,12 @@ go:
 
 before_install:
   - go get github.com/axw/gocov/gocov
-  - go get github.com/go-yaml/yaml
-  - go get github.com/immortal/logrotate
-  - go get github.com/immortal/multiwriter
-  - go get github.com/immortal/natcasesort
-  - go get github.com/immortal/xtime
   - go get github.com/mattn/goveralls
-  - go get github.com/nbari/violetear
   - if ! go get github.com/golang/tools/cmd/cover; then go get golang.org/x/tools/cmd/cover; fi
+
+install:
+   - go get -u github.com/golang/dep/...
+   - dep ensure
 
 script:
   - go test -v -covermode=count -coverprofile=coverage.out
