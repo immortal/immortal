@@ -179,7 +179,7 @@ func TestSignalsFiFo(t *testing.T) {
 		if err := GetJSON(filepath.Join(sdir, "immortal.sock"), fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
 			t.Fatal(err)
 		}
-		expect(t, "", res.Err)
+		expect(t, string(""), res.Err)
 		waitSig(t, fifo, s.expected)
 	}
 
