@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+var testSignals = make(chan string)
+
 func TestHelperProcessSignalsFiFo(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
