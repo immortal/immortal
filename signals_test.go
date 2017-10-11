@@ -17,7 +17,28 @@ import (
 	"time"
 )
 
-var testSignals = make(chan string)
+// MakeFifo creates a fifo file
+func MakeFifo(path string) error {
+	err := os.MkdirAll(filepath.Dir(path), os.ModePerm)
+	if err != nil {
+		return err
+	}
+	err = syscall.Mknod(path, syscall.S_IFIFO|0666, 0)
+	// ignore "file exists" errors and assume the FIFO was pre-made
+	if err != nil && !os.IsExist(err) {
+		return err
+	}
+	return nil
+}
+
+// OpenFifo open fifo and returns its file descriptor
+func OpenFifo(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDWR, os.ModeNamedPipe)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
 
 func TestHelperProcessSignalsFiFo(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
@@ -177,12 +198,14 @@ func TestSignalsFiFo(t *testing.T) {
 	}
 	res := &Response{}
 
-	for _, s := range testSignals {
-		if err := GetJSON(filepath.Join(sdir, "immortal.sock"), fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
-			t.Fatal(err)
-		}
-		expect(t, "", res.Err)
-		waitSig(t, fifo, s.expected)
+	for _, tc := range testSignals {
+		t.Run(tc.signal, func(t *testing.T) {
+			if err := GetJSON(filepath.Join(sdir, "immortal.sock"), fmt.Sprintf("/signal/%s", tc.signal), res); err != nil {
+				t.Fatal(err)
+			}
+			expect(t, "", res.Err)
+			waitSig(t, fifo, tc.expected)
+		})
 	}
 
 	// test "d", (keep it down and don't restart)
@@ -196,12 +219,14 @@ func TestSignalsFiFo(t *testing.T) {
 
 	// create error os: process already finished
 	mylog.Reset()
-	for _, s := range testSignals {
-		if err := GetJSON(filepath.Join(sdir, "immortal.sock"), fmt.Sprintf("/signal/%s", s.signal), res); err != nil {
-			t.Fatal(err)
-		}
-		expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "no such process"))
-		mylog.Reset()
+	for _, tc := range testSignals {
+		t.Run(tc.signal, func(t *testing.T) {
+			if err := GetJSON(filepath.Join(sdir, "immortal.sock"), fmt.Sprintf("/signal/%s", tc.signal), res); err != nil {
+				t.Fatal(err)
+			}
+			expect(t, true, strings.HasSuffix(strings.TrimSpace(mylog.String()), "no such process"))
+			mylog.Reset()
+		})
 	}
 
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/d", res); err != nil {
