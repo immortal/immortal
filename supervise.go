@@ -52,10 +52,11 @@ func Supervise(d *Daemon) {
 			// unlock, or lock once
 			atomic.StoreUint32(&d.lock, d.lockOnce)
 			if err != nil && err.Error() == "EXIT" {
-				log.Printf("PID: %d Exited", pid)
+				log.Printf("PID: %d (%s) Exited", pid, p.cmd.Path)
 			} else {
-				log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+				log.Printf("PID %d (%s) terminated, %s [%v user  %v sys  %s up]\n",
 					p.cmd.ProcessState.Pid(),
+					p.cmd.Path,
 					p.cmd.ProcessState,
 					p.cmd.ProcessState.UserTime(),
 					p.cmd.ProcessState.SystemTime(),
