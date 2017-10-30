@@ -346,10 +346,12 @@ func TestSignalsUDOT(t *testing.T) {
 
 	// test "u"
 	t.Log("testing up")
-	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "up"); err != nil {
-		t.Fatal(err)
-	}
-	<-d.run
+	go func() {
+		if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "up"); err != nil {
+			t.Fatal(err)
+		}
+		<-d.run
+	}()
 	p, err = d.Run(NewProcess(cfg))
 	if err != nil {
 		t.Error(err)
@@ -360,6 +362,9 @@ func TestSignalsUDOT(t *testing.T) {
 	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "o"); err != nil {
 		t.Fatal(err)
 	}
+
+	// TODO check lock
+
 	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "k"); err != nil {
 		t.Fatal(err)
 	}
