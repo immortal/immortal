@@ -32,8 +32,6 @@ func Supervise(d *Daemon) {
 		select {
 		case <-d.quit:
 			return
-		case <-info:
-			d.Info()
 		case <-d.run:
 			time.Sleep(wait)
 			// create a new process
@@ -46,6 +44,8 @@ func Supervise(d *Daemon) {
 					d.run <- struct{}{}
 				}
 			}
+		case <-info:
+			d.Info()
 		case err := <-p.errch:
 			// set end time
 			p.eTime = time.Now()
@@ -69,8 +69,7 @@ func Supervise(d *Daemon) {
 					wait = time.Second - uptime
 				}
 			}
-			// follow the new pid and stop running the command
-			// unless the new pid dies
+			// follow the new pid instead of trying to call run again unless the new pid dies
 			if d.cfg.Pid.Follow != "" {
 				pid, err = d.ReadPidFile(d.cfg.Pid.Follow)
 				if err != nil {
@@ -90,6 +89,7 @@ func Supervise(d *Daemon) {
 					}
 				}
 			} else {
+				// run again
 				d.run <- struct{}{}
 			}
 		}
