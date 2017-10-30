@@ -242,7 +242,7 @@ func TestSignalsFiFo(t *testing.T) {
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/unknown", res); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, "Unknown signal: unknown", res.Err)
+	expect(t, "unknown signal: unknown", res.Err)
 
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/halt", res); err != nil {
 		t.Fatal(err)

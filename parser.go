@@ -59,7 +59,7 @@ func (p *Parse) parseYml(file string) (*Config, error) {
 	}
 	var cfg Config
 	if err := yaml.Unmarshal(f, &cfg); err != nil {
-		return nil, fmt.Errorf("Unable to parse YAML file %q %s", file, err)
+		return nil, fmt.Errorf("unable to parse YAML file %q %s", file, err)
 	}
 	return &cfg, nil
 }
@@ -106,9 +106,9 @@ func (p *Parse) checkUser(u string) (*user.User, error) {
 	usr, err := p.UserLookup(u)
 	if err != nil {
 		if _, ok := err.(user.UnknownUserError); ok {
-			return nil, fmt.Errorf("User %q does not exist.", u)
+			return nil, fmt.Errorf("user %q does not exist", u)
 		}
-		return nil, fmt.Errorf("Error looking up user: %q. %s", u, err)
+		return nil, fmt.Errorf("error looking up user: %q. %s", u, err)
 	}
 	return usr, nil
 }
@@ -165,7 +165,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	// if -c
 	if flags.Configfile != "" {
 		if !isFile(flags.Configfile) {
-			err = fmt.Errorf("Cannot read file: %q, use (\"%s -h\") for help.", flags.Configfile, os.Args[0])
+			err = fmt.Errorf("cannot read file: %q, use (\"%s -h\") for help", flags.Configfile, os.Args[0])
 			return
 		}
 		cfg, err = p.parseYml(flags.Configfile)
@@ -173,7 +173,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 			return
 		}
 		if cfg.Cmd == "" {
-			err = fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
+			err = fmt.Errorf("missing command, use (\"%s -h\") for help", os.Args[0])
 			return
 		}
 		cfg.command = strings.Fields(cfg.Cmd)
@@ -193,7 +193,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 
 	// if no args
 	if len(fs.Args()) < 1 {
-		err = fmt.Errorf("Missing command, use (\"%s -h\") for help.", os.Args[0])
+		err = fmt.Errorf("missing command, use (\"%s -h\") for help", os.Args[0])
 		return
 	}
 

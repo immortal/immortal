@@ -156,7 +156,7 @@ func (s *ScanDir) Scandir(ctl Control) error {
 				name := strings.TrimSuffix(f.Name(), filepath.Ext(f.Name()))
 				md5, err := md5sum(path)
 				if err != nil {
-					return fmt.Errorf("Error getting the md5sum: %s", err)
+					return fmt.Errorf("error getting the md5sum: %s", err)
 				}
 				// start or restart if service is not in map or file lock don't exists
 				if _, ok := s.services[name]; !ok || !isFile(filepath.Join(s.sdir, name, "lock")) {

@@ -31,7 +31,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 
 	// return if process is running
 	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
-		return nil, fmt.Errorf("Cannot start, process still running")
+		return nil, fmt.Errorf("cannot start, process still running")
 	}
 
 	// increment count by 1
@@ -66,10 +66,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 
 // WritePid write pid to file
 func (d *Daemon) WritePid(file string, pid int) error {
-	if err := ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
-		return err
-	}
-	return nil
+	return ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644)
 }
 
 // IsRunning check if process is running

@@ -112,7 +112,7 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 		close(d.quit)
 
 	default:
-		err = fmt.Errorf("Unknown signal: %s", signal)
+		err = fmt.Errorf("unknown signal: %s", signal)
 	}
 
 	res := &SignalResponse{}
