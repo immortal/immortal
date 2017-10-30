@@ -132,7 +132,7 @@ func New(cfg *Config) (*Daemon, error) {
 		cfg:    cfg,
 		supDir: supDir,
 		quit:   make(chan struct{}),
-		run:    make(chan struct{}),
+		run:    make(chan struct{}, 1),
 		sTime:  time.Now(),
 	}, nil
 }
