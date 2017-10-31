@@ -70,6 +70,8 @@ func (s *ScanDir) Start(ctl Control) {
 
 	// check for new services on scandir
 	go WatchDir(s.scandir, s.watch)
+
+	// start with scandir
 	s.watch <- s.scandir
 
 	for {
