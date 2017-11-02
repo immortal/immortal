@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -104,10 +103,6 @@ func TestSupervise(t *testing.T) {
 	if childPid == newchildPid {
 		t.Error("Expecting new child pid")
 	}
-
-	// test info
-	syscall.Kill(os.Getpid(), syscall.SIGQUIT)
-	time.Sleep(time.Second)
 
 	// fake watch pid with other process
 	cmd := exec.Command("sleep", "1")

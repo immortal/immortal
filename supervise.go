@@ -2,10 +2,7 @@ package immortal
 
 import (
 	"log"
-	"os"
-	"os/signal"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -13,7 +10,6 @@ import (
 func Supervise(d *Daemon) {
 	var (
 		err  error
-		info = make(chan os.Signal)
 		p    *process
 		pid  int
 		wait time.Duration
@@ -24,9 +20,6 @@ func Supervise(d *Daemon) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Info loop, kill -3 PPID get stats
-	signal.Notify(info, syscall.SIGQUIT)
 
 	for {
 		select {
@@ -44,8 +37,6 @@ func Supervise(d *Daemon) {
 					d.run <- struct{}{}
 				}
 			}
-		case <-info:
-			d.Info()
 		case err := <-p.errch:
 			// set end time
 			p.eTime = time.Now()
