@@ -27,6 +27,45 @@ type process struct {
 	sTime, eTime time.Time
 }
 
+// SetEnv set environment variables - If the Cmd.Env contains duplicate
+// environment keys, only the last value in the slice for each duplicate
+// key is used.
+func (p *process) SetEnv(env []string) {
+	if p.Env != nil {
+		for k, v := range p.Env {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		p.cmd.Env = env
+	}
+}
+
+// SetsysProcAttr - set process owner (run on behalf)
+func (p *process) SetsysProcAttr() error {
+	sysProcAttr := &syscall.SysProcAttr{
+		Setpgid: true, // Set process group ID to Pgid, or, if Pgid == 0, to new pid.
+		Pgid:    0,    // Child's process group ID if Setpgid.
+	}
+
+	// set owner
+	if p.user != nil {
+		uid, err := strconv.Atoi(p.user.Uid)
+		if err != nil {
+			return err
+		}
+		gid, err := strconv.Atoi(p.user.Gid)
+		if err != nil {
+			return err
+		}
+		sysProcAttr.Credential = &syscall.Credential{
+			Uid: uint32(uid),
+			Gid: uint32(gid),
+		}
+	}
+
+	// set the attributes
+	p.cmd.SysProcAttr = sysProcAttr
+}
+
 // Start runs the command
 func (p *process) Start() (*process, error) {
 	// command obtained from Config parent
@@ -37,39 +76,13 @@ func (p *process) Start() (*process, error) {
 		p.cmd.Dir = p.Cwd
 	}
 
-	// set environment vars
-	if p.Env != nil {
-		env := os.Environ()
-		for k, v := range p.Env {
-			env = append(env, fmt.Sprintf("%s=%s", k, v))
-		}
-		p.cmd.Env = env
+	// set environment variables
+	p.SetEnv(os.Environ())
+
+	// set sysProcAttr
+	if err := p.SetsysProcAttr(); err != nil {
+		return nil, err
 	}
-
-	sysProcAttr := new(syscall.SysProcAttr)
-
-	// set owner
-	if p.user != nil {
-		uid, err := strconv.Atoi(p.user.Uid)
-		if err != nil {
-			return nil, err
-		}
-		gid, err := strconv.Atoi(p.user.Gid)
-		if err != nil {
-			return nil, err
-		}
-		sysProcAttr.Credential = &syscall.Credential{
-			Uid: uint32(uid),
-			Gid: uint32(gid),
-		}
-	}
-
-	// Set Process group ID to Pgid, or, if Pgid == 0, to new pid
-	sysProcAttr.Setpgid = true
-	sysProcAttr.Pgid = 0
-
-	// set the attributes
-	p.cmd.SysProcAttr = sysProcAttr
 
 	var (
 		prStdout, prStderr, pwStdout, pwStderr *os.File
