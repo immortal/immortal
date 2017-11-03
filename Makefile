@@ -1,4 +1,4 @@
-.PHONY: all get test clean build cover compile goxc bintray install uninstall
+.PHONY: all get test clean build cover compile goxc bintray install uninstall docker
 
 GO ?= go
 GO_XC = ${GOPATH}/bin/goxc -os="freebsd netbsd openbsd darwin linux"
@@ -74,3 +74,6 @@ uninstall: clean
 	@rm -f ${DESTDIR}/bin/immortalctl
 	@rm -f ${DESTDIR}/bin/immortaldir
 	@rm -f ${DESTDIR}/share/man/man8/immortal*
+
+docker:
+	docker run -it --privileged immortal .
