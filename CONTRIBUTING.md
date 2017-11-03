@@ -1,4 +1,4 @@
-# Contributing to immortal
+# Contributing to ⭕  immortal
 
 First and foremost, thank you! We appreciate that you want to contribute to
 **immortal**, your time is valuable, and your contributions mean a lot to us.
