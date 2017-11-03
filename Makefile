@@ -1,4 +1,4 @@
-.PHONY: all get test clean build cover compile goxc bintray install uninstall docker
+.PHONY: all get test clean build cover compile goxc bintray install uninstall docker linux
 
 GO ?= go
 GO_XC = ${GOPATH}/bin/goxc -os="freebsd netbsd openbsd darwin linux"
@@ -77,3 +77,6 @@ uninstall: clean
 
 docker:
 	docker run -it --privileged immortal .
+
+linux:
+	docker run --entrypoint "/bin/bash" -it --privileged immortal
