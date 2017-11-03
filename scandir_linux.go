@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/immortal/xtime"
@@ -18,7 +17,7 @@ import (
 type ScanDir struct {
 	scandir       string
 	sdir          string
-	services      sync.Map
+	services      map[string]string
 	timeMultipler time.Duration
 }
 
@@ -52,6 +51,7 @@ func NewScanDir(path string) (*ScanDir, error) {
 	return &ScanDir{
 		scandir:       dir,
 		sdir:          GetSdir(),
+		services:      map[string]string{},
 		timeMultipler: 5,
 	}, nil
 }
@@ -92,12 +92,12 @@ func (s *ScanDir) Scanner(ctl Control) {
 			}
 			// add service to services map or reload if file has been changed
 			services = append(services, name)
-			if hash, ok := s.services.Load(name); !ok || !isFile(filepath.Join(s.sdir, name, "lock")) {
+			if hash, ok := s.services[name]; !ok || !isFile(filepath.Join(s.sdir, name, "lock")) {
 				start = true
 			} else if hash != md5 {
 				stop = true
 			}
-			s.services.Store(name, md5)
+			s.services[name] = md5
 			// check if file hasn't been changed since last tick (5 seconds)
 			refresh := (time.Now().Unix() - xtime.Get(f).Ctime().Unix()) <= int64(s.timeMultipler)
 			if refresh || start {
@@ -111,7 +111,7 @@ func (s *ScanDir) Scanner(ctl Control) {
 				if _, err := ctl.SendSignal(filepath.Join(s.sdir, name, "immortal.sock"), "start"); err != nil {
 					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
 						// keep retrying
-						s.services.Delete(name)
+						delete(s.services, name)
 						log.Println(err)
 					} else {
 						log.Printf("%s\n", out)
@@ -131,7 +131,7 @@ func (s *ScanDir) Scanner(ctl Control) {
 	// halts services that don't exist anymore
 	for service := range s.services {
 		if !inSlice(services, service) {
-			s.services.Delete(service)
+			delete(s.services, service)
 			ctl.SendSignal(filepath.Join(s.sdir, service, "immortal.sock"), "halt")
 			log.Printf("Exiting: %s\n", service)
 		}
