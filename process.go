@@ -64,6 +64,8 @@ func (p *process) SetsysProcAttr() error {
 
 	// set the attributes
 	p.cmd.SysProcAttr = sysProcAttr
+
+	return nil
 }
 
 // Start runs the command
