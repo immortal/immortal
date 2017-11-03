@@ -11,9 +11,9 @@ https://immortal.run/
 
 [![GitHub release](https://img.shields.io/github/release/immortal/immortal.svg)](https://github.com/immortal/immortal/releases)
 [![GoDoc](https://godoc.org/github.com/immortal/immortal?status.svg)](https://godoc.org/github.com/immortal/immortal)
+[![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/immortal/immortal/blob/master/CONTRIBUTING.md)
 
-
-## Contributing [![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/immortal/immortal/blob/master/CONTRIBUTING.md)
+## run on behalf other system user
 
 If services need to run on behalf other system user `www, nobody, www-data`,
 not `root`, **immortal** should be compiled from source for the desired
