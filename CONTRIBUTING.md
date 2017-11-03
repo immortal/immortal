@@ -32,7 +32,7 @@ Don't have time to contribute? No worries, here are some other ways to show your
 support for **immortal**:
 
 - star the [project](https://github.com/immortal/immortal)
-- tweet your support for immortal
+- tweet your support for **immortal**
 
 ## Issues
 
