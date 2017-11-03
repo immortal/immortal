@@ -17,9 +17,8 @@ import (
 type ScanDir struct {
 	scandir  string
 	sdir     string
-	services map[string]string
+	services sync.Map
 	watch    chan string
-	sync.Mutex
 }
 
 // NewScanDir returns ScanDir struct
@@ -48,10 +47,9 @@ func NewScanDir(path string) (*ScanDir, error) {
 	defer d.Close()
 
 	return &ScanDir{
-		scandir:  dir,
-		sdir:     GetSdir(),
-		services: map[string]string{},
-		watch:    make(chan string, 1),
+		scandir: dir,
+		sdir:    GetSdir(),
+		watch:   make(chan string, 1),
 	}, nil
 }
 
@@ -72,6 +70,8 @@ func (s *ScanDir) Start(ctl Control) {
 
 	// check for new services on scandir
 	go WatchDir(s.scandir, s.watch)
+
+	// start with scandir
 	s.watch <- s.scandir
 
 	for {
@@ -97,20 +97,19 @@ func (s *ScanDir) Start(ctl Control) {
 					if err != nil {
 						log.Fatalf("Error getting the md5sum: %s", err)
 					}
-					s.Lock()
 					// restart if file changed
-					if md5 != s.services[serviceName] {
-						s.services[serviceName] = md5
+					hash, _ := s.services.Load(serviceName)
+					if md5 != hash {
+						s.services.Store(serviceName, md5)
 						log.Printf("Stopping: %s\n", serviceName)
 						ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
 					}
-					s.Unlock()
 					log.Printf("Starting: %s\n", serviceName)
 					// try to start before via socket
 					if _, err := ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "start"); err != nil {
 						if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", watch, serviceName)); err != nil {
 							// keep retrying
-							delete(s.services, serviceName)
+							s.services.Delete(serviceName)
 							log.Println(err)
 						} else {
 							log.Printf("%s\n", out)
@@ -132,9 +131,7 @@ func (s *ScanDir) Start(ctl Control) {
 					}()
 				} else {
 					// remove service
-					s.Lock()
-					delete(s.services, serviceName)
-					s.Unlock()
+					s.services.Delete(serviceName)
 					ctl.SendSignal(filepath.Join(s.sdir, serviceName, "immortal.sock"), "halt")
 					log.Printf("Exiting: %s\n", serviceName)
 				}
@@ -145,8 +142,6 @@ func (s *ScanDir) Start(ctl Control) {
 
 // Scandir searches for *.yml if file changes it will reload(stop-start)
 func (s *ScanDir) Scandir(ctl Control) error {
-	s.Lock()
-	defer s.Unlock()
 	find := func(path string, f os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -156,11 +151,11 @@ func (s *ScanDir) Scandir(ctl Control) error {
 				name := strings.TrimSuffix(f.Name(), filepath.Ext(f.Name()))
 				md5, err := md5sum(path)
 				if err != nil {
-					return fmt.Errorf("Error getting the md5sum: %s", err)
+					return fmt.Errorf("error getting the md5sum: %s", err)
 				}
 				// start or restart if service is not in map or file lock don't exists
-				if _, ok := s.services[name]; !ok || !isFile(filepath.Join(s.sdir, name, "lock")) {
-					s.services[name] = md5
+				if _, ok := s.services.Load(name); !ok || !isFile(filepath.Join(s.sdir, name, "lock")) {
+					s.services.Store(name, md5)
 					log.Printf("Starting: %s\n", name)
 					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
 						log.Println(err)

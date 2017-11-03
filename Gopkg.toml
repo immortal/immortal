@@ -1,0 +1,23 @@
+[[constraint]]
+  branch = "v2"
+  name = "github.com/go-yaml/yaml"
+
+[[constraint]]
+  name = "github.com/immortal/logrotate"
+  version = "0.3.0"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/immortal/multiwriter"
+
+[[constraint]]
+  name = "github.com/immortal/natcasesort"
+  version = "0.2.0"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/immortal/xtime"
+
+[[constraint]]
+  name = "github.com/nbari/violetear"
+  version = "4.1.3"

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -18,7 +17,7 @@ func TestHelperProcessSupervise(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
-	c := make(chan os.Signal, 1)
+	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt, os.Kill)
 	select {
 	case <-c:
@@ -36,7 +35,7 @@ func TestHelperProcessSupervise2(*testing.T) {
 }
 
 func TestSupervise(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestDaemonNewCtlErr")
+	sdir, err := ioutil.TempDir("", "TestSupervise")
 	if err != nil {
 		t.Error(err)
 	}
@@ -105,10 +104,6 @@ func TestSupervise(t *testing.T) {
 		t.Error("Expecting new child pid")
 	}
 
-	// test info
-	syscall.Kill(os.Getpid(), syscall.SIGQUIT)
-	time.Sleep(time.Second)
-
 	// fake watch pid with other process
 	cmd := exec.Command("sleep", "1")
 	cmd.Start()
@@ -139,8 +134,10 @@ func TestSupervise(t *testing.T) {
 	}
 }
 
+// TestSuperviseWait will test that the wait variable in supervise.go is set to
+// approximately 1 second (wait = time.Second - uptime) to avoid high CPU usage
 func TestSuperviseWait(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestDaemonNewCtlErr")
+	sdir, err := ioutil.TempDir("", "TestSuperviseWait")
 	if err != nil {
 		t.Error(err)
 	}

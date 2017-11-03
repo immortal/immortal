@@ -87,12 +87,12 @@ func (c *Controller) PurgeServices(dir string) error {
 				continue
 			}
 			if f.IsDir() {
-				return fmt.Errorf("Could not purge dir: %s", dir)
+				return fmt.Errorf("could not purge dir: %s", dir)
 			}
 		}
 		return os.RemoveAll(filepath.Dir(dir))
 	}
-	return fmt.Errorf("Could not purge dir: %s", dir)
+	return fmt.Errorf("could not purge dir: %s", dir)
 }
 
 // Run executes a command and print combinedOutput

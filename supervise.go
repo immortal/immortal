@@ -2,10 +2,7 @@ package immortal
 
 import (
 	"log"
-	"os"
-	"os/signal"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -13,7 +10,6 @@ import (
 func Supervise(d *Daemon) {
 	var (
 		err  error
-		info = make(chan os.Signal)
 		p    *process
 		pid  int
 		wait time.Duration
@@ -25,15 +21,10 @@ func Supervise(d *Daemon) {
 		log.Fatal(err)
 	}
 
-	// Info loop, kill -3 PPID get stats
-	signal.Notify(info, syscall.SIGQUIT)
-
 	for {
 		select {
 		case <-d.quit:
 			return
-		case <-info:
-			d.Info()
 		case <-d.run:
 			time.Sleep(wait)
 			// create a new process
@@ -52,10 +43,11 @@ func Supervise(d *Daemon) {
 			// unlock, or lock once
 			atomic.StoreUint32(&d.lock, d.lockOnce)
 			if err != nil && err.Error() == "EXIT" {
-				log.Printf("PID: %d Exited", pid)
+				log.Printf("PID: %d (%s) Exited", pid, p.cmd.Path)
 			} else {
-				log.Printf("PID %d terminated, %s [%v user  %v sys  %s up]\n",
+				log.Printf("PID %d (%s) terminated, %s [%v user  %v sys  %s up]\n",
 					p.cmd.ProcessState.Pid(),
+					p.cmd.Path,
 					p.cmd.ProcessState,
 					p.cmd.ProcessState.UserTime(),
 					p.cmd.ProcessState.SystemTime(),
@@ -68,8 +60,7 @@ func Supervise(d *Daemon) {
 					wait = time.Second - uptime
 				}
 			}
-			// follow the new pid and stop running the command
-			// unless the new pid dies
+			// follow the new pid instead of trying to call run again unless the new pid dies
 			if d.cfg.Pid.Follow != "" {
 				pid, err = d.ReadPidFile(d.cfg.Pid.Follow)
 				if err != nil {
@@ -89,6 +80,7 @@ func Supervise(d *Daemon) {
 					}
 				}
 			} else {
+				// run again
 				d.run <- struct{}{}
 			}
 		}

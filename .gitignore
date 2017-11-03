@@ -9,3 +9,4 @@ coverage.*
 .goxc.json
 build
 supervise
+vendor

@@ -20,8 +20,7 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	// get signal from request params
-	params := r.Context().Value(violetear.ParamsKey).(violetear.Params)
-	signal := params["*"].(string)
+	signal := violetear.GetParam("*", r)
 
 	switch signal {
 	// a: Alarm. Send the service an ALRM signal.
@@ -113,7 +112,7 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 		close(d.quit)
 
 	default:
-		err = fmt.Errorf("Unknown signal: %s", signal)
+		err = fmt.Errorf("unknown signal: %s", signal)
 	}
 
 	res := &SignalResponse{}
