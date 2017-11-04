@@ -36,19 +36,14 @@ func (s *Supervisor) Start() {
 		case <-s.daemon.quit:
 			return
 		case <-s.daemon.run:
-			time.Sleep(s.wait)
-			// create a new process
-			if s.daemon.lock == 0 {
-				s.ReStart()
-			}
+			s.ReStart()
 		case err := <-s.process.errch:
 			s.Terminate(err)
 			// follow the new pid instead of trying to call run again unless the new pid dies
 			if s.daemon.cfg.Pid.Follow != "" {
 				s.FollowPid(err)
 			} else {
-				// run again
-				s.daemon.run <- struct{}{}
+				s.ReStart()
 			}
 		}
 	}
@@ -57,12 +52,16 @@ func (s *Supervisor) Start() {
 // ReStart create a new process
 func (s *Supervisor) ReStart() {
 	var err error
-	np := NewProcess(s.daemon.cfg)
-	if s.process, err = s.daemon.Run(np); err != nil {
-		close(np.quit)
-		log.Print(err)
-		s.wait = time.Second
-		s.daemon.run <- struct{}{}
+	time.Sleep(s.wait)
+	if s.daemon.lock == 0 {
+		np := NewProcess(s.daemon.cfg)
+		if s.process, err = s.daemon.Run(np); err != nil {
+			close(np.quit)
+			log.Print(err)
+			// loop again but wait 1 seccond before trying again
+			s.wait = time.Second
+			s.daemon.run <- struct{}{}
+		}
 	}
 }
 
