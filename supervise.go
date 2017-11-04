@@ -6,82 +6,103 @@ import (
 	"time"
 )
 
+type Supervisor struct {
+	daemon  *Daemon
+	process *process
+	wait    time.Duration
+}
+
 // Supervise keep daemon process up and running
 func Supervise(d *Daemon) {
-	var (
-		err  error
-		p    *process
-		pid  int
-		wait time.Duration
-	)
-
 	// start a new process
-	p, err = d.Run(NewProcess(d.cfg))
+	p, err := d.Run(NewProcess(d.cfg))
 	if err != nil {
 		log.Fatal(err)
 	}
+	supervisor := &Supervisor{
+		daemon:  d,
+		process: p,
+	}
+	supervisor.Start()
+}
 
+// ReStart create a new process
+func (s *Supervisor) ReStart() {
+	var err error
+	np := NewProcess(s.daemon.cfg)
+	if s.process, err = s.daemon.Run(np); err != nil {
+		close(np.quit)
+		log.Print(err)
+		s.wait = time.Second
+		s.daemon.run <- struct{}{}
+	}
+}
+
+// Terminate
+func (s *Supervisor) Terminate() {
+	// set end time
+	s.process.eTime = time.Now()
+	// unlock, or lock once
+	atomic.StoreUint32(&s.daemon.lock, s.daemon.lockOnce)
+	if err != nil && err.Error() == "EXIT" {
+		log.Printf("PID: %d (%s) Exited", s.pid, s.process.cmd.Path)
+	} else {
+		log.Printf("PID %d (%s) terminated, %s [%v user  %v sys  %s up]\n",
+			s.process.cmd.ProcessState.Pid(),
+			s.process.cmd.Path,
+			s.process.cmd.ProcessState,
+			s.process.cmd.ProcessState.UserTime(),
+			s.process.cmd.ProcessState.SystemTime(),
+			time.Since(s.process.sTime),
+		)
+		// calculate time for next reboot (avoids high CPU usage)
+		uptime := s.process.eTime.Sub(s.process.sTime)
+		s.wait = 0 * time.Second
+		if uptime < time.Second {
+			s.wait = time.Second - uptime
+		}
+	}
+}
+
+func (s *Supervisor) FollowPid() {
+	var err error
+	pid, err = s.daemon.ReadPidFile(s.daemon.cfg.Pid.Follow)
+	if err != nil {
+		log.Printf("Cannot read pidfile: %s, %s", s.daemon.cfg.Pid.Follow, err)
+		s.daemon.run <- struct{}{}
+	} else {
+		// check if pid in file is valid
+		if pid > 1 && pid != s.process.Pid() && s.daemon.IsRunning(pid) {
+			log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
+			s.daemon.fpid = true
+			// overwrite original (defunct) pid with the fpid in order to be available to send signals
+			s.process.cmd.Process.Pid = pid
+			d.WatchPid(pid, s.process.errch)
+		} else {
+			// if cmd exits or process is kill
+			s.daemon.run <- struct{}{}
+		}
+	}
+}
+
+func (s *Supervisor) Start() {
 	for {
 		select {
-		case <-d.quit:
+		case <-s.daemon.quit:
 			return
-		case <-d.run:
-			time.Sleep(wait)
+		case <-s.daemon.run:
+			time.Sleep(s.wait)
 			// create a new process
-			if d.lock == 0 {
-				np := NewProcess(d.cfg)
-				if p, err = d.Run(np); err != nil {
-					close(np.quit)
-					log.Print(err)
-					wait = time.Second
-					d.run <- struct{}{}
-				}
+			if s.daemon.lock == 0 {
+				s.Restart()
 			}
-		case err := <-p.errch:
-			// set end time
-			p.eTime = time.Now()
-			// unlock, or lock once
-			atomic.StoreUint32(&d.lock, d.lockOnce)
-			if err != nil && err.Error() == "EXIT" {
-				log.Printf("PID: %d (%s) Exited", pid, p.cmd.Path)
-			} else {
-				log.Printf("PID %d (%s) terminated, %s [%v user  %v sys  %s up]\n",
-					p.cmd.ProcessState.Pid(),
-					p.cmd.Path,
-					p.cmd.ProcessState,
-					p.cmd.ProcessState.UserTime(),
-					p.cmd.ProcessState.SystemTime(),
-					time.Since(p.sTime),
-				)
-				// calculate time for next reboot (avoids high CPU usage)
-				uptime := p.eTime.Sub(p.sTime)
-				wait = 0 * time.Second
-				if uptime < time.Second {
-					wait = time.Second - uptime
-				}
-			}
+		case err := <-s.process.errch:
 			// follow the new pid instead of trying to call run again unless the new pid dies
 			if d.cfg.Pid.Follow != "" {
-				pid, err = d.ReadPidFile(d.cfg.Pid.Follow)
-				if err != nil {
-					log.Printf("Cannot read pidfile: %s, %s", d.cfg.Pid.Follow, err)
-					d.run <- struct{}{}
-				} else {
-					// check if pid in file is valid
-					if pid > 1 && pid != p.Pid() && d.IsRunning(pid) {
-						log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
-						d.fpid = true
-						// overwrite original (defunct) pid with the fpid in order to be available to send signals
-						p.cmd.Process.Pid = pid
-						d.WatchPid(pid, p.errch)
-					} else {
-						// if cmd exits or process is kill
-						d.run <- struct{}{}
-					}
-				}
+				s.FollowPid()
 			} else {
 				// run again
-				d.run <- struct{}{}
+				s.daemon.run <- struct{}{}
 			}
 		}
 	}
