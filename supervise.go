@@ -9,6 +9,7 @@ import (
 type Supervisor struct {
 	daemon  *Daemon
 	process *process
+	pid     int
 	wait    time.Duration
 }
 
@@ -39,7 +40,7 @@ func (s *Supervisor) ReStart() {
 }
 
 // Terminate
-func (s *Supervisor) Terminate() {
+func (s *Supervisor) Terminate(err error) {
 	// set end time
 	s.process.eTime = time.Now()
 	// unlock, or lock once
@@ -64,20 +65,19 @@ func (s *Supervisor) Terminate() {
 	}
 }
 
-func (s *Supervisor) FollowPid() {
-	var err error
-	pid, err = s.daemon.ReadPidFile(s.daemon.cfg.Pid.Follow)
+func (s *Supervisor) FollowPid(err error) {
+	s.pid, err = s.daemon.ReadPidFile(s.daemon.cfg.Pid.Follow)
 	if err != nil {
 		log.Printf("Cannot read pidfile: %s, %s", s.daemon.cfg.Pid.Follow, err)
 		s.daemon.run <- struct{}{}
 	} else {
 		// check if pid in file is valid
-		if pid > 1 && pid != s.process.Pid() && s.daemon.IsRunning(pid) {
-			log.Printf("Watching pid %d on file: %s", pid, d.cfg.Pid.Follow)
+		if s.pid > 1 && s.pid != s.process.Pid() && s.daemon.IsRunning(s.pid) {
+			log.Printf("Watching pid %d on file: %s", s.pid, s.daemon.cfg.Pid.Follow)
 			s.daemon.fpid = true
 			// overwrite original (defunct) pid with the fpid in order to be available to send signals
-			s.process.cmd.Process.Pid = pid
-			d.WatchPid(pid, s.process.errch)
+			s.process.cmd.Process.Pid = s.pid
+			s.daemon.WatchPid(s.pid, s.process.errch)
 		} else {
 			// if cmd exits or process is kill
 			s.daemon.run <- struct{}{}
@@ -94,12 +94,13 @@ func (s *Supervisor) Start() {
 			time.Sleep(s.wait)
 			// create a new process
 			if s.daemon.lock == 0 {
-				s.Restart()
+				s.ReStart()
 			}
 		case err := <-s.process.errch:
+			s.Terminate(err)
 			// follow the new pid instead of trying to call run again unless the new pid dies
-			if d.cfg.Pid.Follow != "" {
-				s.FollowPid()
+			if s.daemon.cfg.Pid.Follow != "" {
+				s.FollowPid(err)
 			} else {
 				// run again
 				s.daemon.run <- struct{}{}
