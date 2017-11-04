@@ -76,6 +76,7 @@ uninstall: clean
 	@rm -f ${DESTDIR}/share/man/man8/immortal*
 
 docker:
+	# docker build -t immortal .
 	docker run -it --privileged immortal .
 
 linux:

@@ -15,17 +15,18 @@ type Supervisor struct {
 }
 
 // Supervise keep daemon process up and running
-func Supervise(d *Daemon) (*Supervisor, error) {
+func Supervise(d *Daemon) error {
 	// start a new process
 	p, err := d.Run(NewProcess(d.cfg))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	supervisor := &Supervisor{
 		daemon:  d,
 		process: p,
 	}
-	return supervisor, nil
+	supervisor.Start()
+	return nil
 }
 
 // Start loop forever
