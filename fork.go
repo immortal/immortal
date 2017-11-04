@@ -15,9 +15,8 @@ func Fork() (int, error) {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.ExtraFiles = nil
-	// setsid is used to detach the process from the parent (normally a shell)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
+		Setsid: true, // setsid is used to detach the process from the parent (normally a shell)
 	}
 	if err := cmd.Start(); err != nil {
 		return 0, err
