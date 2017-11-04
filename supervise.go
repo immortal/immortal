@@ -71,6 +71,7 @@ func (s *Supervisor) Terminate(err error) {
 	s.process.eTime = time.Now()
 	// unlock, or lock once
 	atomic.StoreUint32(&s.daemon.lock, s.daemon.lockOnce)
+	// WatchPid returns EXIT
 	if err != nil && err.Error() == "EXIT" {
 		log.Printf("PID: %d (%s) Exited", s.pid, s.process.cmd.Path)
 	} else {

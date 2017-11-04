@@ -207,6 +207,11 @@ func TestBadWritePidChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	expect(t, "open /dev/null/child.pid: not a directory", strings.TrimSpace(mylog.String()))
+	ctl := &Controller{}
+	err = ctl.PurgeServices(filepath.Join(d.supDir, "immortal.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHelperProcessSignalsUDOT(*testing.T) {
@@ -449,4 +454,31 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 	lines := strings.Split(string(content), "\n")
 	expect(t, true, strings.HasSuffix(lines[0], "5D675098-45D7-4089-A72C-3628713EA5BA"))
+
+	// halt
+	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "halt"); err != nil {
+		t.Fatal(err)
+	}
+	err = ctl.PurgeServices(filepath.Join(sdir, "immortal.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDaemonNewEnvHOME(t *testing.T) {
+	cfg := &Config{}
+	home := os.Getenv("HOME")
+	defer func() { os.Setenv("HOME", home) }()
+	os.Setenv("HOME", "")
+	expect(t, true, home != os.Getenv("HOME"))
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, true, strings.HasPrefix(d.supDir, home))
+	ctl := &Controller{}
+	err = ctl.PurgeServices(filepath.Join(d.supDir, "immortal.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
 }

@@ -81,7 +81,7 @@ func (c *Controller) PurgeServices(dir string) error {
 	if err != nil {
 		return err
 	}
-	if len(files) == 2 {
+	if len(files) <= 2 {
 		for _, f := range files {
 			if inSlice(sdir, f.Name()) {
 				continue

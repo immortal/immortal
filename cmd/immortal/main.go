@@ -88,7 +88,7 @@ func main() {
 	}
 
 	// Supervise the process
-	if err != immortal.Supervise(daemon); err != nil {
+	if err := immortal.Supervise(daemon); err != nil {
 		log.Fatal(err)
 	}
 }

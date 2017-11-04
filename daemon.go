@@ -126,6 +126,7 @@ func New(cfg *Config) (*Daemon, error) {
 	if lock, err := os.Create(filepath.Join(supDir, "lock")); err != nil {
 		return nil, err
 	} else if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX+syscall.LOCK_NB); err != nil {
+		// resource temporarily unavailable
 		return nil, err
 	}
 
