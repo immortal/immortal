@@ -39,7 +39,7 @@ func (p *process) SetEnv(env []string) {
 	}
 }
 
-// SetsysProcAttr - set process owner (run on behalf)
+// SetsysProcAttr - set process group ID and owner (run on behalf)
 func (p *process) SetsysProcAttr() error {
 	sysProcAttr := &syscall.SysProcAttr{
 		Setpgid: true, // Set process group ID to Pgid, or, if Pgid == 0, to new pid.
