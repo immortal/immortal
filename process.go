@@ -128,23 +128,23 @@ func (p *process) Start() (*process, error) {
 	// set start time
 	p.sTime = time.Now()
 
-	// create error channel
-	p.errch = make(chan error, 1)
-
-	// wait process to finish
-	go func(wStdout, wStderr *os.File) {
-		err := p.cmd.Wait()
-		if wStdout != nil {
-			wStdout.Close()
-			close(p.quit)
-		}
-		if wStderr != nil {
-			wStderr.Close()
-		}
-		p.errch <- err
-	}(pwStdout, pwStderr)
+	// wait process to finish in a goroutine
+	go p.Wait(pwStdout, pwStderr)
 
 	return p, nil
+}
+
+// Wait - wait process to finish
+func (p *process) Wait(stdout, stderr *os.File) {
+	err := p.cmd.Wait()
+	if stdout != nil {
+		stdout.Close()
+		close(p.quit)
+	}
+	if stderr != nil {
+		stderr.Close()
+	}
+	p.errch <- err
 }
 
 // Kill the entire Process group.
@@ -177,6 +177,7 @@ func NewProcess(cfg *Config) *process {
 		LoggerStderr: &LogWriter{
 			logger: NewStderrLogger(cfg),
 		},
-		quit: qch,
+		errch: make(chan error, 1),
+		quit:  qch,
 	}
 }
