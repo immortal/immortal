@@ -115,20 +115,7 @@ func (s *ScanDir) Start(ctl Control) {
 							log.Printf("%s\n", out)
 						}
 					}
-					go func() {
-						if err := WatchFile(watch, s.watch); err != nil {
-							log.Printf("WatchFile error: %s", err)
-							// try 3 times sleeping i*100ms between retries
-							for i := int32(100); i <= 300; i += 100 {
-								time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
-								err := WatchFile(watch, s.watch)
-								if err == nil {
-									return
-								}
-							}
-							log.Printf("Could not watch file %q error: %s", watch, err)
-						}
-					}()
+					go s.WatchFile(watch)
 				} else {
 					// remove service
 					s.services.Delete(serviceName)
@@ -162,19 +149,7 @@ func (s *ScanDir) Scandir(ctl Control) error {
 					} else {
 						log.Printf("%s\n", out)
 					}
-					go func() {
-						if err := WatchFile(path, s.watch); err != nil {
-							// try 3 times sleeping i*100ms between retries
-							for i := int32(100); i <= 300; i += 100 {
-								time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
-								err := WatchFile(path, s.watch)
-								if err == nil {
-									return
-								}
-							}
-							log.Printf("Could not watch file %q error: %s", path, err)
-						}
-					}()
+					go s.WatchFile(path)
 				}
 			}
 		}
@@ -185,4 +160,19 @@ func (s *ScanDir) Scandir(ctl Control) error {
 		return err
 	}
 	return filepath.Walk(s.scandir, find)
+}
+
+// WatchFile - react on file changes
+func (s *ScanDir) WatchFile(path string) {
+	if err := WatchFile(path, s.watch); err != nil {
+		// try 3 times sleeping i*100ms between retries
+		for i := int32(100); i <= 300; i += 100 {
+			time.Sleep(time.Duration(rand.Int31n(i)) * time.Millisecond)
+			err := WatchFile(path, s.watch)
+			if err == nil {
+				return
+			}
+		}
+		log.Printf("Could not watch file %q error: %s", path, err)
+	}
 }
