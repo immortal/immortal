@@ -79,6 +79,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// print logo and process pid
 	log.Printf("%c  %d", 0x2B55, os.Getpid())
 
 	// listen on socket
@@ -86,5 +87,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	immortal.Supervise(daemon)
+	// Supervise the process
+	supervisor, err := immortal.Supervise(daemon)
+	if err != nil {
+		log.Fatal(err)
+	}
+	supervisor.Start()
 }

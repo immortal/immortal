@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// Supervisor for the process
 type Supervisor struct {
 	daemon  *Daemon
 	process *process
@@ -14,17 +15,42 @@ type Supervisor struct {
 }
 
 // Supervise keep daemon process up and running
-func Supervise(d *Daemon) {
+func Supervise(d *Daemon) (*Supervisor, error) {
 	// start a new process
 	p, err := d.Run(NewProcess(d.cfg))
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	supervisor := &Supervisor{
 		daemon:  d,
 		process: p,
 	}
-	supervisor.Start()
+	return supervisor, nil
+}
+
+// Start loop forever
+func (s *Supervisor) Start() {
+	for {
+		select {
+		case <-s.daemon.quit:
+			return
+		case <-s.daemon.run:
+			time.Sleep(s.wait)
+			// create a new process
+			if s.daemon.lock == 0 {
+				s.ReStart()
+			}
+		case err := <-s.process.errch:
+			s.Terminate(err)
+			// follow the new pid instead of trying to call run again unless the new pid dies
+			if s.daemon.cfg.Pid.Follow != "" {
+				s.FollowPid(err)
+			} else {
+				// run again
+				s.daemon.run <- struct{}{}
+			}
+		}
+	}
 }
 
 // ReStart create a new process
@@ -39,7 +65,7 @@ func (s *Supervisor) ReStart() {
 	}
 }
 
-// Terminate
+// Terminate handle process termination
 func (s *Supervisor) Terminate(err error) {
 	// set end time
 	s.process.eTime = time.Now()
@@ -65,6 +91,9 @@ func (s *Supervisor) Terminate(err error) {
 	}
 }
 
+// FollowPid check if process still up and running if it is, follow the pid,
+// monitor the existing pid created by the process instead of creating
+// another process
 func (s *Supervisor) FollowPid(err error) {
 	s.pid, err = s.daemon.ReadPidFile(s.daemon.cfg.Pid.Follow)
 	if err != nil {
@@ -81,30 +110,6 @@ func (s *Supervisor) FollowPid(err error) {
 		} else {
 			// if cmd exits or process is kill
 			s.daemon.run <- struct{}{}
-		}
-	}
-}
-
-func (s *Supervisor) Start() {
-	for {
-		select {
-		case <-s.daemon.quit:
-			return
-		case <-s.daemon.run:
-			time.Sleep(s.wait)
-			// create a new process
-			if s.daemon.lock == 0 {
-				s.ReStart()
-			}
-		case err := <-s.process.errch:
-			s.Terminate(err)
-			// follow the new pid instead of trying to call run again unless the new pid dies
-			if s.daemon.cfg.Pid.Follow != "" {
-				s.FollowPid(err)
-			} else {
-				// run again
-				s.daemon.run <- struct{}{}
-			}
 		}
 	}
 }
