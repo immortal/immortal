@@ -65,7 +65,7 @@ func main() {
 	// fork
 	if os.Getppid() > 1 {
 		if pid, err := immortal.Fork(); err != nil {
-			log.Fatalf("Error while forking: %s", err)
+			log.Fatalf("error while forking: %s", err)
 		} else {
 			if pid > 0 {
 				os.Exit(0)
