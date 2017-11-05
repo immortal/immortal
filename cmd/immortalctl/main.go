@@ -146,12 +146,19 @@ func main() {
 	services, _ := ctl.FindServices(sdir)
 
 	// get user $HOME/.immortal services
-	if usr, err := user.Current(); err == nil {
-		if userServices, err := ctl.FindServices(
-			filepath.Join(usr.HomeDir, ".immortal"),
-		); err == nil {
-			services = append(services, userServices...)
+	home := os.Getenv("HOME")
+	if home == "" {
+		usr, err := user.Current()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error getting user home: %s\n", err)
+			os.Exit(1)
 		}
+		home = usr.HomeDir
+	}
+	if userServices, err := ctl.FindServices(
+		filepath.Join(home, ".immortal"),
+	); err == nil {
+		services = append(services, userServices...)
 	}
 
 	type Pad struct {
