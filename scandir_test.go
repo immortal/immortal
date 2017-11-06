@@ -98,8 +98,9 @@ func TestScandir(t *testing.T) {
 	case <-time.After(time.Second * 2):
 		t.Fatal("time out waiting for file to change")
 	}
-	_, ok := s.services.Load("run.yml")
-	if ok {
+	val, ok := s.services.Load("run")
+	if !ok {
 		t.Fatalf("Not expecting value for %s", "run.yml")
 	}
+	expect(t, val, "d41d8cd98f00b204e9800998ecf8427e")
 }
