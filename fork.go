@@ -16,7 +16,14 @@ func Fork() (int, error) {
 	cmd.Stderr = nil
 	cmd.ExtraFiles = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // setsid is used to detach the process from the parent (normally a shell)
+		// Setsid is used to detach the process from the parent (normally a shell)
+		//
+		// The disowning of a child process is accomplished by executing the system call
+		// setpgrp() or setsid(), (both of which have the same functionality) as soon as
+		// the child is forked. These calls create a new process session group, make the
+		// child process the session leader, and set the process group ID to the process
+		// ID of the child. https://bsdmag.org/unix-kernel-system-calls/
+		Setsid: true,
 	}
 	if err := cmd.Start(); err != nil {
 		return 0, err
