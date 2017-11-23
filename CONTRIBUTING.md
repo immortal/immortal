@@ -65,7 +65,7 @@ any time. Typically, but not exclusively, issues are closed when:
 
 - The issue is resolved
 - The project's maintainers have determined the issue is out of scope
-- An issue is clearly a duplicate of another issue, in which case the duplicate issue will be linked.
+- An issue is clearly a duplicate of another issue, in which case the duplicate issue will be linked
 - A discussion has clearly run its course
 
 
