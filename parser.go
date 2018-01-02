@@ -33,17 +33,18 @@ type Parse struct {
 // Parse parse the command line flags
 func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.BoolVar(&p.Flags.Version, "v", false, "Print version")
+	fs.IntVar(&p.Flags.Retries, "r", 0, "Number or retries before program exit")
 	fs.IntVar(&p.Flags.Seconds, "s", 0, "`seconds` to wait before starting")
+	fs.StringVar(&p.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
 	fs.StringVar(&p.Flags.Configfile, "c", "", "`run.yml` configuration file")
-	fs.StringVar(&p.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
+	fs.StringVar(&p.Flags.Ctl, "ctl", "", "Create supervise directory `/var/run/immortal/<service>`")
 	fs.StringVar(&p.Flags.Envdir, "e", "", "Set environment variables specified by files in the `dir`")
 	fs.StringVar(&p.Flags.FollowPid, "f", "", "Follow PID in `pidfile`")
 	fs.StringVar(&p.Flags.Logfile, "l", "", "Write stdout/stderr to `logfile`")
 	fs.StringVar(&p.Flags.Logger, "logger", "", "A `command` to pipe stdout/stderr to stdin")
 	fs.StringVar(&p.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
-	fs.StringVar(&p.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
 	fs.StringVar(&p.Flags.User, "u", "", "Execute command on behalf `user`")
-	fs.StringVar(&p.Flags.Ctl, "ctl", "", "Create supervise directory `/var/run/immortal/<service>`")
+	fs.StringVar(&p.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
 
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
@@ -241,6 +242,11 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	// if -p
 	if flags.ChildPid != "" {
 		cfg.Pid.Child = flags.ChildPid
+	}
+
+	// if -r
+	if flags.Retries > 0 {
+		cfg.Retries = flags.Retries
 	}
 
 	// if -s

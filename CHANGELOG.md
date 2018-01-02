@@ -1,3 +1,7 @@
+## 0.18.0
+
+* Added option `retries`, `-r` to specify the maximum number of tries before exiting the program
+
 ## 0.17.0
 
 * Cleaned tests (Dockerfile for linux)
