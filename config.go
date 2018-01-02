@@ -14,8 +14,8 @@ type Config struct {
 	Logger  string            `yaml:",omitempty" json:",omitempty"`
 	Require []string          `yaml:",omitempty"`
 	User    string            `yaml:",omitempty" json:",omitempty"`
-	Wait    int               `yaml:",omitempty"`
-	Retries int               `yaml:",omitempty"`
+	Wait    uint              `yaml:",omitempty"`
+	Retries uint              `yaml:",omitempty"`
 	Pid     `yaml:",omitempty" json:",omitempty"`
 	command []string
 	ctl     string

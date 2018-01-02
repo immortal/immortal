@@ -90,6 +90,10 @@ func (s *Supervisor) Terminate(err error) {
 			s.wait = time.Second - uptime
 		}
 	}
+	// check how many times process has started
+	if uint32(s.daemon.cfg.Retries) == atomic.LoadUint32(&s.daemon.count) {
+		close(s.daemon.quit)
+	}
 }
 
 // FollowPid check if process still up and running if it is, follow the pid,

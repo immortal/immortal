@@ -11,8 +11,8 @@ type Flags struct {
 	Logfile    string
 	Logger     string
 	ParentPid  string
-	Retries    int
-	Seconds    int
+	Retries    uint
+	Seconds    uint
 	User       string
 	Version    bool
 	Wrkdir     string
