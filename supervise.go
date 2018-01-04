@@ -93,7 +93,7 @@ func (s *Supervisor) Terminate(err error) {
 	}
 	// check how many times process has started and exit or stop starting it
 	if uint32(s.daemon.cfg.Retries) == atomic.LoadUint32(&s.daemon.count) {
-		exit := os.Getenv("IMMORTAL_RETRIES_EXIT")
+		exit := os.Getenv("IMMORTAL_EXIT")
 		if s.daemon.cfg.cli || exit != "" {
 			close(s.daemon.quit)
 		} else {

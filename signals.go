@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"syscall"
 
 	"github.com/nbari/violetear"
@@ -109,7 +110,12 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 
 	// x: Exit. If you use this option on a stable system, you're doing something wrong; supervise is designed to run forever.
 	case "x", "exit":
-		close(d.quit)
+		exit := os.Getenv("IMMORTAL_EXIT")
+		if d.cfg.cli || exit != "" {
+			close(d.quit)
+		} else {
+			err = fmt.Errorf("set environmental variable IMMORTAL_EXIT to exit")
+		}
 
 	default:
 		err = fmt.Errorf("unknown signal: %s", signal)
