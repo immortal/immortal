@@ -18,6 +18,7 @@ type Config struct {
 	Retries uint              `yaml:",omitempty"`
 	Pid     `yaml:",omitempty" json:",omitempty"`
 	command []string
+	cli     bool
 	ctl     string
 	log     bool
 	user    *user.User

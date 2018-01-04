@@ -203,6 +203,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	cfg.command = fs.Args()
 	cfg.Log.Size = 1
 	cfg.ctl = sdir
+	cfg.cli = true
 
 	// if -d
 	if flags.Wrkdir != "" {

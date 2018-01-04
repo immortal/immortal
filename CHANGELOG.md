@@ -1,6 +1,10 @@
 ## 0.18.0
 
 * Added option `retries`, `-r` to specify the maximum number of tries before exiting the program
+* Environment `IMMORTAL_RETRIES_EXIT` if set when using `retries` and using a
+configuration file, it will exit the supervisor instead of marking it as stop,
+the default is like the `once` signal, but when using from command line no
+`run.yml` it will exit.
 
 ## 0.17.0
 

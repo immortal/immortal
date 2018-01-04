@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"log"
+	"os"
 	"sync/atomic"
 	"time"
 )
@@ -90,9 +91,14 @@ func (s *Supervisor) Terminate(err error) {
 			s.wait = time.Second - uptime
 		}
 	}
-	// check how many times process has started
+	// check how many times process has started and exit or stop starting it
 	if uint32(s.daemon.cfg.Retries) == atomic.LoadUint32(&s.daemon.count) {
-		close(s.daemon.quit)
+		exit := os.Getenv("IMMORTAL_RETRIES_EXIT")
+		if s.daemon.cfg.cli || exit != "" {
+			close(s.daemon.quit)
+		} else {
+			atomic.StoreUint32(&s.daemon.lock, 1)
+		}
 	}
 }
 
