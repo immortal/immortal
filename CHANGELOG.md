@@ -3,6 +3,7 @@
 * Added option `retries`, `-r` to specify the maximum number of tries before exiting the program
 * Environment `IMMORTAL_EXIT` used to exit when running immortal with a config
 file, helps to avoid a race condition (start/stop) when using immortaldir
+* `immortalctl` prints now process that are about to start with a defined `wait` value
 
 ## 0.17.0
 
