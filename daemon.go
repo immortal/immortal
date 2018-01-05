@@ -31,18 +31,16 @@ func (d *Daemon) Run(p Process) (*process, error) {
 
 	// return if process is running
 	if atomic.SwapUint32(&d.lock, uint32(1)) != 0 {
-		return nil, fmt.Errorf("cannot start, process still running")
+		return nil, fmt.Errorf("cannot start, process still running or waiting to be started")
 	}
 
 	// increment count by 1
 	atomic.AddUint32(&d.count, 1)
 
-	// TODO lock queue
 	time.Sleep(time.Duration(d.cfg.Wait) * time.Second)
 
 	if d.process, err = p.Start(); err != nil {
 		atomic.StoreUint32(&d.lock, d.lockOnce)
-		// TODO if error unlock
 		return nil, err
 	}
 

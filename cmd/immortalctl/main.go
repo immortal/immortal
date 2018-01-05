@@ -275,6 +275,14 @@ func main() {
 			} else {
 				println()
 			}
+		} else if s.Status.Status != "" {
+			// print status about process that will start after the defined WAIT value
+			fmt.Printf(format,
+				"",
+				"",
+				"",
+				immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)),
+				immortal.Yellow(fmt.Sprintf("%s - %s\n", s.Status.Cmd, s.Status.Status)))
 		}
 	}
 }

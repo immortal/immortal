@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -14,12 +15,13 @@ import (
 
 // Status struct
 type Status struct {
-	Pid   int    `json:"pid"`
-	Up    string `json:"up,omitempty"`
-	Down  string `json:"down,omitempty"`
-	Cmd   string `json:"cmd"`
-	Fpid  bool   `json:"fpid"`
-	Count uint32 `json:"count"`
+	Pid    int    `json:"pid"`
+	Up     string `json:"up,omitempty"`
+	Down   string `json:"down,omitempty"`
+	Cmd    string `json:"cmd"`
+	Fpid   bool   `json:"fpid"`
+	Count  uint32 `json:"count"`
+	Status string `json:"status,omitempty"`
 }
 
 // Listen creates a unix socket used for control the daemon
@@ -38,24 +40,27 @@ func (d *Daemon) Listen() error {
 
 // HandleStatus return process status
 func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
+	status := Status{
+		Cmd:   strings.Join(d.cfg.command, " "),
+		Count: atomic.LoadUint32(&d.count),
+	}
+
+	//  only if process is running
 	if d.process != nil {
-		status := Status{
-			Cmd:   strings.Join(d.cfg.command, " "),
-			Fpid:  d.fpid,
-			Pid:   d.process.Pid(),
-			Count: atomic.LoadUint32(&d.count),
-		}
+		status.Fpid = d.fpid
+		status.Pid = d.process.Pid()
 		if d.process.eTime.IsZero() {
 			status.Up = AbsSince(d.process.sTime)
 		} else {
 			status.Down = AbsSince(d.process.eTime)
 		}
-		if err := json.NewEncoder(w).Encode(status); err != nil {
-			log.Println(err)
-		}
 	} else {
-		// TODO
-		// now - wait (seconds to start)
-		log.Printf("TODO: d.cfg.wait = %+v\n", d.cfg.Wait)
+		status.Status = fmt.Sprintf("Waiting %d seconds before starting", d.cfg.Wait)
+	}
+
+	// return status in json
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		log.Println(err)
 	}
 }
