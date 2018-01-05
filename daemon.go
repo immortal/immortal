@@ -37,10 +37,12 @@ func (d *Daemon) Run(p Process) (*process, error) {
 	// increment count by 1
 	atomic.AddUint32(&d.count, 1)
 
+	// TODO lock queue
 	time.Sleep(time.Duration(d.cfg.Wait) * time.Second)
 
 	if d.process, err = p.Start(); err != nil {
 		atomic.StoreUint32(&d.lock, d.lockOnce)
+		// TODO if error unlock
 		return nil, err
 	}
 

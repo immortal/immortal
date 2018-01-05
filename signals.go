@@ -114,7 +114,7 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 		if d.cfg.cli || exit != "" {
 			close(d.quit)
 		} else {
-			err = fmt.Errorf("set environmental variable IMMORTAL_EXIT to exit")
+			err = fmt.Errorf("set environment variable IMMORTAL_EXIT to exit")
 		}
 
 	default:

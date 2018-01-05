@@ -38,18 +38,24 @@ func (d *Daemon) Listen() error {
 
 // HandleStatus return process status
 func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
-	status := Status{
-		Cmd:   strings.Join(d.cfg.command, " "),
-		Fpid:  d.fpid,
-		Pid:   d.process.Pid(),
-		Count: atomic.LoadUint32(&d.count),
-	}
-	if d.process.eTime.IsZero() {
-		status.Up = AbsSince(d.process.sTime)
+	if d.process != nil {
+		status := Status{
+			Cmd:   strings.Join(d.cfg.command, " "),
+			Fpid:  d.fpid,
+			Pid:   d.process.Pid(),
+			Count: atomic.LoadUint32(&d.count),
+		}
+		if d.process.eTime.IsZero() {
+			status.Up = AbsSince(d.process.sTime)
+		} else {
+			status.Down = AbsSince(d.process.eTime)
+		}
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			log.Println(err)
+		}
 	} else {
-		status.Down = AbsSince(d.process.eTime)
-	}
-	if err := json.NewEncoder(w).Encode(status); err != nil {
-		log.Println(err)
+		// TODO
+		// now - wait (seconds to start)
+		log.Printf("TODO: d.cfg.wait = %+v\n", d.cfg.Wait)
 	}
 }
