@@ -33,8 +33,8 @@ type Parse struct {
 // Parse parse the command line flags
 func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.BoolVar(&p.Flags.Version, "v", false, "Print version")
-	fs.UintVar(&p.Flags.Retries, "r", 0, "Number or retries before program exit")
-	fs.UintVar(&p.Flags.Seconds, "s", 0, "`seconds` to wait before starting")
+	fs.UintVar(&p.Flags.Retries, "r", 0, "`number` or retries before program exit")
+	fs.UintVar(&p.Flags.Wait, "w", 0, "`seconds` to wait before starting")
 	fs.StringVar(&p.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
 	fs.StringVar(&p.Flags.Configfile, "c", "", "`run.yml` configuration file")
 	fs.StringVar(&p.Flags.Ctl, "ctl", "", "Create supervise directory `/var/run/immortal/<service>`")
@@ -250,9 +250,9 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		cfg.Retries = flags.Retries
 	}
 
-	// if -s
-	if flags.Seconds > 0 {
-		cfg.Wait = flags.Seconds
+	// if -w
+	if flags.Wait > 0 {
+		cfg.Wait = flags.Wait
 	}
 
 	// if -u

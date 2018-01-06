@@ -12,8 +12,8 @@ type Flags struct {
 	Logger     string
 	ParentPid  string
 	Retries    uint
-	Seconds    uint
 	User       string
 	Version    bool
+	Wait       uint
 	Wrkdir     string
 }

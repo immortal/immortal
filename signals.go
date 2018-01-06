@@ -128,6 +128,7 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// return the error on the Response json encoded
+	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(res); err != nil {
 		log.Println(err)
 	}
