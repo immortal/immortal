@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/nbari/violetear"
 )
@@ -46,7 +47,7 @@ func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//  only if process is running
-	if d.process != nil {
+	if d.process.cmd != nil {
 		status.Fpid = d.fpid
 		status.Pid = d.process.Pid()
 		if d.process.eTime.IsZero() {
@@ -55,7 +56,8 @@ func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 			status.Down = AbsSince(d.process.eTime)
 		}
 	} else {
-		status.Status = fmt.Sprintf("Waiting %d seconds before starting", d.cfg.Wait)
+		startin := d.process.sTime.Add(time.Duration(d.cfg.Wait) * time.Second)
+		status.Status = fmt.Sprintf("Starting in %0.1f seconds", startin.Sub(time.Now()).Seconds())
 	}
 
 	// return status in json

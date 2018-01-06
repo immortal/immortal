@@ -37,6 +37,9 @@ func (d *Daemon) Run(p Process) (*process, error) {
 	// increment count by 1
 	atomic.AddUint32(&d.count, 1)
 
+	// to print remaininig seconds to start cmd == nil
+	d.process = p.GetProcess()
+
 	time.Sleep(time.Duration(d.cfg.Wait) * time.Second)
 
 	if d.process, err = p.Start(); err != nil {

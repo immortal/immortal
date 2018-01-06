@@ -15,6 +15,7 @@ type Process interface {
 	Pid() int
 	Signal(sig syscall.Signal) error
 	Start() (*process, error)
+	GetProcess() *process
 }
 
 type process struct {
@@ -166,6 +167,11 @@ func (p *process) Signal(sig syscall.Signal) error {
 	return syscall.Kill(p.cmd.Process.Pid, sig)
 }
 
+// GetProccess
+func (p *process) GetProcess() *process {
+	return p
+}
+
 // NewProcess return process instance
 func NewProcess(cfg *Config) *process {
 	qch := make(chan struct{})
@@ -179,5 +185,6 @@ func NewProcess(cfg *Config) *process {
 		},
 		errch: make(chan error, 1),
 		quit:  qch,
+		sTime: time.Now(),
 	}
 }
