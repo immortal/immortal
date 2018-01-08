@@ -5,6 +5,7 @@
 file, helps to avoid a race condition (start/stop) when using immortaldir
 * `immortalctl` prints now process that are about to start with a defined `wait` value
 * Renamed option `-s` to `-w` to be more consistent with the config file option `wait`
+* Signals are only sent to process then this is up and running
 
 ## 0.17.0
 

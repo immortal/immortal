@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"syscall"
 
 	"github.com/nbari/violetear"
@@ -23,102 +24,106 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 	// get signal from request params
 	signal := violetear.GetParam("*", r)
 
-	switch signal {
-	// a: Alarm. Send the service an ALRM signal.
-	case "a", "alrm", "ALRM":
-		err = d.process.Signal(syscall.SIGALRM)
+	if d.process.cmd != nil {
+		switch signal {
+		// a: Alarm. Send the service an ALRM signal.
+		case "a", "alrm", "ALRM":
+			err = d.process.Signal(syscall.SIGALRM)
 
-	// c: Continue. Send the service a CONT signal.
-	case "c", "cont", "CONT":
-		err = d.process.Signal(syscall.SIGCONT)
+		// c: Continue. Send the service a CONT signal.
+		case "c", "cont", "CONT":
+			err = d.process.Signal(syscall.SIGCONT)
 
-	// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
-	case "d", "down":
-		d.lockOnce = 1
-		err = d.process.Signal(syscall.SIGTERM)
+		// d: Down. If the service is running, send it a TERM signal. After it stops, do not restart it.
+		case "d", "down":
+			d.lockOnce = 1
+			err = d.process.Signal(syscall.SIGTERM)
 
-	// h: Hangup. Send the service a HUP signal.
-	case "h", "hup", "HUP":
-		err = d.process.Signal(syscall.SIGHUP)
+		// h: Hangup. Send the service a HUP signal.
+		case "h", "hup", "HUP":
+			err = d.process.Signal(syscall.SIGHUP)
 
-	// halt: down + exit
-	// A restart will only happen when using immortaldir
-	case "halt", "restart":
-		d.lockOnce = 1
-		err = d.process.Signal(syscall.SIGTERM)
-		close(d.quit)
-
-	// i: Interrupt. Send the service an INT signal.
-	case "i", "int", "INT":
-		err = d.process.Signal(syscall.SIGINT)
-
-	// in: TTIN. Send the service a TTIN signal.
-	case "in", "ttin", "TTIN":
-		err = d.process.Signal(syscall.SIGTTIN)
-
-		// k: Kill. Send the service a KILL signal.
-	case "k", "kill", "KILL":
-		if d.fpid {
-			err = d.process.Signal(syscall.SIGKILL)
-		} else {
-			err = d.process.Kill()
-		}
-
-	// o: Once. If the service is not running, start it. Do not restart it if it stops.
-	case "o", "once":
-		d.lockOnce = 1
-		if !d.IsRunning(d.process.Pid()) {
-			d.lock = 0
-			d.run <- struct{}{}
-		}
-
-	// ou: TTOU. Send the service a TTOU signal.
-	case "ou", "ttou", "TTOU":
-		err = d.process.Signal(syscall.SIGTTOU)
-
-	// s: stop. Send the service a STOP signal.
-	case "s", "stop", "STOP":
-		err = d.process.Signal(syscall.SIGSTOP)
-
-	// q: QUIT. Send the service a QUIT signal.
-	case "q", "quit", "QUIT":
-		err = d.process.Signal(syscall.SIGQUIT)
-
-	// t: Terminate. Send the service a TERM signal.
-	case "t", "term", "TERM":
-		err = d.process.Signal(syscall.SIGTERM)
-
-	// u: Up. If the service is not running, start it. If the service stops, restart it.
-	case "u", "up", "start":
-		d.lockOnce = 0
-		if !d.IsRunning(d.process.Pid()) {
-			d.lock = 0
-		}
-		d.run <- struct{}{}
-
-	// 1: USR1. Send the service a USR1 signal.
-	case "1", "usr1", "USR1":
-		err = d.process.Signal(syscall.SIGUSR1)
-
-	// 2: USR2. Send the service a USR2 signal.
-	case "2", "usr2", "USR2":
-		err = d.process.Signal(syscall.SIGUSR2)
-
-	// w: WINCH. Send the service a WINCH signal.
-	case "w", "winch", "WINCH":
-		err = d.process.Signal(syscall.SIGWINCH)
-
-	// x: Exit. If you use this option on a stable system, you're doing something wrong; supervise is designed to run forever.
-	case "x", "exit":
-		exit := os.Getenv("IMMORTAL_EXIT")
-		if d.cfg.cli || exit != "" {
+		// halt: down + exit
+		// A restart will only happen when using immortaldir
+		case "halt", "restart":
+			d.lockOnce = 1
+			err = d.process.Signal(syscall.SIGTERM)
 			close(d.quit)
-		} else {
-			err = fmt.Errorf("set environment variable IMMORTAL_EXIT to exit")
-		}
 
-	default:
-		err = fmt.Errorf("unknown signal: %s", signal)
+		// i: Interrupt. Send the service an INT signal.
+		case "i", "int", "INT":
+			err = d.process.Signal(syscall.SIGINT)
+
+		// in: TTIN. Send the service a TTIN signal.
+		case "in", "ttin", "TTIN":
+			err = d.process.Signal(syscall.SIGTTIN)
+
+			// k: Kill. Send the service a KILL signal.
+		case "k", "kill", "KILL":
+			if d.fpid {
+				err = d.process.Signal(syscall.SIGKILL)
+			} else {
+				err = d.process.Kill()
+			}
+
+		// o: Once. If the service is not running, start it. Do not restart it if it stops.
+		case "o", "once":
+			d.lockOnce = 1
+			if !d.IsRunning(d.process.Pid()) {
+				d.lock = 0
+				d.run <- struct{}{}
+			}
+
+		// ou: TTOU. Send the service a TTOU signal.
+		case "ou", "ttou", "TTOU":
+			err = d.process.Signal(syscall.SIGTTOU)
+
+		// s: stop. Send the service a STOP signal.
+		case "s", "stop", "STOP":
+			err = d.process.Signal(syscall.SIGSTOP)
+
+		// q: QUIT. Send the service a QUIT signal.
+		case "q", "quit", "QUIT":
+			err = d.process.Signal(syscall.SIGQUIT)
+
+		// t: Terminate. Send the service a TERM signal.
+		case "t", "term", "TERM":
+			err = d.process.Signal(syscall.SIGTERM)
+
+		// u: Up. If the service is not running, start it. If the service stops, restart it.
+		case "u", "up", "start":
+			d.lockOnce = 0
+			if !d.IsRunning(d.process.Pid()) {
+				d.lock = 0
+			}
+			d.run <- struct{}{}
+
+		// 1: USR1. Send the service a USR1 signal.
+		case "1", "usr1", "USR1":
+			err = d.process.Signal(syscall.SIGUSR1)
+
+		// 2: USR2. Send the service a USR2 signal.
+		case "2", "usr2", "USR2":
+			err = d.process.Signal(syscall.SIGUSR2)
+
+		// w: WINCH. Send the service a WINCH signal.
+		case "w", "winch", "WINCH":
+			err = d.process.Signal(syscall.SIGWINCH)
+
+		// x: Exit. If you use this option on a stable system, you're doing something wrong; supervise is designed to run forever.
+		case "x", "exit":
+			exit := os.Getenv("IMMORTAL_EXIT")
+			if d.cfg.cli || exit != "" {
+				close(d.quit)
+			} else {
+				err = fmt.Errorf("set environment variable IMMORTAL_EXIT to exit")
+			}
+
+		default:
+			err = fmt.Errorf("unknown signal: %s", signal)
+		}
+	} else {
+		err = fmt.Errorf("%q not running", strings.Join(d.cfg.command, " "))
 	}
 
 	res := &SignalResponse{}
