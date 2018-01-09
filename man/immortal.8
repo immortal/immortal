@@ -54,8 +54,9 @@ Options start with one dash. Many of the options require an additional value nex
 -p <pidfile>
         Path to write the child pidfile.
 
--s <seconds>
-        Seconds (int) <secods> to wait before starting.
+-r <int>
+        Number of retries before program exit, defaults to 0 (never exit).
+        If used within a configuration file with the option "retries" the supervisor will not exit and instead will send a signal "once" preventing with this starting the process again unless the environment var IMMORTAL_EXIT is defined which will cause to "exit" the supervisor instead.
 
 -u <user>
         Execute the command on behalf <user>.
@@ -63,11 +64,14 @@ Options start with one dash. Many of the options require an additional value nex
 -v
         Print version.
 
+-w <seconds>
+        Seconds (int) <secods> to wait before starting.
+
 -c <service name>.yml
         A configuration file with valid YAML syntax, when using this option, it will overwrite other options, configuration format:
 
         cmd: <command to execute>
-        cwd: <change workding directory> # option -d
+        cwd: <change working directory>  # option -d
         env:                             # option -e
             <key>: <value>
         pid:
@@ -76,19 +80,20 @@ Options start with one dash. Many of the options require an additional value nex
             child: <pidfile>             # option -p
         log:
             file: <path>                 # option -l
-            age: <int>   # seconds
-            num: <int>   # int
-            size: <int>  # MegaBytes
-            timestamp: <bool> # prefix log with timestamp
+            age: <int>                   # seconds
+            num: <int>                   # int
+            size: <int>                  # MegaBytes
+            timestamp: <bool>            # prefix log with timestamp
         stderr:
             file: <path>
-            age: <int>   # seconds
-            num: <int>   # int
-            size: <int>  # MegaBytes
-            timestamp: <bool> # prefix log with timestamp
+            age: <int>                   # seconds
+            num: <int>                   # int
+            size: <int>                  # MegaBytes
+            timestamp: <bool>            # prefix log with timestamp
         logger: <command>                # option -logger
         user: <user>                     # option -u
-        wait: <int>                      # option -s
+        wait: <int>                      # option -w
+        retries: <int>                   # option -r
         require:                         # list of services that need to be running before starting
           - foo
           - bar
@@ -111,6 +116,9 @@ Options start with one dash. Many of the options require an additional value nex
 .TP
 .B IMMORTAL_SDIR
 This environment variable allows to override the default supervise directory /var/run/immortal, used also by immortalctl(8) and immortaldir(8)
+.TP
+.B IMMORTAL_EXIT
+If defined, will exit the supervisor is like using signal "exit" instead of "once" only when using the option "retries", it has no effect when runing immortal directly from command line. It is not recommended to use this variable if using immortaldir(8).
 .SH EXAMPLES
 Run command and restart it when finishes:
 
@@ -137,6 +145,10 @@ Run a command, restart it when finishes, log output to file and create supervice
     immortal -l /tmp/sleep.log -ctl /tmp/immortal/sleep /bin/sh -c "sleep 5 && date"
 
     For making immortalctl(8) work using the -ctl <dir> the IMMORTAL_SDIR environment var should be set to /tmp/immortal
+
+Wait 5 seconds before running the command and retry 3 times
+
+    immortal -w 5 -r 3 rsync -aHAXxv --numeric-ids --delete -P source_dir dest_dir
 
 Configuration example:
 
