@@ -8,6 +8,7 @@ import (
 type Config struct {
 	Cmd     string            `yaml:"cmd" json:"cmd"`
 	Cwd     string            `yaml:",omitempty" json:",omitempty"`
+	Name    string            `yaml:"name,omitempty" json:"name,omitempty"`
 	Env     map[string]string `yaml:",omitempty" json:",omitempty"`
 	Log     Log               `yaml:",omitempty" json:",omitempty"`
 	Stderr  Log               `yaml:",omitempty" json:",omitempty"`

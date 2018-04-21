@@ -23,6 +23,7 @@ type Status struct {
 	Fpid   bool   `json:"fpid"`
 	Count  uint32 `json:"count"`
 	Status string `json:"status,omitempty"`
+	Name   string `json:"name,omitempty"`
 }
 
 // Listen creates a unix socket used for control the daemon
@@ -58,6 +59,9 @@ func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	} else {
 		startin := d.process.sTime.Add(time.Duration(d.cfg.Wait) * time.Second)
 		status.Status = fmt.Sprintf("Starting in %0.1f seconds", startin.Sub(time.Now()).Seconds())
+	}
+	if len(d.cfg.Name) > 0 {
+		status.Name = d.cfg.Name
 	}
 
 	// return status in json

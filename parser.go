@@ -188,6 +188,8 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 				return
 			}
 		}
+		serviceFile := filepath.Base(flags.Configfile)
+		cfg.Name = strings.TrimSuffix(serviceFile, filepath.Ext(serviceFile))
 		cfg.ctl = sdir
 		return
 	}

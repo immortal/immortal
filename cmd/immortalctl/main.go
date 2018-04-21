@@ -185,6 +185,9 @@ func main() {
 			} else {
 				s.Status = status
 				s.SignalResponse = res
+				if len(s.Status.Name) > 0 { // Override name if provided
+					s.Name = s.Status.Name
+				}
 				queue <- &Pad{
 					pid:  len(fmt.Sprintf("%d", status.Pid)),
 					up:   len(status.Up),
