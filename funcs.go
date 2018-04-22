@@ -92,11 +92,9 @@ func GetUserdir() string {
 	home := os.Getenv("HOME")
 	if home == "" {
 		usr, err := user.Current()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error getting user home: %s\n", err)
-			os.Exit(1)
+		if err == nil {
+			home = usr.HomeDir
 		}
-		home = usr.HomeDir
 	}
 	return filepath.Join(home, ".immortal")
 }
