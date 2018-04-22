@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
+	"path/filepath"
 	"time"
 )
 
@@ -83,6 +85,18 @@ func inSlice(s []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// GetUserdir returns the $HOME/.immortal
+func GetUserdir() string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		usr, err := user.Current()
+		if err == nil {
+			home = usr.HomeDir
+		}
+	}
+	return filepath.Join(home, ".immortal")
 }
 
 // GetSdir return the main supervise directory, defaults to /var/run/immortal

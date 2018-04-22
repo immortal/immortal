@@ -4,8 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/user"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -145,18 +143,8 @@ func main() {
 	// get status for all services
 	services, _ := ctl.FindServices(sdir)
 
-	// get user $HOME/.immortal services
-	home := os.Getenv("HOME")
-	if home == "" {
-		usr, err := user.Current()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error getting user home: %s\n", err)
-			os.Exit(1)
-		}
-		home = usr.HomeDir
-	}
 	if userServices, err := ctl.FindServices(
-		filepath.Join(home, ".immortal"),
+		immortal.GetUserdir(),
 	); err == nil {
 		services = append(services, userServices...)
 	}
@@ -197,6 +185,9 @@ func main() {
 			} else {
 				s.Status = status
 				s.SignalResponse = res
+				if len(s.Status.Name) > 0 { // Override name if provided
+					s.Name = s.Status.Name
+				}
 				queue <- &Pad{
 					pid:  len(fmt.Sprintf("%d", status.Pid)),
 					up:   len(status.Up),

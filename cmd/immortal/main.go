@@ -7,7 +7,6 @@ import (
 	"log/syslog"
 	"os"
 	"os/user"
-	"path/filepath"
 	"strings"
 
 	"github.com/immortal/immortal"
@@ -49,11 +48,22 @@ func main() {
 	if len(cfg.Require) > 0 {
 		down := []string{}
 		ctl := &immortal.Controller{}
+		services, _ := ctl.FindServices(immortal.GetSdir())
+		if userServices, err := ctl.FindServices(
+			immortal.GetUserdir(),
+		); err == nil {
+			services = append(services, userServices...)
+		}
 		for _, r := range cfg.Require {
-			socket := filepath.Join(immortal.GetSdir(), r, "immortal.sock")
-			if status, err := ctl.GetStatus(socket); err != nil {
-				down = append(down, r)
-			} else if status.Up == "" {
+			isDown := true
+			for _, s := range services {
+				s.Status, err = ctl.GetStatus(s.Socket)
+				if err == nil && (r == s.Status.Name || r == s.Name) {
+					isDown = false
+					break
+				}
+			}
+			if isDown {
 				down = append(down, r)
 			}
 		}
