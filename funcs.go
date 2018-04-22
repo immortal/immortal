@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
+	"path/filepath"
 	"time"
 )
 
@@ -93,6 +95,19 @@ func GetSdir() string {
 		sdir = "/var/run/immortal"
 	}
 	return sdir
+}
+
+// GetUserSdir returns the $HOME/.immortal
+func GetUserSdir() (string, error) {
+	home := os.Getenv("HOME")
+	if home == "" {
+		usr, err := user.Current()
+		if err != nil {
+			return "", fmt.Errorf("error getting user home: %s\n", err)
+		}
+		home = usr.HomeDir
+	}
+	return filepath.Join(home, ".immortal"), nil
 }
 
 // isDir return true if path is a dir

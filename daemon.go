@@ -5,7 +5,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -107,17 +106,19 @@ func New(cfg *Config) (*Daemon, error) {
 		// create an .immortal dir on $HOME user when calling immortal directly
 		// and not using immortal-dir, this helps to run immortal-ctl and
 		// check status of all daemons
-		home := os.Getenv("HOME")
-		if home == "" {
-			usr, err := user.Current()
-			if err != nil {
-				return nil, err
-			}
-			home = usr.HomeDir
+		home, err := GetUserSdir()
+		if err != nil {
+			return nil, err
 		}
-		supDir = filepath.Join(home,
-			".immortal",
-			fmt.Sprintf("%d", os.Getpid()))
+
+		if cfg.configFile != "" {
+			serviceFile := filepath.Base(cfg.configFile)
+			supDir = filepath.Join(home,
+				fmt.Sprintf("%s", strings.TrimSuffix(serviceFile, filepath.Ext(serviceFile))))
+		} else {
+			supDir = filepath.Join(home,
+				fmt.Sprintf("%d", os.Getpid()))
+		}
 	}
 
 	// create supervise dir

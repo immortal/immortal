@@ -49,12 +49,21 @@ func main() {
 	if len(cfg.Require) > 0 {
 		down := []string{}
 		ctl := &immortal.Controller{}
+		userSdir, err := immortal.GetUserSdir()
+		if err != nil {
+			log.Fatal(err)
+		}
 		for _, r := range cfg.Require {
-			socket := filepath.Join(immortal.GetSdir(), r, "immortal.sock")
-			if status, err := ctl.GetStatus(socket); err != nil {
-				down = append(down, r)
-			} else if status.Up == "" {
-				down = append(down, r)
+			sockets := []string{
+				filepath.Join(immortal.GetSdir(), r, "immortal.sock"),
+				filepath.Join(userSdir, r, "immortal.sock"),
+			}
+			for _, socket := range sockets {
+				if status, err := ctl.GetStatus(socket); err != nil {
+					down = append(down, r)
+				} else if status.Up == "" {
+					down = append(down, r)
+				}
 			}
 		}
 		if len(down) > 0 {

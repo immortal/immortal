@@ -169,25 +169,39 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 			err = fmt.Errorf("cannot read file: %q, use (\"%s -h\") for help", flags.Configfile, os.Args[0])
 			return
 		}
+
+		// parse the `run.yml` file
 		cfg, err = p.parseYml(flags.Configfile)
 		if err != nil {
 			return
 		}
+
+		// Save ConfigFile to use service name derived from file name instead of the PID
+		cfg.configFile = flags.Configfile
+
+		// Cmd is mandatory, is the command that needs to be supervised
 		if cfg.Cmd == "" {
 			err = fmt.Errorf("missing command, use (\"%s -h\") for help", os.Args[0])
 			return
 		}
+
+		// split command into a slice of strings
 		cfg.command = strings.Fields(cfg.Cmd)
+
+		// Change working directory, will: cd Cwd before starting
 		if cfg.Cwd != "" {
 			if err = p.checkWrkdir(cfg.Cwd); err != nil {
 				return
 			}
 		}
+
+		// The user to run the process on behalf
 		if cfg.User != "" {
 			if cfg.user, err = p.checkUser(cfg.User); err != nil {
 				return
 			}
 		}
+
 		cfg.ctl = sdir
 		return
 	}

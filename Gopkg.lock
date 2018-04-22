@@ -2,10 +2,10 @@
 
 
 [[projects]]
-  branch = "v2"
   name = "github.com/go-yaml/yaml"
   packages = ["."]
-  revision = "d670f9405373e636a5a2765eea47fac0c9bc91a4"
+  revision = "5420a8b6744d3b0345ab293f6fcba19c978f1183"
+  version = "v2.2.1"
 
 [[projects]]
   name = "github.com/immortal/logrotate"

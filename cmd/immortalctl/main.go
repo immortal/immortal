@@ -4,8 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/user"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -146,18 +144,12 @@ func main() {
 	services, _ := ctl.FindServices(sdir)
 
 	// get user $HOME/.immortal services
-	home := os.Getenv("HOME")
-	if home == "" {
-		usr, err := user.Current()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error getting user home: %s\n", err)
-			os.Exit(1)
-		}
-		home = usr.HomeDir
+	userSdir, err := immortal.GetUserSdir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, err.Error())
+		os.Exit(1)
 	}
-	if userServices, err := ctl.FindServices(
-		filepath.Join(home, ".immortal"),
-	); err == nil {
+	if userServices, err := ctl.FindServices(userSdir); err == nil {
 		services = append(services, userServices...)
 	}
 
