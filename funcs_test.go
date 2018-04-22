@@ -64,8 +64,13 @@ func TestInSlice(t *testing.T) {
 
 func TestGetUserdir(t *testing.T) {
 	oldHome := os.Getenv("HOME")
+
 	os.Setenv("HOME", "/tmp/foo")
 	expect(t, GetUserdir(), filepath.Join("/tmp/foo", ".immortal"))
+
+	os.Setenv("HOME", "")
+	expect(t, GetUserdir(), filepath.Join(oldHome, ".immortal"))
+
 	os.Setenv("HOME", oldHome)
 }
 
