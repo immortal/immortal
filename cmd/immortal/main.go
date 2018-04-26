@@ -58,12 +58,16 @@ func main() {
 				filepath.Join(immortal.GetSdir(), r, "immortal.sock"),
 				filepath.Join(userSdir, r, "immortal.sock"),
 			}
+			isDown := true
 			for _, socket := range sockets {
-				if status, err := ctl.GetStatus(socket); err != nil {
-					down = append(down, r)
-				} else if status.Up == "" {
-					down = append(down, r)
+				status, err := ctl.GetStatus(socket)
+				if err == nil && status.Up != "" {
+					isDown = false
+					break
 				}
+			}
+			if isDown {
+				down = append(down, r)
 			}
 		}
 		if len(down) > 0 {
