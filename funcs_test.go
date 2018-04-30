@@ -3,6 +3,7 @@ package immortal
 import (
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -59,6 +60,26 @@ func TestInSlice(t *testing.T) {
 			t.Error(tt.slice)
 		}
 	}
+}
+
+func TestGetUserSdir(t *testing.T) {
+	oldHome := os.Getenv("HOME")
+
+	os.Setenv("HOME", "/tmp/foo")
+	if uSdir, err := GetUserSdir(); err != nil {
+		t.Error(err)
+	} else {
+		expect(t, uSdir, filepath.Join("/tmp/foo", ".immortal"))
+	}
+
+	os.Setenv("HOME", "")
+	if uSdir, err := GetUserSdir(); err != nil {
+		t.Error(err)
+	} else {
+		expect(t, uSdir, filepath.Join(oldHome, ".immortal"))
+	}
+
+	os.Setenv("HOME", oldHome)
 }
 
 func TestIsDir(t *testing.T) {
