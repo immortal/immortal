@@ -36,6 +36,12 @@ func main() {
 		os.Exit(0)
 	}
 
+	// nodaemon check
+	nodaemon := false
+	if (fs.Lookup("n")).Value.(flag.Getter).Get().(bool) {
+		nodaemon = true
+	}
+
 	// log to syslog
 	logger, err := syslog.New(syslog.LOG_NOTICE|syslog.LOG_DAEMON, "immortal")
 	if err == nil {
@@ -76,7 +82,7 @@ func main() {
 	}
 
 	// fork
-	if os.Getppid() > 1 {
+	if !nodaemon && os.Getppid() > 1 {
 		if pid, err := immortal.Fork(); err != nil {
 			log.Fatalf("error while forking: %s", err)
 		} else {

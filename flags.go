@@ -14,6 +14,7 @@ type Flags struct {
 	Retries    uint
 	User       string
 	Version    bool
+	Nodaemon   bool
 	Wait       uint
 	Wrkdir     string
 }
