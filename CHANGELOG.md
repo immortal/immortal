@@ -1,3 +1,8 @@
+## 0.19.0
+
+* Added option `-n` no-daemon mode, stays in the foreground [#40](https://github.com/immortal/immortal/pull/40), thanks @loafoe
+* Use service name derived from config when using [#39](https://github.com/immortal/immortal/pull/30), thanks @loafoe
+
 ## 0.18.0
 
 * Added option `retries`, `-r` to specify the maximum number of tries before exiting the program
