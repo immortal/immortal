@@ -78,5 +78,8 @@ uninstall: clean
 docker:
 	docker build -t immortal . && docker run -it --privileged immortal .
 
+docker-deb:
+	docker build -t immortal-deb -f Dockerfile-deb . && docker run -it --privileged immortal-deb .
+
 linux:
 	docker run --entrypoint "/bin/bash" -it --privileged immortal

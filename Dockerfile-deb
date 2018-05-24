@@ -1,0 +1,31 @@
+FROM golang:latest as builder
+
+RUN groupadd -r toor && useradd --create-home --no-log-init -r -g toor toor
+RUN go get -u github.com/golang/dep/cmd/dep
+WORKDIR /go/src/github.com/immortal/immortal
+COPY . .
+RUN dep ensure --vendor-only
+RUN chown -R toor:toor /go
+USER toor
+
+RUN go test -race -v
+RUN export VERSION=$(git describe --tags --always); \
+go build -ldflags "-s -w -X main.version=${VERSION}" -o immortal cmd/immortal/main.go; \
+go build -ldflags "-s -w -X main.version=${VERSION}" -o immortalctl cmd/immortalctl/main.go; \
+go build -ldflags "-s -w -X main.version=${VERSION}" -o immortaldir cmd/immortaldir/main.go;
+
+FROM ruby:2.3
+RUN  gem install --quiet --no-document fpm
+
+RUN mkdir /deb-package
+COPY --from=builder /go/src/github.com/immortal/immortal/immortal* /deb-package/
+RUN mkdir dpkg-source
+WORKDIR dpkg-source
+
+RUN fpm --output-type deb \
+  --input-type dir --chdir /deb-package \
+  --prefix /usr/bin --name immortal \
+  --version foo \
+  --description 'immortal' \
+  -p immortal-foo.deb \
+  immortal && cp *.deb /deb-package/
