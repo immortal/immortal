@@ -78,5 +78,8 @@ uninstall: clean
 docker:
 	docker build -t immortal --build-arg VERSION=${VERSION} .
 
+docker-no-cache:
+	docker build --no-cache -t immortal --build-arg VERSION=${VERSION} .
+
 linux:
 	docker run --entrypoint "/bin/bash" -it --privileged immortal
