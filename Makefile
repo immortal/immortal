@@ -23,6 +23,14 @@ build: get
 	${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o immortalctl cmd/immortalctl/main.go;
 	${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o immortaldir cmd/immortaldir/main.go;
 
+build-linux:
+	for arch in 386 amd64 arm arm64 ppc64 ppc64le mips mipsle mips64 mips64le; do \
+		mkdir -p build/$${arch}; \
+		GOOS=linux GOARCH=$${arch} ${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o build/$${arch}/immortal cmd/immortal/main.go; \
+		GOOS=linux GOARCH=$${arch} ${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o build/$${arch}/immortalctl cmd/immortalctl/main.go; \
+		GOOS=linux GOARCH=$${arch} ${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o build/$${arch}/immortaldir cmd/immortaldir/main.go; \
+	done
+
 clean:
 	${GO} clean -i
 	@rm -rf immortal immortalctl immortaldir *.debug *.out build debian
