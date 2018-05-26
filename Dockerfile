@@ -49,3 +49,16 @@ RUN for arch in /build/*; do \
   --architecture ${arch##*/} \
   --chdir / \
   /source/=/ /build/${arch##*/}/=/usr/bin; done
+RUN for arch in /build/*; do \
+  fpm --output-type rpm \
+  --input-type dir \
+  --name immortal \
+  --version ${VERSION} \
+  --description 'A *nix cross-platform (OS agnostic) supervisor' \
+  --url 'https://immortal.run' \
+  --after-install scripts/after-install.sh \
+  --before-remove scripts/before-remove.sh \
+  --package immortal_${VERSION}_${arch##*/}.rpm \
+  --architecture ${arch##*/} \
+  --chdir / \
+  /source/=/ /build/${arch##*/}/=/usr/bin; done
