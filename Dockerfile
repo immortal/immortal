@@ -36,7 +36,8 @@ RUN mkdir deb-package
 WORKDIR deb-package
 RUN git clone https://github.com/immortal/packages.git scripts
 RUN cp scripts/* /source/tmp/immortal
-RUN fpm --output-type deb \
+RUN for arch in /build/*; do \
+  fpm --output-type deb \
   --input-type dir \
   --name immortal \
   --version ${VERSION} \
@@ -44,6 +45,7 @@ RUN fpm --output-type deb \
   --url 'https://immortal.run' \
   --after-install scripts/after-install.sh \
   --before-remove scripts/before-remove.sh \
-  --package immortal-${VERSION}.deb \
+  --package immortal_${VERSION}_${arch##*/}.deb \
+  --architecture ${arch##*/} \
   --chdir / \
-  /source/=/ /build/386/=/usr/bin
+  /source/=/ /build/${arch##*/}/=/usr/bin; done
