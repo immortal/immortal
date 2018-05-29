@@ -519,3 +519,69 @@ wait: 1`)
 	}
 	expect(t, len(cfg.Require), 0)
 }
+
+func TestParseYamlRequireCmd(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "TestParseYamlRequireCmd")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	yaml := []byte(`
+cmd: command
+wait: 1
+require_cmd: test -f /tmp/foo`)
+	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", tmpfile.Name()}
+	parser := &Parse{
+		UserLookup: MockLookup,
+	}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsYamlUsrErr", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	cfg, err := ParseArgs(parser, fs)
+	if err != nil {
+		t.Error(err)
+	}
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	expect(t, len(cfg.RequireCmd) > 0, true)
+	expect(t, cfg.RequireCmd, "test -f /tmp/foo")
+}
+
+func TestParseYamlRequireEmptyCmd(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "TestParseYamlRequireCmd")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	yaml := []byte(`
+cmd: command
+wait: 1`)
+	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", tmpfile.Name()}
+	parser := &Parse{
+		UserLookup: MockLookup,
+	}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsYamlUsrErr", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	cfg, err := ParseArgs(parser, fs)
+	if err != nil {
+		t.Error(err)
+	}
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	expect(t, len(cfg.RequireCmd), 0)
+}

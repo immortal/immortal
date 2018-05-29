@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/syslog"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,18 @@ func main() {
 		}
 		if len(down) > 0 {
 			log.Fatalf("required services are not UP: %s", strings.Join(down, ", "))
+		}
+	}
+
+	// Check for required command exit to be 0
+	if len(cfg.RequiredCmd) > 0 {
+		var shell = "sh"
+		if sh := os.Getenv("SHELL"); sh != "" {
+			shell = sh
+		}
+		_, err := exec.Command(shell, "-c", cfg.RequiredCmd)
+		if err != nil {
+			log.Fatalf("required command failed: %s", err)
 		}
 	}
 

@@ -13,6 +13,7 @@ type Config struct {
 	Stderr     Log               `yaml:",omitempty" json:",omitempty"`
 	Logger     string            `yaml:",omitempty" json:",omitempty"`
 	Require    []string          `yaml:",omitempty"`
+	RequireCmd string            `yaml:"require_cmd,omitempty"`
 	User       string            `yaml:",omitempty" json:",omitempty"`
 	Wait       uint              `yaml:",omitempty"`
 	Retries    uint              `yaml:",omitempty"`
