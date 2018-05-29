@@ -1,0 +1,7 @@
+cmd: iostat 3
+log:
+    file: /tmp/iostat.log
+    age: 10  # seconds
+    num: 7   # int
+    size: 1  # MegaBytes
+require_cmd: test -f /tmp/foo

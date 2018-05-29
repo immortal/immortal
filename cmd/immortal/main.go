@@ -83,12 +83,12 @@ func main() {
 	}
 
 	// Check for required command exit to be 0
-	if len(cfg.RequiredCmd) > 0 {
+	if len(cfg.RequireCmd) > 0 {
 		var shell = "sh"
 		if sh := os.Getenv("SHELL"); sh != "" {
 			shell = sh
 		}
-		_, err := exec.Command(shell, "-c", cfg.RequiredCmd)
+		_, err := exec.Command(shell, "-c", cfg.RequireCmd).Output()
 		if err != nil {
 			log.Fatalf("required command failed: %s", err)
 		}
