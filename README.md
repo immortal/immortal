@@ -14,6 +14,7 @@ https://immortal.run/
 [![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/immortal/immortal/blob/master/CONTRIBUTING.md)
 
 Linux precompiled binaries
+
 [![deb](https://img.shields.io/badge/deb-packagecloud.io-844fec.svg)](https://packagecloud.io/immortal/immortal)
 [![rpm](https://img.shields.io/badge/rpm-packagecloud.io-844fec.svg)](https://packagecloud.io/immortal/immortal)
 
