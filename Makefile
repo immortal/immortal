@@ -31,6 +31,12 @@ build-linux:
 		GOOS=linux GOARCH=$${arch} ${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o build/$${arch}/immortaldir cmd/immortaldir/main.go; \
 	done
 
+build-fbsd:
+	mkdir -p build/amd64; \
+	GOOS=freebsd GOARCH=amd64 ${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o build/amd64/immortal cmd/immortal/main.go; \
+	GOOS=freebsd GOARCH=amd64 ${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o build/amd64/immortalctl cmd/immortalctl/main.go; \
+	GOOS=freebsd GOARCH=amd64 ${GO} build -ldflags "-s -w -X main.version=${VERSION}" -o build/amd64/immortaldir cmd/immortaldir/main.go; \
+
 clean:
 	${GO} clean -i
 	@rm -rf immortal immortalctl immortaldir *.debug *.out build debian

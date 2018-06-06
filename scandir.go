@@ -74,8 +74,14 @@ func (s *ScanDir) Start(ctl Control) {
 	// start with scandir
 	s.watch <- s.scandir
 
+	ticker := time.NewTicker(time.Second * 5)
+
 	for {
 		select {
+		// every 5 seconds
+		case <-ticker.C:
+			s.watch <- s.scandir
+		// based on kqueue response
 		case watch := <-s.watch:
 			switch watch {
 			case s.sdir:
