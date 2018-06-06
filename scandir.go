@@ -153,9 +153,9 @@ func (s *ScanDir) Scandir(ctl Control) error {
 					if out, err := ctl.Run(fmt.Sprintf("immortal -c %s -ctl %s", path, name)); err != nil {
 						log.Println(err)
 					} else {
+						go s.WatchFile(path)
 						log.Printf("%s\n", out)
 					}
-					go s.WatchFile(path)
 				}
 			}
 		}
