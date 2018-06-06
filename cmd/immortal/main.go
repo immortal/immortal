@@ -88,8 +88,7 @@ func main() {
 		if sh := os.Getenv("SHELL"); sh != "" {
 			shell = sh
 		}
-		_, err := exec.Command(shell, "-c", cfg.RequireCmd).Output()
-		if err != nil {
+		if err := exec.Command(shell, "-c", cfg.RequireCmd).Run(); err != nil {
 			log.Fatalf("required command failed: %s", err)
 		}
 	}

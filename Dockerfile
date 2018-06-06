@@ -36,6 +36,18 @@ RUN mkdir deb-package
 WORKDIR deb-package
 RUN git clone https://github.com/immortal/packages.git scripts
 RUN cp scripts/* /source/tmp/immortal
+RUN fpm --output-type deb \
+  --input-type dir \
+  --name immortal \
+  --version ${VERSION} \
+  --description 'A *nix cross-platform (OS agnostic) supervisor' \
+  --url 'https://immortal.run' \
+  --after-install scripts/after-install.sh \
+  --before-remove scripts/before-remove.sh \
+  --package immortal_${VERSION}_i386.deb \
+  --architecture i386 \
+  --chdir / \
+  /source/=/ /build/386/=/usr/bin; done
 RUN for arch in /build/*; do \
   fpm --output-type deb \
   --input-type dir \

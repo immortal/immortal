@@ -13,6 +13,10 @@ https://immortal.run/
 [![GoDoc](https://godoc.org/github.com/immortal/immortal?status.svg)](https://godoc.org/github.com/immortal/immortal)
 [![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/immortal/immortal/blob/master/CONTRIBUTING.md)
 
+Linux precompiled binaries
+[![deb](https://img.shields.io/badge/deb-packagecloud.io-844fec.svg)](https://packagecloud.io/immortal/immortal)
+[![rpm](https://img.shields.io/badge/rpm-packagecloud.io-844fec.svg)](https://packagecloud.io/immortal/immortal)
+
 ## run on behalf other system user
 
 If services need to run on behalf other system user `www, nobody, www-data`,

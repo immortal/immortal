@@ -100,6 +100,7 @@ Options start with one dash. Many of the options require an additional value nex
         require:                         # list of services that need to be running before starting
           - foo
           - bar
+        require_cmd: <command>           # if the exit status from the command is 0, process will start
 
 -ctl /var/run/immortal/<service>
         Path where the supervise directory will be created. This directory is unique per service and is used to manage the service via a Unix socket besides preventing running multiple times the same service by using a lock.

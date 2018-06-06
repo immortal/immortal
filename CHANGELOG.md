@@ -1,7 +1,11 @@
+## 0.20.0
+
+* Added the `require_cmd` option that prevents starting a service based on the output of command (exit 0), thanks @luetge
+
 ## 0.19.0
 
 * Added option `-n` no-daemon mode, stays in the foreground [#40](https://github.com/immortal/immortal/pull/40), thanks @loafoe
-* Use service name derived from config when using [#39](https://github.com/immortal/immortal/pull/30), thanks @loafoe
+* Use service name derived from config when using `immortal -c service.yml` [#39](https://github.com/immortal/immortal/pull/30), thanks @loafoe
 
 ## 0.18.0
 
