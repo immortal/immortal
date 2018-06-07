@@ -46,7 +46,7 @@ test: get
 
 cover:
 	${GO} test -cover && \
-	${GO} test -coverprofile=coverage.out  && \
+	${GO} test -coverprofile=coverage.out && \
 	${GO} tool cover -html=coverage.out
 
 compile: clean goxc

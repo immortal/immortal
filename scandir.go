@@ -74,6 +74,7 @@ func (s *ScanDir) Start(ctl Control) {
 	// start with scandir
 	s.watch <- s.scandir
 
+	// Try to start services that are stopped depending on require/require_cmd
 	ticker := time.NewTicker(time.Second * 5)
 
 	for {
