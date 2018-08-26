@@ -1,5 +1,6 @@
 # ⭕  immortal
 
+[![CircleCI](https://circleci.com/gh/immortal/immortal.svg?style=svg)](https://circleci.com/gh/immortal/immortal)
 [![Build Status](https://travis-ci.org/immortal/immortal.svg?branch=develop)](https://travis-ci.org/immortal/immortal)
 [![Coverage Status](https://coveralls.io/repos/github/immortal/immortal/badge.svg?branch=master)](https://coveralls.io/github/immortal/immortal?branch=master)
 [![codecov](https://codecov.io/gh/immortal/immortal/branch/master/graph/badge.svg)](https://codecov.io/gh/immortal/immortal)

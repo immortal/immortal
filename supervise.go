@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"sync/atomic"
@@ -26,25 +27,34 @@ func Supervise(d *Daemon) error {
 		daemon:  d,
 		process: p,
 	}
-	supervisor.Start()
-	return nil
+	return supervisor.Start()
 }
 
 // Start loop forever
-func (s *Supervisor) Start() {
+func (s *Supervisor) Start() error {
 	for {
 		select {
 		case <-s.daemon.quit:
-			return
+			s.daemon.wg.Wait()
+			return fmt.Errorf("supervisor stopped, count: %d", s.daemon.count)
 		case <-s.daemon.run:
 			s.ReStart()
 		case err := <-s.process.errch:
-			s.Terminate(err)
-			// follow the new pid instead of trying to call run again unless the new pid dies
-			if s.daemon.cfg.Pid.Follow != "" {
-				s.FollowPid(err)
+			// stop or exit based on the retries
+			if s.Terminate(err) {
+				if s.daemon.cfg.cli || os.Getenv("IMMORTAL_EXIT") != "" {
+					close(s.daemon.quit)
+				} else {
+					// stop don't exit
+					atomic.StoreUint32(&s.daemon.lock, 1)
+				}
 			} else {
-				s.ReStart()
+				// follow the new pid instead of trying to call run again unless the new pid dies
+				if s.daemon.cfg.Pid.Follow != "" {
+					s.FollowPid(err)
+				} else {
+					s.ReStart()
+				}
 			}
 		}
 	}
@@ -59,7 +69,7 @@ func (s *Supervisor) ReStart() {
 		if s.process, err = s.daemon.Run(np); err != nil {
 			close(np.quit)
 			log.Print(err)
-			// loop again but wait 1 seccond before trying again
+			// loop again but wait 1 seccond before trying
 			s.wait = time.Second
 			s.daemon.run <- struct{}{}
 		}
@@ -67,14 +77,17 @@ func (s *Supervisor) ReStart() {
 }
 
 // Terminate handle process termination
-func (s *Supervisor) Terminate(err error) {
+func (s *Supervisor) Terminate(err error) bool {
+	s.daemon.Lock()
+	defer s.daemon.Unlock()
+
 	// set end time
 	s.process.eTime = time.Now()
 	// unlock, or lock once
 	atomic.StoreUint32(&s.daemon.lock, s.daemon.lockOnce)
 	// WatchPid returns EXIT
 	if err != nil && err.Error() == "EXIT" {
-		log.Printf("PID: %d (%s) Exited", s.pid, s.process.cmd.Path)
+		log.Printf("PID: %d (%s) exited", s.pid, s.process.cmd.Path)
 	} else {
 		log.Printf("PID %d (%s) terminated, %s [%v user  %v sys  %s up]\n",
 			s.process.cmd.ProcessState.Pid(),
@@ -91,21 +104,28 @@ func (s *Supervisor) Terminate(err error) {
 			s.wait = time.Second - uptime
 		}
 	}
-	// check how many times process has started and exit or stop starting it
-	if uint32(s.daemon.cfg.Retries) == atomic.LoadUint32(&s.daemon.count) {
-		exit := os.Getenv("IMMORTAL_EXIT")
-		if s.daemon.cfg.cli || exit != "" {
-			close(s.daemon.quit)
-		} else {
-			atomic.StoreUint32(&s.daemon.lock, 1)
+	// behavior based on the retries
+	if s.daemon.cfg.Retries >= 0 {
+		//  0 run only once (don't retry)
+		if s.daemon.cfg.Retries == 0 {
+			return true
+		}
+		// +1 run N times
+		if s.daemon.count > s.daemon.cfg.Retries {
+			return true
 		}
 	}
+	// -1 run forever
+	return false
 }
 
 // FollowPid check if process still up and running if it is, follow the pid,
 // monitor the existing pid created by the process instead of creating
 // another process
 func (s *Supervisor) FollowPid(err error) {
+	s.daemon.Lock()
+	defer s.daemon.Unlock()
+
 	s.pid, err = s.daemon.ReadPidFile(s.daemon.cfg.Pid.Follow)
 	if err != nil {
 		log.Printf("Cannot read pidfile: %s, %s", s.daemon.cfg.Pid.Follow, err)

@@ -247,6 +247,9 @@ func TestSignalsFiFo(t *testing.T) {
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/halt", res); err != nil {
 		t.Fatal(err)
 	}
+
+	// wait for socket to be close
+	d.wg.Wait()
 }
 
 func waitSig(t *testing.T, fifo *os.File, sig string) {

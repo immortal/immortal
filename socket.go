@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/nbari/violetear"
@@ -21,29 +20,44 @@ type Status struct {
 	Down   string `json:"down,omitempty"`
 	Cmd    string `json:"cmd"`
 	Fpid   bool   `json:"fpid"`
-	Count  uint32 `json:"count"`
+	Count  int    `json:"count"`
 	Status string `json:"status,omitempty"`
 }
 
 // Listen creates a unix socket used for control the daemon
-func (d *Daemon) Listen() error {
+func (d *Daemon) Listen() (err error) {
 	l, err := net.Listen("unix", filepath.Join(d.supDir, "immortal.sock"))
 	if err != nil {
-		return err
+		return
 	}
 	router := violetear.New()
 	router.Verbose = false
 	router.HandleFunc("/", d.HandleStatus)
 	router.HandleFunc("/signal/*", d.HandleSignal)
-	go http.Serve(l, router)
-	return nil
+	// close socket when process finishes (after cmd.Wait())
+	srv := &http.Server{Handler: router}
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		err := srv.Serve(l)
+		log.Printf("removing [%s/immortal.sock]: %s\n", d.supDir, err)
+	}()
+	go func(quit chan struct{}) {
+		<-quit
+		if err := srv.Close(); err != nil {
+			log.Printf("HTTP socket close error: %v", err)
+		}
+	}(d.quit)
+	return
 }
 
 // HandleStatus return process status
 func (d *Daemon) HandleStatus(w http.ResponseWriter, r *http.Request) {
+	d.RLock()
+	defer d.RUnlock()
 	status := Status{
 		Cmd:   strings.Join(d.cfg.command, " "),
-		Count: atomic.LoadUint32(&d.count),
+		Count: d.count,
 	}
 
 	//  only if process is running

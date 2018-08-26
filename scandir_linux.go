@@ -88,7 +88,7 @@ func (s *ScanDir) Scanner(ctl Control) {
 			name = strings.TrimSuffix(f.Name(), filepath.Ext(f.Name()))
 			md5, err = md5sum(path)
 			if err != nil {
-				return err
+				return fmt.Errorf("error getting the md5sum: %s", err)
 			}
 			// add service to services map or reload if file has been changed
 			services = append(services, name)

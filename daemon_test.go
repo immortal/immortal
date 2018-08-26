@@ -2,11 +2,12 @@ package immortal
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
-	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -214,55 +215,30 @@ func TestBadWritePidChild(t *testing.T) {
 	}
 }
 
-func TestHelperProcessSignalsUDOT(*testing.T) {
-	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
-		return
-	}
-	fmt.Println("5D675098-45D7-4089-A72C-3628713EA5BA")
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, os.Kill)
-	select {
-	case <-c:
-		os.Exit(1)
-	case <-time.After(10 * time.Second):
-		os.Exit(0)
-	}
-}
-
 func TestSignalsUDOT(t *testing.T) {
 	sdir, err := ioutil.TempDir("", "TestSignalsUDOT")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(sdir)
-	base := filepath.Base(os.Args[0]) // "exec.test"
-	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
-	if dir == "." {
-		t.Skip("skipping; running test at root somehow")
-	}
-	parentDir := filepath.Dir(dir) // "/tmp/go-buildNNNN/os/exec"
-	dirBase := filepath.Base(dir)  // "_test"
-	if dirBase == "." {
-		t.Skipf("skipping; unexpected shallow dir of %q", dir)
-	}
-	tmpfile, err := ioutil.TempFile("", "TestLogFile")
+	tmpfile, err := ioutil.TempFile(sdir, "log.")
 	if err != nil {
 		t.Error(err)
 	}
-	defer os.Remove(tmpfile.Name()) // clean up
 	cfg := &Config{
-		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsUDOT", "--"},
-		Cwd:     parentDir,
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "signalsUDOT"},
+		command: []string{os.Args[0]},
+		Cwd:     sdir,
+		ctl:     sdir,
 		Pid: Pid{
-			Parent: filepath.Join(parentDir, "parent.pid"),
-			Child:  filepath.Join(parentDir, "child.pid"),
+			Parent: filepath.Join(sdir, "parent.pid"),
+			Child:  filepath.Join(sdir, "child.pid"),
 		},
 		Log: Log{
 			File: tmpfile.Name(),
 		},
-		ctl: sdir,
 	}
+	// create new daemon
 	d, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -281,12 +257,12 @@ func TestSignalsUDOT(t *testing.T) {
 	}
 
 	// check pids
-	if pid, err := d.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
+	if pid, err := d.ReadPidFile(filepath.Join(sdir, "parent.pid")); err != nil {
 		t.Error(err)
 	} else {
 		expect(t, os.Getpid(), pid)
 	}
-	if pid, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
+	if pid, err := d.ReadPidFile(filepath.Join(sdir, "child.pid")); err != nil {
 		t.Error(err, pid)
 	} else {
 		expect(t, p.Pid(), pid)
@@ -303,8 +279,8 @@ func TestSignalsUDOT(t *testing.T) {
 	if status, err = ctl.GetStatus(filepath.Join(sdir, "immortal.sock")); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, true, strings.HasSuffix(status.Cmd, "/immortal.test -test.run=TestHelperProcessSignalsUDOT --"))
-	expect(t, 1, int(status.Count))
+	expect(t, true, strings.HasSuffix(status.Cmd, "/immortal.test"))
+	expect(t, 1, status.Count)
 
 	// http socket client
 	// test "k", process should restart and get a new pid
@@ -329,6 +305,7 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Fatalf("Expecting a new pid")
 	}
 
+	// before when not using TestMain
 	// $ pgrep -fl TestHelperProcessSignalsUDO
 	// PID _test/immortal.test -test.run=TestHelperProcessSignalsUDOT --
 
@@ -386,7 +363,7 @@ func TestSignalsUDOT(t *testing.T) {
 	if status, err = ctl.GetStatus(filepath.Join(sdir, "immortal.sock")); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, 3, int(status.Count))
+	expect(t, 3, status.Count)
 
 	// test "u"
 	t.Log("testing u")
@@ -432,19 +409,23 @@ func TestSignalsUDOT(t *testing.T) {
 		t.Error(err)
 	}
 
-	select {
-	case err := <-p.errch:
-		expect(t, "signal: killed", err.Error())
-	case <-time.After(1 * time.Second):
-		if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "kill"); err != nil {
-			t.Fatal(err)
+DONE:
+	for {
+		select {
+		case err := <-p.errch:
+			expect(t, "signal: killed", err.Error())
+			break DONE
+		case <-time.After(1 * time.Second):
+			if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "kill"); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 
 	if status, err = ctl.GetStatus(filepath.Join(sdir, "immortal.sock")); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, 6, int(status.Count))
+	expect(t, 6, status.Count)
 
 	// test log content
 	t.Log("testing logfile")
@@ -452,6 +433,7 @@ func TestSignalsUDOT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	lines := strings.Split(string(content), "\n")
 	expect(t, true, strings.HasSuffix(lines[0], "5D675098-45D7-4089-A72C-3628713EA5BA"))
 
@@ -459,6 +441,29 @@ func TestSignalsUDOT(t *testing.T) {
 	if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "halt"); err != nil {
 		t.Fatal(err)
 	}
+	// wait for socket to be close
+	d.wg.Wait()
+
+	err = ctl.PurgeServices(filepath.Join(sdir, "immortal.sock"))
+	if err == nil {
+		t.Fatal(err)
+	}
+
+	// remove log.* file
+	files, err := filepath.Glob(filepath.Join(sdir, "log.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if err := os.Remove(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// remove child.pid and parent.pid
+	os.Remove(filepath.Join(sdir, "child.pid"))
+	os.Remove(filepath.Join(sdir, "parent.pid"))
+
+	// purgeServices
 	err = ctl.PurgeServices(filepath.Join(sdir, "immortal.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -479,6 +484,40 @@ func TestDaemonNewEnvHOME(t *testing.T) {
 	ctl := &Controller{}
 	err = ctl.PurgeServices(filepath.Join(d.supDir, "immortal.sock"))
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDaemonConfigFile(t *testing.T) {
+	sdir, err := ioutil.TempDir("", "TestDaemonConfigFile")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
+	b := make([]byte, 3)
+	_, err = rand.Read(b)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	expectedName := base64.URLEncoding.EncodeToString(b)
+	cfg := &Config{
+		configFile: filepath.Join(sdir, fmt.Sprintf("%s.yml", expectedName)),
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, true, strings.HasSuffix(d.supDir, expectedName))
+}
+
+func TestDaemonFailSdir(t *testing.T) {
+	cfg := &Config{}
+	home := os.Getenv("HOME")
+	defer func() { os.Setenv("HOME", home) }()
+	os.Setenv("HOME", "/dev/null")
+	_, err := New(cfg)
+	if err == nil {
 		t.Fatal(err)
 	}
 }

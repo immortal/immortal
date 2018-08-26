@@ -16,7 +16,7 @@ type Config struct {
 	RequireCmd string            `yaml:"require_cmd,omitempty"`
 	User       string            `yaml:",omitempty" json:",omitempty"`
 	Wait       uint              `yaml:",omitempty"`
-	Retries    uint              `yaml:",omitempty"`
+	Retries    int               `yaml:",omitempty"`
 	Pid        `yaml:",omitempty" json:",omitempty"`
 	cli        bool
 	command    []string

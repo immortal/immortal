@@ -1,38 +1,17 @@
 package immortal
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 )
-
-func TestHelperProcessSupervise(*testing.T) {
-	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
-		return
-	}
-	c := make(chan os.Signal)
-	signal.Notify(c, os.Interrupt, os.Kill)
-	select {
-	case <-c:
-		os.Exit(1)
-	case <-time.After(10 * time.Second):
-		os.Exit(0)
-	}
-}
-
-func TestHelperProcessSupervise2(*testing.T) {
-	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
-		return
-	}
-	os.Exit(0)
-}
 
 func TestSupervise(t *testing.T) {
 	sdir, err := ioutil.TempDir("", "TestSupervise")
@@ -42,33 +21,26 @@ func TestSupervise(t *testing.T) {
 	defer os.RemoveAll(sdir)
 	log.SetOutput(ioutil.Discard)
 	log.SetFlags(0)
-	base := filepath.Base(os.Args[0]) // "exec.test"
-	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
-	if dir == "." {
-		t.Skip("skipping; running test at root somehow")
-	}
-	parentDir := filepath.Dir(dir) // "/tmp/go-buildNNNN/os/exec"
-	dirBase := filepath.Base(dir)  // "_test"
-	if dirBase == "." {
-		t.Skipf("skipping; unexpected shallow dir of %q", dir)
-	}
-	tmpfile, err := ioutil.TempFile("", "TestPidFile")
+	tmpfile, err := ioutil.TempFile(sdir, "follow.pid")
 	if err != nil {
 		t.Error(err)
 	}
-	defer os.Remove(tmpfile.Name()) // clean up
 	cfg := &Config{
-		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSupervise", "--"},
-		Cwd:     parentDir,
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "sleep10"},
+		command: []string{os.Args[0]},
+		Cwd:     sdir,
 		ctl:     sdir,
 		Pid: Pid{
-			Parent: filepath.Join(parentDir, "parent.pid"),
-			Child:  filepath.Join(parentDir, "child.pid"),
+			Parent: filepath.Join(sdir, "parent.pid"),
+			Child:  filepath.Join(sdir, "child.pid"),
 			Follow: tmpfile.Name(),
 		},
+		Retries: -1,
 	}
-	// to remove lock
+	// prettyPrint cfg
+	// fmt.Println(prettyPrint(cfg))
+
+	// create new daemon
 	d, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -79,32 +51,50 @@ func TestSupervise(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	go Supervise(d)
-	defer func() {
-		status := &Status{}
-		GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/exit", status)
+	//go Supervise(d)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		Supervise(d)
 	}()
 
+	// read child pid
 	time.Sleep(time.Second)
-	childPid, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid"))
+	childPid, err := d.ReadPidFile(filepath.Join(sdir, "child.pid"))
 	if err != nil {
 		t.Error(err)
 	}
+	d.RLock()
+	expect(t, 1, d.count)
+	d.RUnlock()
 
+	// terminate process a new child pid should be created
 	status := &Status{}
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/t", status); err != nil {
 		t.Fatal(err)
 	}
+
+	// read new child pid should be different from previous one
 	time.Sleep(time.Second)
-	newchildPid, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid"))
+	newchildPid, err := d.ReadPidFile(filepath.Join(sdir, "child.pid"))
 	if err != nil {
 		t.Error(err)
 	}
+	d.RLock()
+	expect(t, 2, d.count)
+	d.RUnlock()
+
 	if childPid == newchildPid {
 		t.Error("Expecting new child pid")
 	}
 
-	// fake watch pid with other process
+	// follow pid should be false
+	d.RLock()
+	expect(t, false, d.fpid)
+	d.RUnlock()
+
+	// fake watch pid with other process fpid should be true
 	cmd := exec.Command("sleep", "1")
 	cmd.Start()
 	go func() {
@@ -116,22 +106,36 @@ func TestSupervise(t *testing.T) {
 		t.Error(err)
 	}
 
-	// reset
+	// terminate the process and pid should be followed
 	if err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/t", status); err != nil {
 		t.Fatal(err)
 	}
 	for d.IsRunning(watchPid) {
 		// wait mock watchpid to finish
 		time.Sleep(500 * time.Millisecond)
+		d.RLock()
+		expect(t, true, d.fpid)
+		d.RUnlock()
 	}
+
+	// a new process/child should be created
 	time.Sleep(time.Second)
-	newchildPidAfter, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid"))
+	newchildPidAfter, err := d.ReadPidFile(filepath.Join(sdir, "child.pid"))
 	if err != nil {
 		t.Error(err)
 	}
 	if newchildPid == newchildPidAfter {
 		t.Error("Expecting different pids")
 	}
+	d.RLock()
+	expect(t, 3, d.count)
+	d.RUnlock()
+
+	// exit supervisor
+	// TODO - set environment variable IMMORTAL_EXIT to exit
+	GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/exit", status)
+	close(d.quit)
+	wg.Wait()
 }
 
 // TestSuperviseWait will test that the wait variable in supervise.go is set to
@@ -144,26 +148,18 @@ func TestSuperviseWait(t *testing.T) {
 	defer os.RemoveAll(sdir)
 	log.SetOutput(ioutil.Discard)
 	log.SetFlags(0)
-	base := filepath.Base(os.Args[0]) // "exec.test"
-	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
-	if dir == "." {
-		t.Skip("skipping; running test at root somehow")
-	}
-	parentDir := filepath.Dir(dir) // "/tmp/go-buildNNNN/os/exec"
-	dirBase := filepath.Base(dir)  // "_test"
-	if dirBase == "." {
-		t.Skipf("skipping; unexpected shallow dir of %q", dir)
-	}
 	cfg := &Config{
-		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSupervise2", "--"},
-		Cwd:     parentDir,
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "nosleep"},
+		command: []string{os.Args[0]},
+		Cwd:     sdir,
 		ctl:     sdir,
 		Pid: Pid{
-			Parent: filepath.Join(parentDir, "parent.pid"),
-			Child:  filepath.Join(parentDir, "child.pid"),
+			Parent: filepath.Join(sdir, "parent.pid"),
+			Child:  filepath.Join(sdir, "child.pid"),
 		},
+		Retries: -1,
 	}
+	// create new daemon
 	d, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -172,16 +168,87 @@ func TestSuperviseWait(t *testing.T) {
 	if err := d.Listen(); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Second)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		Supervise(d)
 	}()
-	time.Sleep(2 * time.Second)
+
 	status := &Status{}
-	GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/halt", status)
-	wg.Wait()
+	for status.Count < 3 {
+		time.Sleep(500 * time.Millisecond)
+		GetJSON(filepath.Join(sdir, "immortal.sock"), "/", status)
+		//	fmt.Printf("prettyPrint(status) = %+v\n", prettyPrint(status))
+	}
+	GetJSON(filepath.Join(sdir, "immortal.sock"), "/signal/exit", status)
+
+	close(d.quit)
+	d.RLock()
 	expect(t, true, d.count >= 2)
+	d.RUnlock()
+
+	wg.Wait()
+}
+
+func TestRetries(t *testing.T) {
+	sdir, err := ioutil.TempDir("", "TestRetries")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
+	log.SetOutput(ioutil.Discard)
+	log.SetFlags(0)
+
+	var tt = []struct {
+		retry  int
+		expect int
+	}{
+		{0, 1},
+		{1, 2},
+		{2, 3},
+	}
+	for _, tc := range tt {
+		rsdir := filepath.Join(sdir, fmt.Sprintf("%d", tc.retry))
+		if err := os.Mkdir(rsdir, os.ModePerm); err != nil {
+			t.Fatal(err)
+		}
+		t.Run(fmt.Sprintf("retry_%d", tc.retry), func(t *testing.T) {
+			cfg := &Config{
+				Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "nosleep"},
+				command: []string{os.Args[0]},
+				Cwd:     rsdir,
+				ctl:     rsdir,
+				Retries: tc.retry,
+			}
+			d, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// create socket
+			if err := d.Listen(); err != nil {
+				t.Fatal(err)
+			}
+			// start supervisor
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				Supervise(d)
+			}()
+			status := &Status{}
+			for status.Count < tc.expect {
+				err := GetJSON(filepath.Join(rsdir, "immortal.sock"), "/", status)
+				if err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+			close(d.quit)
+			wg.Wait()
+			d.RLock()
+			expect(t, tc.expect, d.count)
+			d.RUnlock()
+		})
+	}
 }

@@ -57,17 +57,20 @@ func TestParseDefault(t *testing.T) {
 	if helpCalled {
 		t.Error("help called for regular flag")
 	}
-	expect(t, "", flags.Ctl)
-	expect(t, false, flags.Version)
+	expect(t, "", flags.ChildPid)
 	expect(t, "", flags.Configfile)
-	expect(t, "", flags.Wrkdir)
+	expect(t, "", flags.Ctl)
 	expect(t, "", flags.Envdir)
 	expect(t, "", flags.FollowPid)
 	expect(t, "", flags.Logfile)
 	expect(t, "", flags.Logger)
-	expect(t, "", flags.ChildPid)
 	expect(t, "", flags.ParentPid)
 	expect(t, "", flags.User)
+	expect(t, "", flags.Wrkdir)
+	expect(t, -1, flags.Retries)
+	expect(t, false, flags.Nodaemon)
+	expect(t, false, flags.Version)
+	expect(t, uint(0), flags.Wait)
 }
 
 func TestParseFlags(t *testing.T) {
@@ -79,6 +82,7 @@ func TestParseFlags(t *testing.T) {
 		expected interface{}
 	}{
 		{[]string{"cmd", "-v"}, "Version", true},
+		{[]string{"cmd", "-n"}, "Nodaemon", true},
 		{[]string{"cmd", "-ctl", "service"}, "Ctl", "service"},
 		{[]string{"cmd", "-c", "run.yml"}, "Configfile", "run.yml"},
 		{[]string{"cmd", "-d", "/arena/wrkdir"}, "Wrkdir", "/arena/wrkdir"},
@@ -89,7 +93,13 @@ func TestParseFlags(t *testing.T) {
 		{[]string{"cmd", "-p", "/path/to/child"}, "ChildPid", "/path/to/child"},
 		{[]string{"cmd", "-P", "/path/to/parent"}, "ParentPid", "/path/to/parent"},
 		{[]string{"cmd", "-u", "nbari"}, "User", "nbari"},
+		{[]string{"cmd", "-w", "3"}, "Wait", 3},
+		{[]string{"cmd", "-r", "2"}, "Retries", 2},
+		{[]string{"cmd"}, "Nodaemon", false},
+		{[]string{"cmd"}, "Retries", -1},
+		{[]string{"cmd"}, "Wait", 0},
 	}
+
 	var helpCalled = false
 	for _, f := range flagTest {
 		os.Args = f.flag
@@ -110,6 +120,10 @@ func TestParseFlags(t *testing.T) {
 			expect(t, f.expected, refValue.Bool())
 		case reflect.String:
 			expect(t, f.expected, refValue.String())
+		case reflect.Int:
+			expect(t, f.expected, int(refValue.Int()))
+		case reflect.Uint:
+			expect(t, uint(f.expected.(int)), uint(refValue.Uint()))
 		}
 	}
 }
@@ -249,6 +263,8 @@ func TestParseArgsTable(t *testing.T) {
 		{[]string{"cmd", "-u", "www", "cmd"}, false},
 		{[]string{"cmd", "-u", "nonexistent", "cmd"}, true},
 		{[]string{"cmd", "-u", "err!=nil", "cmd"}, true},
+		{[]string{"cmd", "-r", "1"}, true},
+		{[]string{"cmd", "-r", "1", "cmd"}, false},
 	}
 	var helpCalled = false
 	for _, f := range flagTest {

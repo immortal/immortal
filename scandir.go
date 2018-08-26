@@ -157,13 +157,14 @@ func (s *ScanDir) Scandir(ctl Control) error {
 						go s.WatchFile(path)
 						log.Printf("%s\n", out)
 					}
+				} else {
+					k, _ := s.services.Load(name)
+					fmt.Printf(" name in map = %+v\n", k)
 				}
 			}
 		}
-
 		// Block for 100 ms on each call to kevent (WatchFile)
 		time.Sleep(100 * time.Millisecond)
-
 		return err
 	}
 	return filepath.Walk(s.scandir, find)

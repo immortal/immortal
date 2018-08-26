@@ -110,10 +110,10 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 		case "w", "winch", "WINCH":
 			err = d.process.Signal(syscall.SIGWINCH)
 
-		// x: Exit. If you use this option on a stable system, you're doing something wrong; supervise is designed to run forever.
+		// x: Exit. If you use this option on a stable system, you're doing something wrong.
+		// the supervisor is designed to run forever.
 		case "x", "exit":
-			exit := os.Getenv("IMMORTAL_EXIT")
-			if d.cfg.cli || exit != "" {
+			if d.cfg.cli || os.Getenv("IMMORTAL_EXIT") != "" {
 				close(d.quit)
 			} else {
 				err = fmt.Errorf("set environment variable IMMORTAL_EXIT to exit")
@@ -129,12 +129,12 @@ func (d *Daemon) HandleSignal(w http.ResponseWriter, r *http.Request) {
 	res := &SignalResponse{}
 	if err != nil {
 		res.Err = err.Error()
-		log.Print(err)
+		log.Printf("signal error: %s\n", err)
 	}
 
 	// return the error on the Response json encoded
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(res); err != nil {
-		log.Println(err)
+		log.Printf("error creating json response: %s\n", err)
 	}
 }

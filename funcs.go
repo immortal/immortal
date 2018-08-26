@@ -103,7 +103,7 @@ func GetUserSdir() (string, error) {
 	if home == "" {
 		usr, err := user.Current()
 		if err != nil {
-			return "", fmt.Errorf("error getting user home: %s\n", err)
+			return "", fmt.Errorf("error getting user home: %s", err)
 		}
 		home = usr.HomeDir
 	}

@@ -11,7 +11,7 @@ type Flags struct {
 	Logfile    string
 	Logger     string
 	ParentPid  string
-	Retries    uint
+	Retries    int
 	User       string
 	Version    bool
 	Nodaemon   bool

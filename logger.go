@@ -2,6 +2,7 @@ package immortal
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"log"
 	"os/exec"
@@ -72,10 +73,11 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 
 	if cfg.Logger != "" {
 		ch := make(chan error)
+		ctx, cancel := context.WithCancel(context.Background())
 
 		runLogger := func() error {
 			command := strings.Fields(cfg.Logger)
-			cmd := exec.Command(command[0], command[1:]...)
+			cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 			w, err = cmd.StdinPipe()
 			if err != nil {
 				return err
@@ -98,9 +100,10 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 					select {
 					case <-quit:
 						w.Close()
+						cancel()
 						return
 					case err := <-ch:
-						log.Printf("logger %s", err)
+						log.Printf("logger %v", err)
 						mw.Remove(w)
 						time.Sleep(time.Second)
 						if err := runLogger(); err == nil {
@@ -110,6 +113,7 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 				}
 			}()
 
+			// add writer
 			mw.Append(w)
 		}
 	}

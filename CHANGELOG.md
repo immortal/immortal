@@ -1,3 +1,9 @@
+## 0.21.0
+* Implemented `retries 0` defaults to `-1` run forever, if set to 0 it will just run once and exit
+* Fixed supervisor to wait for the http socket server to be closed before exiting
+* Using RWmutex to prevent race conditions
+* Improved logger to terminate the custom logger in case doesn't exit after closing StdinPipe
+
 ## 0.20.0
 
 * Added the `require_cmd` option that prevents starting a service based on the output of command (exit 0), thanks @luetge

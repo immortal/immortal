@@ -1,6 +1,7 @@
 package immortal
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -15,17 +17,23 @@ import (
 
 // Daemon struct
 type Daemon struct {
-	cfg                   *Config
-	count, lock, lockOnce uint32
-	fpid                  bool
-	process               *process
-	quit, run             chan struct{}
-	sTime                 time.Time
-	supDir                string
+	sync.RWMutex
+	cfg            *Config
+	count          int
+	fpid           bool
+	lock, lockOnce uint32
+	process        *process
+	quit, run      chan struct{}
+	sTime          time.Time
+	supDir         string
+	wg             sync.WaitGroup
 }
 
 // Run returns a process instance
 func (d *Daemon) Run(p Process) (*process, error) {
+	d.Lock()
+	defer d.Unlock()
+
 	var err error
 
 	// return if process is running
@@ -34,7 +42,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 	}
 
 	// increment count by 1
-	atomic.AddUint32(&d.count, 1)
+	d.count++
 
 	// to print remaininig seconds to start cmd == nil
 	d.process = p.GetProcess()
@@ -86,10 +94,9 @@ func (d *Daemon) ReadPidFile(pidfile string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	lines := strings.Split(string(content), "\n")
-	pid, err := strconv.Atoi(lines[0])
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(content)))
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("error parsing pid from %s: %s", pidfile, err)
 	}
 	return pid, nil
 }

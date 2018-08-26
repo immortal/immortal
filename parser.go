@@ -34,7 +34,7 @@ type Parse struct {
 func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.BoolVar(&p.Flags.Version, "v", false, "Print version")
 	fs.BoolVar(&p.Flags.Nodaemon, "n", false, "No daemon mode, stay in the foreground")
-	fs.UintVar(&p.Flags.Retries, "r", 0, "`number` of retries before program exit")
+	fs.IntVar(&p.Flags.Retries, "r", -1, "`number` of retries before program exit")
 	fs.UintVar(&p.Flags.Wait, "w", 0, "`seconds` to wait before starting")
 	fs.StringVar(&p.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
 	fs.StringVar(&p.Flags.Configfile, "c", "", "`run.yml` configuration file")
@@ -215,10 +215,11 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 
 	// create new cfg if not using run.yml
 	cfg = new(Config)
-	cfg.command = fs.Args()
 	cfg.Log.Size = 1
-	cfg.ctl = sdir
+	cfg.Retries = -1
 	cfg.cli = true
+	cfg.command = fs.Args()
+	cfg.ctl = sdir
 
 	// if -d
 	if flags.Wrkdir != "" {
@@ -261,7 +262,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	}
 
 	// if -r
-	if flags.Retries > 0 {
+	if flags.Retries >= 0 {
 		cfg.Retries = flags.Retries
 	}
 
