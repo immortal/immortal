@@ -58,7 +58,7 @@ Options start with one dash. Many of the options require an additional value nex
         Path to write the child pidfile.
 
 -r <int>
-        Number of retries before program exit, defaults to 0 (never exit).
+        Number of retries before program exit, defaults to -1 (never exit).
         If used within a configuration file with the option "retries" the supervisor will not exit and instead will send a signal "once" preventing with this starting the process again unless the environment var IMMORTAL_EXIT is defined which will cause to "exit" the supervisor instead.
 
 -u <user>
