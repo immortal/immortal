@@ -2,93 +2,17 @@ package immortal
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 )
-
-// MakeFifo creates a fifo file
-func MakeFifo(path string) error {
-	err := os.MkdirAll(filepath.Dir(path), os.ModePerm)
-	if err != nil {
-		return err
-	}
-	err = syscall.Mknod(path, syscall.S_IFIFO|0666, 0)
-	// ignore "file exists" errors and assume the FIFO was pre-made
-	if err != nil && !os.IsExist(err) {
-		return err
-	}
-	return nil
-}
-
-// OpenFifo open fifo and returns its file descriptor
-func OpenFifo(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_RDWR, os.ModeNamedPipe)
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
-}
-
-func TestHelperProcessSignalsFiFo(*testing.T) {
-	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
-		return
-	}
-	tmpdir := os.Getenv("TEST_TEMP_DIR")
-	c := make(chan os.Signal, 1)
-	signal.Notify(c,
-		syscall.SIGALRM,
-		syscall.SIGCONT,
-		syscall.SIGHUP,
-		syscall.SIGINT,
-		syscall.SIGQUIT,
-		syscall.SIGTTIN,
-		syscall.SIGTTOU,
-		syscall.SIGUSR1,
-		syscall.SIGUSR2,
-		syscall.SIGWINCH,
-	)
-	fifo, err := OpenFifo(filepath.Join(tmpdir, "fifo"))
-	if err != nil {
-		panic(err)
-	}
-	defer fifo.Close()
-	for {
-		signalType := <-c
-		switch signalType {
-		case syscall.SIGALRM:
-			fmt.Fprintln(fifo, "--a")
-		case syscall.SIGCONT:
-			fmt.Fprintln(fifo, "--c")
-		case syscall.SIGHUP:
-			fmt.Fprintln(fifo, "--h")
-		case syscall.SIGINT:
-			fmt.Fprintln(fifo, "--i")
-		case syscall.SIGQUIT:
-			fmt.Fprintln(fifo, "--q")
-		case syscall.SIGTTIN:
-			fmt.Fprintln(fifo, "--in")
-		case syscall.SIGTTOU:
-			fmt.Fprintln(fifo, "--ou")
-		case syscall.SIGUSR1:
-			fmt.Fprintln(fifo, "--1")
-		case syscall.SIGUSR2:
-			fmt.Fprintln(fifo, "--2")
-		case syscall.SIGWINCH:
-			fmt.Fprintln(fifo, "--w")
-		}
-	}
-}
 
 func TestSignalsFiFo(t *testing.T) {
 	sdir, err := ioutil.TempDir("", "TestSignalsFiFo")
@@ -96,19 +20,9 @@ func TestSignalsFiFo(t *testing.T) {
 		t.Error(err)
 	}
 	defer os.RemoveAll(sdir)
-	var mylog bytes.Buffer
+	var mylog myBuffer
 	log.SetOutput(&mylog)
 	log.SetFlags(0)
-	base := filepath.Base(os.Args[0]) // "exec.test"
-	dir := filepath.Dir(os.Args[0])   // "/tmp/go-buildNNNN/os/exec/_test"
-	if dir == "." {
-		t.Skip("skipping; running test at root somehow")
-	}
-	parentDir := filepath.Dir(dir) // "/tmp/go-buildNNNN/os/exec"
-	dirBase := filepath.Base(dir)  // "_test"
-	if dirBase == "." {
-		t.Skipf("skipping; unexpected shallow dir of %q", dir)
-	}
 	// for writing the signals
 	tmpdir, err := ioutil.TempDir("", "signals")
 	if err != nil {
@@ -117,50 +31,46 @@ func TestSignalsFiFo(t *testing.T) {
 	defer os.Remove(tmpdir) // clean up
 
 	cfg := &Config{
-		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1", "TEST_TEMP_DIR": tmpdir},
-		command: []string{filepath.Join(dirBase, base), "-test.run=TestHelperProcessSignalsFiFo", "--"},
-		Cwd:     parentDir,
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "signalsFiFo", "TEST_TEMP_DIR": tmpdir},
+		command: []string{os.Args[0]},
+		Cwd:     sdir,
 		Pid: Pid{
-			Parent: filepath.Join(parentDir, "parent.pid"),
-			Child:  filepath.Join(parentDir, "child.pid"),
+			Parent: filepath.Join(sdir, "parent.pid"),
+			Child:  filepath.Join(sdir, "child.pid"),
 		},
 		ctl: sdir,
 	}
+	// create new daemon
 	d, err := New(cfg)
 	if err != nil {
 		t.Error(err)
 	}
-
+	// create new process
 	p, err := d.Run(NewProcess(cfg))
 	if err != nil {
 		t.Error(err)
 	}
-
 	// create socket
 	if err := d.Listen(); err != nil {
 		t.Fatal(err)
 	}
-
 	// check pids
-	if pid, err := d.ReadPidFile(filepath.Join(parentDir, "parent.pid")); err != nil {
+	if pid, err := d.ReadPidFile(filepath.Join(sdir, "parent.pid")); err != nil {
 		t.Error(err)
 	} else {
 		expect(t, os.Getpid(), pid)
 	}
-	if pid, err := d.ReadPidFile(filepath.Join(parentDir, "child.pid")); err != nil {
+	if pid, err := d.ReadPidFile(filepath.Join(sdir, "child.pid")); err != nil {
 		t.Error(err)
 	} else {
 		expect(t, p.Pid(), pid)
 	}
-
 	// Make fifo in/out
 	if err := MakeFifo(filepath.Join(tmpdir, "fifo")); err != nil {
 		t.Fatal(err)
 	}
-
 	// sync fifo
 	time.Sleep(time.Second)
-
 	// open fifo for reading
 	fifo, err := OpenFifo(filepath.Join(tmpdir, "fifo"))
 	if err != nil {

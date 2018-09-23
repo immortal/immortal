@@ -141,6 +141,26 @@ func TestBadGid(t *testing.T) {
 	}
 }
 
+func TestBadPid(t *testing.T) {
+	dir, err := ioutil.TempDir("", "TestBadPid")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(dir)
+	cfg := &Config{
+		command: []string{"go"},
+		ctl:     dir,
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.ReadPidFile("/dev/null/non-existent")
+	if err == nil {
+		t.Error("Expecting error")
+	}
+}
+
 func TestUser(t *testing.T) {
 	dir, err := ioutil.TempDir("", "TestUser")
 	if err != nil {
