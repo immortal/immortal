@@ -157,9 +157,6 @@ func (s *ScanDir) Scandir(ctl Control) error {
 						go s.WatchFile(path)
 						log.Printf("%s\n", out)
 					}
-				} else {
-					k, _ := s.services.Load(name)
-					fmt.Printf(" name in map = %+v\n", k)
 				}
 			}
 		}

@@ -40,7 +40,7 @@ func (d *Daemon) Listen() (err error) {
 	go func() {
 		defer d.wg.Done()
 		err := srv.Serve(l)
-		log.Printf("removing [%s/immortal.sock]: %s\n", d.supDir, err)
+		log.Printf("removing [%s/immortal.sock] %v\n", d.supDir, err)
 	}()
 	go func(quit chan struct{}) {
 		<-quit

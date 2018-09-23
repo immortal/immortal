@@ -59,7 +59,8 @@ func (p *Parse) parseYml(file string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	var cfg Config
+	// set defaults
+	var cfg = Config{Retries: -1}
 	if err := yaml.Unmarshal(f, &cfg); err != nil {
 		return nil, fmt.Errorf("unable to parse YAML file %q %s", file, err)
 	}
