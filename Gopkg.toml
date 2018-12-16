@@ -27,7 +27,7 @@
 
 [[constraint]]
   name = "github.com/go-yaml/yaml"
-  version = "2.2.1"
+  version = "2.2.2"
 
 [[constraint]]
   name = "github.com/immortal/logrotate"
