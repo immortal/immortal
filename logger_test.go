@@ -172,12 +172,8 @@ func TestLogWriterLog(t *testing.T) {
 	select {
 	case err = <-p.errch:
 		t.Fatal(err)
-		break
 	case <-time.After(2 * time.Second):
-		break
+		close(d.quit)
+		d.wg.Wait()
 	}
-
-	// closing socket
-	close(d.quit)
-	d.wg.Wait()
 }
