@@ -27,6 +27,8 @@ func TestMain(m *testing.M) {
 		GWHPlogstdoutstderr()
 	case "signalsFiFo":
 		GWHPsignalsFiFo()
+	case "logSIGPIPE":
+		GWHPlogSIGPIPE()
 	default:
 		os.Exit(m.Run())
 	}
@@ -117,6 +119,20 @@ func GWHPsignalsFiFo() {
 			fmt.Fprintln(fifo, "--2")
 		case syscall.SIGWINCH:
 			fmt.Fprintln(fifo, "--w")
+		}
+	}
+}
+
+// GWHPlogSIGPIPE - test Log to prevent a SIGPIPE
+func GWHPlogSIGPIPE() {
+	i := 0
+	for {
+		fmt.Println(i)
+		i++
+		time.Sleep(time.Millisecond)
+		if i%3 == 0 {
+			buf := make([]byte, 1000*1000)
+			fmt.Printf("%v", buf)
 		}
 	}
 }

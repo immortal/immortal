@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -107,4 +108,76 @@ func TestNewLoggerRetry(t *testing.T) {
 	wg.Wait()
 	m := strings.Split(mylog.String(), "\n")
 	expect(t, true, len(m) > 1)
+}
+
+func TestLogWriterLog(t *testing.T) {
+	sdir, err := ioutil.TempDir("", "TestLogWriterLog")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
+	tmpfile, err := ioutil.TempFile(sdir, "log.")
+	if err != nil {
+		t.Error(err)
+	}
+	cfg := &Config{
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "logSIGPIPE"},
+		command: []string{os.Args[0]},
+		Cwd:     sdir,
+		ctl:     sdir,
+		Pid: Pid{
+			Parent: filepath.Join(sdir, "parent.pid"),
+			Child:  filepath.Join(sdir, "child.pid"),
+		},
+		Log: Log{
+			File: tmpfile.Name(),
+		},
+	}
+
+	// create new daemon
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	np := NewProcess(cfg)
+	expect(t, 0, np.Pid())
+	p, err := d.Run(np)
+	if err != nil {
+		t.Error(err)
+	}
+
+	// create socket
+	if err := d.Listen(); err != nil {
+		t.Fatal(err)
+	}
+
+	// check pids
+	if pid, err := d.ReadPidFile(filepath.Join(sdir, "parent.pid")); err != nil {
+		t.Error(err)
+	} else {
+		expect(t, os.Getpid(), pid)
+	}
+	if pid, err := d.ReadPidFile(filepath.Join(sdir, "child.pid")); err != nil {
+		t.Error(err, pid)
+	} else {
+		expect(t, p.Pid(), pid)
+	}
+
+	// check lock
+	if _, err = os.Stat(filepath.Join(sdir, "immortal.sock")); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err = <-p.errch:
+		t.Fatal(err)
+		break
+	case <-time.After(2 * time.Second):
+		break
+	}
+
+	// closing socket
+	close(d.quit)
+	d.wg.Wait()
 }

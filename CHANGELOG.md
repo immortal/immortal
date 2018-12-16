@@ -1,3 +1,6 @@
+## 0.21.1
+* Fixed logger `Log` not to close pipe even when Scan() fails [#46](https://github.com/immortal/immortal/pull/46), thanks @honteng
+
 ## 0.21.0
 * Implemented `retries 0` defaults to `-1` run forever, if set to 0 it will just run once and exit
 * Fixed supervisor to wait for the http socket server to be closed before exiting
@@ -16,8 +19,7 @@
 ## 0.18.0
 
 * Added option `retries`, `-r` to specify the maximum number of tries before exiting the program
-* Environment `IMMORTAL_EXIT` used to exit when running immortal with a config
-file, helps to avoid a race condition (start/stop) when using immortaldir
+* Environment `IMMORTAL_EXIT` used to exit when running immortal with a config file, helps to avoid a race condition (start/stop) when using immortaldir
 * `immortalctl` prints now process that are about to start with a defined `wait` value
 * Renamed option `-s` to `-w` to be more consistent with the config file option `wait`
 * Signals are only sent to process then this is up and running
