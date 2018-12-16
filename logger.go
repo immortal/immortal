@@ -31,7 +31,7 @@ func (l *LogWriter) Log(input io.ReadCloser) {
 		for in.Scan() {
 			l.logger.Print(in.Text())
 		}
-		if in.Err() == io.EOF {
+		if in.Err() == io.EOF || in.Err() == nil {
 			break
 		}
 		// If non EOF error happens, we dump the log and not to close the pipe.
