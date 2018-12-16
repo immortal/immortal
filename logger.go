@@ -26,9 +26,17 @@ type LogWriter struct {
 
 // Log write to the logger
 func (l *LogWriter) Log(input io.ReadCloser) {
-	in := bufio.NewScanner(input)
-	for in.Scan() {
-		l.logger.Print(in.Text())
+	for {
+		in := bufio.NewScanner(input)
+		for in.Scan() {
+			l.logger.Print(in.Text())
+		}
+		if in.Err() == io.EOF || in.Err() == nil {
+			break
+		}
+		// If non EOF error happens, we dump the log and not to close the pipe.
+		// Calling input.Close() right away may trigger SIGPIPE signal to the daemon and restart.
+		l.logger.Printf("immortal failed to scan log input: %v", in.Err())
 	}
 	input.Close()
 }
