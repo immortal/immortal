@@ -1,4 +1,4 @@
-## 0.21.1
+## 0.22.0
 * Fixed logger `Log` not to close pipe even when Scan() fails [#46](https://github.com/immortal/immortal/pull/46), thanks @honteng
 
 ## 0.21.0
