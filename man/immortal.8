@@ -1,6 +1,6 @@
 \" Manpage for immortal.
 .\" To correct errors or typos please use https://github.com/immortal/immortal/issues
-.TH man 8 "January 2018" "immortal" "immortal man page"
+.TH man 8 "March 2019" "immortal" "immortal man page"
 .SH NAME
 immortal \- starts and monitor a service
 .SH SYNOPSIS
@@ -69,6 +69,10 @@ Options start with one dash. Many of the options require an additional value nex
 
 -w <seconds>
         Seconds (int) to wait before starting.
+
+-cc
+
+        Checks the config file, print the config and exits with code 0 if no error was found, or exits with code 1 an error was found.
 
 -c <service name>.yml
         A configuration file with valid YAML syntax, when using this option, it will overwrite other options, configuration format:

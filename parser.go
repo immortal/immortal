@@ -32,10 +32,10 @@ type Parse struct {
 
 // Parse parse the command line flags
 func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
-	fs.BoolVar(&p.Flags.Version, "v", false, "Print version")
 	fs.BoolVar(&p.Flags.Nodaemon, "n", false, "No daemon mode, stay in the foreground")
+	fs.BoolVar(&p.Flags.Version, "v", false, "Print version")
 	fs.IntVar(&p.Flags.Retries, "r", -1, "`number` of retries before program exit")
-	fs.UintVar(&p.Flags.Wait, "w", 0, "`seconds` to wait before starting")
+	fs.BoolVar(&p.Flags.CheckConfig, "cc", false, "Checks the config file")
 	fs.StringVar(&p.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
 	fs.StringVar(&p.Flags.Configfile, "c", "", "`run.yml` configuration file")
 	fs.StringVar(&p.Flags.Ctl, "ctl", "", "Create supervise directory `/var/run/immortal/<service>`")
@@ -46,6 +46,7 @@ func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.StringVar(&p.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
 	fs.StringVar(&p.Flags.User, "u", "", "Execute command on behalf `user`")
 	fs.StringVar(&p.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
+	fs.UintVar(&p.Flags.Wait, "w", 0, "`seconds` to wait before starting")
 
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
@@ -119,7 +120,7 @@ func (p *Parse) checkUser(u string) (*user.User, error) {
 // Usage prints to standard error a usage message
 func (p *Parse) Usage(fs *flag.FlagSet) func() {
 	return func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [-v] [-ctl dir] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-u user] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [-v] [-n] [-cc] [-c run.yml] [-ctl dir] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-r retries] [-u user] [-w seconds] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
 		var flags []string
 		fs.VisitAll(func(f *flag.Flag) {
 			flags = append(flags, f.Name)
@@ -165,6 +166,13 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		}
 	}
 
+	// if -cc
+	if flags.CheckConfig {
+		if flags.Configfile == "" {
+			err = fmt.Errorf("missing config file: -c run.yml, use (\"%s -h\") for help", os.Args[0])
+		}
+	}
+
 	// if -c
 	if flags.Configfile != "" {
 		if !isFile(flags.Configfile) {
@@ -205,6 +213,13 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		}
 
 		cfg.ctl = sdir
+
+		// print config and exit 0 if config ok
+		if flags.CheckConfig {
+			y, _ := yaml.Marshal(&cfg)
+			fmt.Printf("%s", y)
+			os.Exit(0)
+		}
 		return
 	}
 
