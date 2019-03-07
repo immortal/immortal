@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/user"
@@ -70,6 +71,7 @@ func TestParseDefault(t *testing.T) {
 	expect(t, -1, flags.Retries)
 	expect(t, false, flags.Nodaemon)
 	expect(t, false, flags.Version)
+	expect(t, false, flags.CheckConfig)
 	expect(t, uint(0), flags.Wait)
 }
 
@@ -83,6 +85,7 @@ func TestParseFlags(t *testing.T) {
 	}{
 		{[]string{"cmd", "-v"}, "Version", true},
 		{[]string{"cmd", "-n"}, "Nodaemon", true},
+		{[]string{"cmd", "-cc"}, "CheckConfig", true},
 		{[]string{"cmd", "-ctl", "service"}, "Ctl", "service"},
 		{[]string{"cmd", "-c", "run.yml"}, "Configfile", "run.yml"},
 		{[]string{"cmd", "-d", "/arena/wrkdir"}, "Wrkdir", "/arena/wrkdir"},
@@ -240,6 +243,9 @@ func TestParseArgsTable(t *testing.T) {
 		{[]string{"cmd", "-c", "run.yml"}, true},
 		{[]string{"cmd", "-c", "run.yml", "cmd"}, true},
 		{[]string{"cmd", "-c", "example/run.yml", "cmd"}, false},
+		{[]string{"cmd", "-c", "run.yml", "-cc"}, true},
+		{[]string{"cmd", "-cc"}, true},
+		{[]string{"cmd", "-c", "example/foo.yml", "-cc"}, false},
 		{[]string{"cmd", "-d", "/arena/wrkdir"}, true},
 		{[]string{"cmd", "-d", "/dev/null", "cmd"}, true},
 		{[]string{"cmd", "-d", dir, "cmd"}, false},
@@ -732,5 +738,56 @@ wait: a`)
 	}
 	if err == nil {
 		t.Error("Expecting error")
+	}
+}
+
+func TestParseArgsCheckConfig(t *testing.T) {
+	tmpfile, err := ioutil.TempFile("", "TestParseArgsCheckConfig")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	yaml := []byte(`
+cmd: command
+wait: 3`)
+	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", tmpfile.Name(), "-cc"}
+	parser := &Parse{}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseArgsCheckFile", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	// capture stdout
+	old := os.Stdout // keep backup of the real stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	outC := make(chan string)
+	// copy the output in a separate goroutine so printing can't block indefinitely
+	go func() {
+		var buf bytes.Buffer
+		io.Copy(&buf, r)
+		outC <- buf.String()
+	}()
+
+	_, err = ParseArgs(parser, fs)
+
+	// back to normal state
+	w.Close()
+	os.Stdout = old // restoring the real stdout
+	out := <-outC
+	expect(t, `cmd: command
+wait: 3
+retries: -1
+`, out)
+
+	if helpCalled {
+		t.Fatal("help was called")
+	}
+	if err != nil {
+		t.Error(err)
 	}
 }

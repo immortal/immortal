@@ -218,7 +218,7 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 		if flags.CheckConfig {
 			y, _ := yaml.Marshal(&cfg)
 			fmt.Printf("%s", y)
-			os.Exit(0)
+			return nil, nil
 		}
 		return
 	}

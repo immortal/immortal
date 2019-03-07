@@ -31,6 +31,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// if -cc
+	if (fs.Lookup("cc")).Value.(flag.Getter).Get().(bool) && cfg == nil {
+		os.Exit(0)
+	}
+
 	// if -v print version
 	if (fs.Lookup("v")).Value.(flag.Getter).Get().(bool) {
 		fmt.Printf("%s\n", version)
