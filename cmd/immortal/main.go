@@ -31,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// if -cc
+	// if -cc (check config)
 	if (fs.Lookup("cc")).Value.(flag.Getter).Get().(bool) && cfg == nil {
 		os.Exit(0)
 	}

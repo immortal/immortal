@@ -45,10 +45,10 @@ func main() {
 	}
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [option] [-12achikinouqstvw] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s %s\n",
+		fmt.Fprintf(os.Stderr, "usage: %s [-v] [option] [signals -12achik,in,ou,qstw] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s %s\n",
 			os.Args[0],
 			"  Options:",
-			"    exit      Exits the supervisor.",
+			"    exit      Exits only the supervisor, not the service.",
 			"    halt      Stop the service by sending a TERM signal, and exits supervisor - restart.",
 			"    once      If the service is not running, start it. Do not restart it if it stops.",
 			"    start     Start the service.",
