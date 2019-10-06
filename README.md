@@ -83,7 +83,7 @@ require:
   - bar
 ```
 
-If `foo` and `bar` are not running, the service `www` will not be started.
+If `foo` and `bar` are not running, the service `www` will not be started. Skip `age`, `num` & `size` options to avoid `log-rotation` completely.
 
 > `foo` and `bar` are the names for the services defined on the same path www.yaml is located, foo.yml & bar.yml
 
