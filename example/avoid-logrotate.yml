@@ -1,0 +1,15 @@
+cmd: bundle exec unicorn -c unicorn.rb
+cwd: /tmp/
+env:
+    DEBUG: 1
+    ENVIRONMENT: production
+pid:
+    follow: /path/to/unicorn.pid
+    parent: /tmp/parent.pid
+    child: /tmp/child.pid
+log:
+    file: /var/log/app.log
+    # Note here we have not given any options, just to avoid the log-rotation
+logger: logger -t unicorn
+user: www
+wait: 1
