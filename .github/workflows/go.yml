@@ -24,7 +24,6 @@ jobs:
         echo "GITHUB_WORKSPACE: ${GITHUB_WORKSPACE}"
         echo "GOPATH: ${GOPATH}"
         echo "GOROOT: ${GOROOT}"
-        mkdir -p ${GOPATH}/{bin,pkg,src}
 
     - name: Get dependencies
       run: |
@@ -32,7 +31,7 @@ jobs:
         export GOBIN=$(go env GOPATH)/bin
         export PATH=$PATH:$GOPATH
         export PATH=$PATH:$GOBIN
-        mkdir -p $GOPATH/pkg
+        mkdir -p ${GOPATH}/{bin,pkg,src}
         mkdir -p $GOBIN
         mkdir -p $GOPATH/src/github.com/$GITHUB_REPOSITORY
         mv $(pwd)/* $GOPATH/src/github.com/$GITHUB_REPOSITORY
