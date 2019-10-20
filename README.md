@@ -40,7 +40,7 @@ appreciated.
 
 Setup go environment https://golang.org/doc/install
 
-> go >= 1.9 is required
+> go >= 1.12 is required
 
 For example using $HOME/go for your workspace
 

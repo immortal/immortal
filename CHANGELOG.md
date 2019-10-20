@@ -1,3 +1,6 @@
+## 0.24.0
+* Added the `post_exit` option to call a command after process exits, passing as an argument the exit code (Requires go >= 1.12) [#54](https://github.com/immortal/immortal/issues/54), thanks @olgeni
+
 ## 0.23.0
 * Implemented option `-cc` checks the config file, print the config and exits with code 0 if no error was found, or exits with code 1 an error was found
 
