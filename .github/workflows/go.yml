@@ -24,7 +24,8 @@ jobs:
             dep ensure
         fi
       env:
-        GOPATH: $HOME
+        GOPATH: /go
+        PATH: $GOPATH/bin:/usr/local/go/bin:$PATH
 
     - name: Build
       run: |
@@ -33,4 +34,5 @@ jobs:
         go build -o immortaldir cmd/immortaldir/main.go
         go test -race -v
       env:
-        GOPATH: $HOME
+        GOPATH: /go
+        PATH: $GOPATH/bin:/usr/local/go/bin:$PATH
