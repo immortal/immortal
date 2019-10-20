@@ -20,10 +20,11 @@ jobs:
     - name: Debug
       run: |
         pwd
-        echo ${HOME}
-        echo ${GITHUB_WORKSPACE}
-        echo ${GOPATH}
-        echo ${GOROOT}
+        echo "HOME: ${HOME}"
+        echo "GITHUB_WORKSPACE: ${GITHUB_WORKSPACE}"
+        echo "GOPATH: ${GOPATH}"
+        echo "GOROOT: ${GOROOT}"
+        mkdir -p ${GOROOT}/{bin,pkg,src}
       env:
         GOPATH: /home/runner/work/immortal/go
 
