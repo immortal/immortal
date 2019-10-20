@@ -18,21 +18,17 @@ jobs:
 
     - name: Get dependencies
       run: |
+        export PATH=$PATH:$(go env GOPATH)/bin
         go get -v -t -d ./...
         if [ -f Gopkg.toml ]; then
             curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
             dep ensure
         fi
-      env:
-        GOPATH: /go
-        PATH: $GOPATH/bin:/usr/local/go/bin:$PATH
 
     - name: Build
       run: |
+        export PATH=$PATH:$(go env GOPATH)/bin
         go build -o immortal cmd/immortal/main.go
         go build -o immortalctl cmd/immortalctl/main.go
         go build -o immortaldir cmd/immortaldir/main.go
         go test -race -v
-      env:
-        GOPATH: /go
-        PATH: $GOPATH/bin:/usr/local/go/bin:$PATH
