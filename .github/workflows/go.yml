@@ -24,7 +24,7 @@ jobs:
         echo "GITHUB_WORKSPACE: ${GITHUB_WORKSPACE}"
         echo "GOPATH: ${GOPATH}"
         echo "GOROOT: ${GOROOT}"
-        mkdir -p ${GOROOT}/{bin,pkg,src}
+        mkdir -p ${GOPATH}/{bin,pkg,src}
       env:
         GOPATH: /home/runner/work/immortal/go
 
