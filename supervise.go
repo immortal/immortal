@@ -54,7 +54,7 @@ func (s *Supervisor) Start() error {
 				if sh := os.Getenv("SHELL"); sh != "" {
 					shell = sh
 				}
-				if err := exec.Command(shell, "-c", s.daemon.cfg.PostExit, fmt.Sprintf("%d", exitcode)).Run(); err != nil {
+				if err := exec.Command(shell, "-c", fmt.Sprintf("%s %d", s.daemon.cfg.PostExit, exitcode)).Run(); err != nil {
 					log.Printf("post exit command failed: %s", err)
 				}
 			}
