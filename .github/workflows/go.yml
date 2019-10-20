@@ -41,15 +41,14 @@ jobs:
             curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
             dep ensure
         fi
-      env:
-        GOPATH: /home/runner/work/immortal/go
 
     - name: Build
       run: |
-        export PATH=$PATH:$(go env GOPATH)/bin
+        export GOPATH=$HOME/go
+        export GOBIN=$(go env GOPATH)/bin
+        export PATH=$PATH:$GOPATH
+        export PATH=$PATH:$GOBIN
         go build -o immortal cmd/immortal/main.go
         go build -o immortalctl cmd/immortalctl/main.go
         go build -o immortaldir cmd/immortaldir/main.go
         go test -race -v
-      env:
-        GOPATH: /home/runner/work/immortal/go
