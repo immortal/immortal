@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"sync/atomic"
 	"time"
 )
@@ -40,6 +41,16 @@ func (s *Supervisor) Start() error {
 		case <-s.daemon.run:
 			s.ReStart()
 		case err := <-s.process.errch:
+			// Check for post_exit command
+			if len(s.daemon.cfg.PostExit) > 0 {
+				var shell = "sh"
+				if sh := os.Getenv("SHELL"); sh != "" {
+					shell = sh
+				}
+				if err := exec.Command(shell, "-c", s.daemon.cfg.PostExit).Run(); err != nil {
+					log.Printf("post exit command failed: %s", err)
+				}
+			}
 			// stop or exit based on the retries
 			if s.Terminate(err) {
 				if s.daemon.cfg.cli || os.Getenv("IMMORTAL_EXIT") != "" {

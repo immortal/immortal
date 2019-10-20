@@ -14,6 +14,7 @@ type Config struct {
 	Logger     string            `yaml:",omitempty" json:",omitempty"`
 	Require    []string          `yaml:",omitempty"`
 	RequireCmd string            `yaml:"require_cmd,omitempty"`
+	PostExit   string            `yaml:"post_exit,omitempty"`
 	User       string            `yaml:",omitempty" json:",omitempty"`
 	Wait       uint              `yaml:",omitempty"`
 	Retries    int               `yaml:",omitempty"`
