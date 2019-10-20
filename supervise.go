@@ -41,13 +41,20 @@ func (s *Supervisor) Start() error {
 		case <-s.daemon.run:
 			s.ReStart()
 		case err := <-s.process.errch:
+			// get exit code
+			// TODO check EXIT from kqueue since we don't know the exit code there
+			exitcode := 0
+			if exitError, ok := err.(*exec.ExitError); ok {
+				exitcode = exitError.ExitCode()
+			}
+			log.Printf("PID: %d exit code: %d", s.pid, exitcode)
 			// Check for post_exit command
 			if len(s.daemon.cfg.PostExit) > 0 {
 				var shell = "sh"
 				if sh := os.Getenv("SHELL"); sh != "" {
 					shell = sh
 				}
-				if err := exec.Command(shell, "-c", s.daemon.cfg.PostExit).Run(); err != nil {
+				if err := exec.Command(shell, "-c", s.daemon.cfg.PostExit, fmt.Sprintf("%d", exitcode)).Run(); err != nil {
 					log.Printf("post exit command failed: %s", err)
 				}
 			}
