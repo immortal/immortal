@@ -10,13 +10,11 @@ pub struct Scandir {
 
 impl Scandir {
     pub fn new(dir: &str, seconds: u64) -> Result<Scandir, io::Error> {
-        let path = try!(fs::canonicalize(dir));
-        Ok(
-            Scandir {
-                path: path,
-                interval: seconds
-            }
-          )
+        let path = fs::canonicalize(dir)?;
+        Ok(Scandir {
+            path: path,
+            interval: seconds,
+        })
     }
 
     pub fn scan(&self) {
@@ -25,7 +23,7 @@ impl Scandir {
                 println!("{}", f);
                 return;
             }
-            Ok(f) => f
+            Ok(f) => f,
         };
 
         for f in files {
@@ -33,9 +31,15 @@ impl Scandir {
             let mode = file.metadata().unwrap().permissions().mode();
             let mut is_exec: bool = false;
             if !file.file_type().unwrap().is_dir() {
-                is_exec =  mode & 0o111 != 0;
+                is_exec = mode & 0o111 != 0;
             }
-            println!("path: {} name: {} mode: {:o} is_exec: {}", file.path().display(), file.file_name().into_string().unwrap(), mode, is_exec);
+            println!(
+                "path: {} name: {} mode: {:o} is_exec: {}",
+                file.path().display(),
+                file.file_name().into_string().unwrap(),
+                mode,
+                is_exec
+            );
         }
     }
 }
