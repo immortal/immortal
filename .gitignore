@@ -10,3 +10,5 @@ coverage.*
 build
 supervise
 vendor
+/target/
+**/*.rs.bk

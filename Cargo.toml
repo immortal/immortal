@@ -1,0 +1,18 @@
+[package]
+name = "immortal"
+version = "0.1.0"
+authors = ["Nicolas Embriz <nbari@tequila.io>"]
+description = "A *nix cross-platform (OS agnostic) supervisor"
+documentation = "https://immortal.run"
+homepage = "https://immortal.run"
+repository = "https://github.com/immortal/rust"
+readme = "README.md"
+keywords = ["supervisor", "daemon", "process", "restart", "logging"]
+categories = ["command-line-utilities", "os", "config"]
+license-file = "LICENSE"
+
+[dependencies]
+clap = "2"
+getopts = "0.2"
+rustc-serialize = "0.3"
+time = "0.1"
