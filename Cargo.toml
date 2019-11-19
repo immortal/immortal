@@ -9,12 +9,13 @@ repository = "https://github.com/immortal/rust"
 readme = "README.md"
 keywords = ["supervisor", "daemon", "process", "restart", "logging"]
 categories = ["command-line-utilities", "os", "config"]
-license-file = "LICENSE"
+license = "BSD-3-Clause"
 edition = "2018"
+
+[badges]
+travis-ci = { repository = "immortal/immortal", branch = "master" }
 
 [dependencies]
 clap = "2"
-getopts = "0.2"
 rustc-serialize = "0.3"
-time = "0.1"
 nix = "0.15.0"
