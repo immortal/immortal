@@ -1,14 +1,2 @@
-immortaldir
-!*immortaldir/
-immortalctl
-!*immortalctl/
-immortal
-!*immortal/
-coverage.*
-.goxc.local.json
-.goxc.json
-build
-supervise
-vendor
-/target/
+/target
 **/*.rs.bk

@@ -1,31 +1,19 @@
-language: go
+language: rust
+rust:
+  - stable
+  - beta
 
 os:
   - linux
   - osx
 
-go:
-  - "1.12"
-  - "1.13"
-  - master
-
-before_install:
-  - go get github.com/axw/gocov/gocov
-  - go get github.com/go-yaml/yaml
-  - go get github.com/immortal/logrotate
-  - go get github.com/immortal/multiwriter
-  - go get github.com/immortal/natcasesort
-  - go get github.com/immortal/xtime
-  - go get github.com/mattn/goveralls
-  - go get github.com/nbari/violetear
-  - if ! go get github.com/golang/tools/cmd/cover; then go get golang.org/x/tools/cmd/cover; fi
+before_script:
+  - rustup component add clippy
 
 script:
-  - go build -o immortal cmd/immortal/main.go
-  - go build -o immortalctl cmd/immortalctl/main.go
-  - go build -o immortaldir cmd/immortaldir/main.go
-  - go test -v -covermode=count -coverprofile=coverage.out
-  - $HOME/gopath/bin/goveralls -coverprofile=coverage.out -service=travis-ci
+  - cargo clippy --all-targets --all-features -- -D clippy::pedantic -D clippy::nursery
+  - cargo test
 
-after_success:
-  - bash <(curl -s https://codecov.io/bash)
+notifications:
+  email:
+    on_success: never
