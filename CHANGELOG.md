@@ -1,3 +1,6 @@
+## 0.24.1
+* Support for FreeBSD/arm64, thanks @t6
+
 ## 0.24.0
 * Added the `post_exit` option to call a command after process exits, passing as an argument the exit code (Requires go >= 1.12) [#54](https://github.com/immortal/immortal/issues/54), thanks @olgeni
 

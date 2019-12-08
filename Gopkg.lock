@@ -2,12 +2,12 @@
 
 
 [[projects]]
-  digest = "1:59f10c1537d2199d9115d946927fe31165959a95190849c82ff11e05803528b0"
+  digest = "1:b75b3deb2bce8bc079e16bb2aecfe01eb80098f5650f9e93e5643ca8b7b73737"
   name = "github.com/go-yaml/yaml"
   packages = ["."]
   pruneopts = "UT"
-  revision = "f221b8435cfb71e54062f6c6e99e9ade30b124d5"
-  version = "v2.2.4"
+  revision = "1f64d6156d11335c3f22d9330b0ad14fc1e789ce"
+  version = "v2.2.7"
 
 [[projects]]
   digest = "1:6d1dbf9d42ab5421c9394f136a9d2df825b132ed1ef3601b98d894d49d46223a"
@@ -42,12 +42,12 @@
   revision = "fb1aca1146ea82769e8433f5bb22f373765e7ecc"
 
 [[projects]]
-  digest = "1:b37c650859c9e3866ad8855cf429306efb6524fed29f29cdb5b5dbd6d7bacc06"
+  digest = "1:3b3462e4895614974930a35b1b41fc4ccab1ca3e96c463d987edf01982ffa41a"
   name = "github.com/nbari/violetear"
   packages = ["."]
   pruneopts = "UT"
-  revision = "5c7cdfea6d629c4fa5c4fafe2fe27f53b5cb0254"
-  version = "5.0.1"
+  revision = "971f3729520176a408b28de36d6f283f13b8e6d3"
+  version = "7.0.0"
 
 [solve-meta]
   analyzer-name = "dep"

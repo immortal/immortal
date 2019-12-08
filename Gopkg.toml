@@ -27,7 +27,7 @@
 
 [[constraint]]
   name = "github.com/go-yaml/yaml"
-  version = "2.2.2"
+  version = "2.2.7"
 
 [[constraint]]
   name = "github.com/immortal/logrotate"
@@ -47,7 +47,7 @@
 
 [[constraint]]
   name = "github.com/nbari/violetear"
-  version = "5.0.1"
+  version = "7.0.0"
 
 [prune]
   go-tests = true
