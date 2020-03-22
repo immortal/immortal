@@ -1,3 +1,4 @@
+dist: bionic
 language: go
 
 os:
@@ -5,9 +6,7 @@ os:
   - osx
 
 go:
-  - "1.13"
-  - "1.14"
-  - master
+  - "1.14.x"
 
 before_install:
   - go get github.com/axw/gocov/gocov
