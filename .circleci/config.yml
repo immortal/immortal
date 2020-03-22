@@ -4,8 +4,8 @@ workflows:
   test:
     jobs:
       - test-latest
+      - test-1.14
       - test-1.13
-      - test-1.12
 jobs:
   test-latest: &test-template
     docker:
@@ -16,11 +16,11 @@ jobs:
       - run: curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
       - run: dep ensure -vendor-only
       - run: go test -race -v
+  test-1.14:
+    <<: *test-template
+    docker:
+      - image: circleci/golang:1.14
   test-1.13:
     <<: *test-template
     docker:
       - image: circleci/golang:1.13
-  test-1.12:
-    <<: *test-template
-    docker:
-      - image: circleci/golang:1.12
