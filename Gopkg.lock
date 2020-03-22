@@ -2,12 +2,12 @@
 
 
 [[projects]]
-  digest = "1:b75b3deb2bce8bc079e16bb2aecfe01eb80098f5650f9e93e5643ca8b7b73737"
+  digest = "1:55b110c99c5fdc4f14930747326acce56b52cfce60b24b1c03ef686ac0e46bb1"
   name = "github.com/go-yaml/yaml"
   packages = ["."]
   pruneopts = "UT"
-  revision = "1f64d6156d11335c3f22d9330b0ad14fc1e789ce"
-  version = "v2.2.7"
+  revision = "53403b58ad1b561927d19068c655246f2db79d48"
+  version = "v2.2.8"
 
 [[projects]]
   digest = "1:6d1dbf9d42ab5421c9394f136a9d2df825b132ed1ef3601b98d894d49d46223a"
