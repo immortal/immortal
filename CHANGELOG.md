@@ -1,3 +1,6 @@
+## 0.24.2
+* Use of go modules instead of dep, thanks @chenrui333
+
 ## 0.24.1
 * Support for FreeBSD/arm64, thanks @t6
 
