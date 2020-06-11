@@ -1,9 +1,7 @@
 FROM golang:latest as builder
 RUN groupadd -r toor && useradd --create-home --no-log-init -r -g toor toor
-RUN go get -u github.com/golang/dep/cmd/dep
 WORKDIR /go/src/github.com/immortal/immortal
 COPY . .
-RUN dep ensure --vendor-only
 RUN chown -R toor:toor /go
 ARG VERSION=0.0.0
 ENV VERSION="${VERSION}"
