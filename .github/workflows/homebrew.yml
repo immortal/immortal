@@ -1,6 +1,11 @@
 on:
   push:
     tags: 'v*'
+  workflow_dispatch:
+    inputs:
+      tag-name:
+        description: 'The git tag name to bump the formula to'
+        required: true
 
 jobs:
   homebrew:
