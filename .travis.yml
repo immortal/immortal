@@ -6,7 +6,7 @@ os:
   - osx
 
 go:
-  - "1.14.x"
+  - "1.17.x"
 
 before_install:
   - go get github.com/axw/gocov/gocov
