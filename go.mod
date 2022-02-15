@@ -8,7 +8,7 @@ require (
 	github.com/immortal/multiwriter v0.0.0-20180922214543-2e0dd11a3549
 	github.com/immortal/natcasesort v0.0.0-20180922190600-53ad4be8bc1a
 	github.com/immortal/xtime v0.0.0-20170317233522-fb1aca1146ea
-	github.com/nbari/violetear v0.0.0-20191105085335-75adcf9b986b
+	github.com/nbari/violetear v0.0.0-20210524103009-ce83b52538c9
 )
 
 require (

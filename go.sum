@@ -8,8 +8,8 @@ github.com/immortal/natcasesort v0.0.0-20180922190600-53ad4be8bc1a h1:xGCNWvZqUk
 github.com/immortal/natcasesort v0.0.0-20180922190600-53ad4be8bc1a/go.mod h1:wrlf+Cc7o4fqKniC+4ebBmr6sJ8eeOjx5588f/4RgIU=
 github.com/immortal/xtime v0.0.0-20170317233522-fb1aca1146ea h1:A2jr6G4ZBCSWuGXxokX81LDZSd4z3JbGT04EEzdg1bA=
 github.com/immortal/xtime v0.0.0-20170317233522-fb1aca1146ea/go.mod h1:h+t/X/YvFrjugmbyexieB4t2EEcMrGU+ddxUtew4W3U=
-github.com/nbari/violetear v0.0.0-20191105085335-75adcf9b986b h1:/9rRotT1Uc5JRj3LFvpFWp+EqJwtZ0gdo2uLgoN/T4s=
-github.com/nbari/violetear v0.0.0-20191105085335-75adcf9b986b/go.mod h1:UrL3qDiO/LwC9HbVuujfjLbqyvP4DzuMLvUk4PfwZx8=
+github.com/nbari/violetear v0.0.0-20210524103009-ce83b52538c9 h1:L5+NHqJtAZ/BBVY3A3YkAeiPp5q8bXuufST62E2Skpo=
+github.com/nbari/violetear v0.0.0-20210524103009-ce83b52538c9/go.mod h1:DZERM3bJoILVxK77tZRrEyLyAoQdgFEM2uYtwWMUjPU=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v2 v2.2.8 h1:obN1ZagJSUGI0Ek/LBmuj4SNLPfIny3KsKFopxRdj10=
