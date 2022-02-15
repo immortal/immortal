@@ -12,3 +12,6 @@ supervise
 vendor
 /target/
 **/*.rs.bk
+
+# rust stuff
+rust/target
