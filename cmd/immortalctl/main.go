@@ -269,12 +269,12 @@ func main() {
 				s.Status.Cmd)
 			if s.SignalResponse != nil && s.SignalResponse.Err != "" {
 				if *asciiOnly {
-					println(fmt.Sprintf(" - %s", s.SignalResponse.Err))
+					fmt.Printf(" - %s\n", s.SignalResponse.Err)
 				} else {
-					println(immortal.Yellow(fmt.Sprintf(" - %s", s.SignalResponse.Err)))
+					fmt.Println(immortal.Yellow(fmt.Sprintf(" - %s", s.SignalResponse.Err)))
 				}
 			} else {
-				println()
+				fmt.Println()
 			}
 		} else if s.Status.Status != "" {
 			// print status about process that will start after the defined WAIT value
