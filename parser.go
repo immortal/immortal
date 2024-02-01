@@ -38,11 +38,12 @@ func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.BoolVar(&p.Flags.CheckConfig, "cc", false, "Checks the config file")
 	fs.StringVar(&p.Flags.ChildPid, "p", "", "Path to write the child `pidfile`")
 	fs.StringVar(&p.Flags.Configfile, "c", "", "`run.yml` configuration file")
-	fs.StringVar(&p.Flags.Ctl, "ctl", "", "Create supervise directory `/var/run/immortal/<service>`")
+	fs.StringVar(&p.Flags.Ctl, "ctl", "", "Create supervise directory `/var/run/immortal/<service>`. Overrides `-name`")
 	fs.StringVar(&p.Flags.Envdir, "e", "", "Set environment variables specified by files in the `dir`")
 	fs.StringVar(&p.Flags.FollowPid, "f", "", "Follow PID in `pidfile`")
 	fs.StringVar(&p.Flags.Logfile, "l", "", "Write stdout/stderr to `logfile`")
 	fs.StringVar(&p.Flags.Logger, "logger", "", "A `command` to pipe stdout/stderr to stdin")
+	fs.StringVar(&p.Flags.Name, "name", "", "A name for the service. This differs from -ctl in that it affects `${HOME}/.immortal/<name>`.")
 	fs.StringVar(&p.Flags.ParentPid, "P", "", "Path to write the supervisor `pidfile`")
 	fs.StringVar(&p.Flags.User, "u", "", "Execute command on behalf `user`")
 	fs.StringVar(&p.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
@@ -236,6 +237,9 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	cfg.cli = true
 	cfg.command = fs.Args()
 	cfg.ctl = sdir
+	if flags.Name != "" {
+		cfg.name = flags.Name
+	}
 
 	// if -d
 	if flags.Wrkdir != "" {

@@ -23,6 +23,7 @@ type Config struct {
 	command    []string
 	configFile string
 	ctl        string
+	name       string
 	log        bool
 	user       *user.User
 }
