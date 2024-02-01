@@ -11,6 +11,7 @@ type Flags struct {
 	FollowPid   string
 	Logfile     string
 	Logger      string
+	Name        string
 	Nodaemon    bool
 	ParentPid   string
 	Retries     int

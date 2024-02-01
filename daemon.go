@@ -123,8 +123,12 @@ func New(cfg *Config) (*Daemon, error) {
 			supDir = filepath.Join(home,
 				fmt.Sprintf("%s", strings.TrimSuffix(serviceFile, filepath.Ext(serviceFile))))
 		} else {
-			supDir = filepath.Join(home,
-				fmt.Sprintf("%d", os.Getpid()))
+			if cfg.name != "" {
+				supDir = filepath.Join(home, cfg.name)
+			} else {
+				supDir = filepath.Join(home,
+					fmt.Sprintf("%d", os.Getpid()))
+			}
 		}
 	}
 

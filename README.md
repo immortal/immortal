@@ -133,6 +133,15 @@ structure:
        |--lock
        `--immortal.sock
 
+The `-name` argument takes a non-path (e.g., "myservice"), and the argument will be used instead of the pid in the directory structure. For example, `immortal -ctl myservice sleep 1000` will be:
+
+    ~/.immortal
+    |--myservice
+    |  |--lock
+    |  `--immortal.sock
+
+The `-ctl` argument takes precedence over the `-name` argument.
+
 # immortalctl
 
 Will print current status and allow to manage the services
