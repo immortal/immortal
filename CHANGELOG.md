@@ -1,3 +1,7 @@
+## 0.24.5
+* adding ability to assign names to services [#77](https://github.com/immortal/immortal/pull/77), thanks @xxxserxxx
+* Fixes output piping issue [#76](https://github.com/immortal/immortal/pull/76), thanks @xxxserxxx
+
 ## 0.24.2
 * Use of go modules instead of dep, thanks @chenrui333
 
