@@ -32,6 +32,7 @@ func main() {
 		usr1                      = flag.Bool("1", false, "USR1")
 		usr2                      = flag.Bool("2", false, "USR2")
 		w                         = flag.Bool("w", false, "WINCH")
+		asciiOnly                 = flag.Bool("A", false, "Output only ASCII characters")
 	)
 
 	// if IMMORTAL_SDIR env is set, use it as default sdir
@@ -39,13 +40,16 @@ func main() {
 		sdir = "/var/run/immortal"
 	}
 
-	// if no options defaults to status
-	if len(os.Args) == 1 {
-		os.Args = append(os.Args, "status")
+	// Move all of the "options" to the end of the flags so that flag parses
+	// arguments correctly
+	for i := 2; i < len(os.Args); i++ {
+		if os.Args[i][0] == '-' && os.Args[i-1][0] != '-' {
+			os.Args[i], os.Args[i-1] = os.Args[i-1], os.Args[i]
+		}
 	}
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [-v] [option] [signals -12achik,in,ou,qstw] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s %s\n",
+		fmt.Fprintf(os.Stderr, "usage: %s [-v] [option] [signals -12achik,in,ou,qstw] service\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n%s %s\n",
 			os.Args[0],
 			"  Options:",
 			"    exit      Exits only the supervisor, not the service.",
@@ -54,6 +58,7 @@ func main() {
 			"    start     Start the service.",
 			"    status    Print status.",
 			"    stop      Stop the service by sending a TERM signal.",
+			"    -A        ASCII only output (no terminal control codes)",
 			"  Signals:",
 			"    -1        USR1",
 			"    -2        USR2",
@@ -110,28 +115,34 @@ func main() {
 
 	// check options and flags
 	exit := true
-	if flag.NFlag() == 0 && flag.Arg(0) != "" {
-		for _, v := range options {
-			if flag.Arg(0) == v {
-				exit = false
-				signal = flag.Arg(0)
-				if flag.NArg() == 2 {
-					serviceName = flag.Arg(1)
-				}
-				if signal != "status" && flag.NArg() < 2 {
-					exit = true
-				}
-				// to avoid collision with signal STOP
-				if signal == "stop" {
-					signal = "down"
-				}
-				break
-			}
-		}
-	} else if flag.NFlag() == 1 && flag.NArg() == 1 {
-		serviceName = flag.Arg(0)
-		exit = false
+
+	switch flag.NArg() {
+	case 2:
+		signal = flag.Arg(0)
+		serviceName = flag.Arg(1)
+	case 1:
+		signal = flag.Arg(0)
+	case 0:
+		signal = "status"
+	default:
 	}
+
+	// Ensure the signal is a valid keyword
+	for _, v := range options {
+		if signal == v {
+			exit = false
+			break
+		}
+	}
+
+	// to avoid collision with signal STOP
+	if signal == "stop" {
+		signal = "down"
+	}
+	if signal != "status" && serviceName == "" {
+		exit = true
+	}
+
 	if exit {
 		fmt.Fprintf(os.Stderr, "Invalid arguments, use (\"%s -help\") for help.\n", os.Args[0])
 		os.Exit(1)
@@ -238,43 +249,50 @@ func main() {
 	fmt.Printf(format+"\n", "PID", "Up", "Down", "Name", "CMD")
 	for _, s := range services {
 		if s.Status.Pid > 0 {
-			if s.Status.Fpid {
-				fmt.Printf(format,
-					s.Status.Pid,
-					s.Status.Up,
-					s.Status.Down,
-					immortal.Yellow(fmt.Sprintf("%-*s", pname, s.Name)),
-					s.Status.Cmd)
+			var name string
+			if *asciiOnly {
+				name = fmt.Sprintf("%-*s", pname, s.Name)
+			} else if s.Status.Fpid {
+				name = immortal.Yellow(fmt.Sprintf("%-*s", pname, s.Name))
 			} else {
 				if s.Status.Down != "" {
-					fmt.Printf(format,
-						s.Status.Pid,
-						s.Status.Up,
-						s.Status.Down,
-						immortal.Red(fmt.Sprintf("%-*s", pname, s.Name)),
-						s.Status.Cmd)
+					name = immortal.Red(fmt.Sprintf("%-*s", pname, s.Name))
 				} else {
-					fmt.Printf(format,
-						s.Status.Pid,
-						s.Status.Up,
-						s.Status.Down,
-						immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)),
-						s.Status.Cmd)
+					name = immortal.Green(fmt.Sprintf("%-*s", pname, s.Name))
 				}
 			}
+			fmt.Printf(format,
+				s.Status.Pid,
+				s.Status.Up,
+				s.Status.Down,
+				name,
+				s.Status.Cmd)
 			if s.SignalResponse != nil && s.SignalResponse.Err != "" {
-				println(immortal.Yellow(fmt.Sprintf(" - %s", s.SignalResponse.Err)))
+				if *asciiOnly {
+					println(fmt.Sprintf(" - %s", s.SignalResponse.Err))
+				} else {
+					println(immortal.Yellow(fmt.Sprintf(" - %s", s.SignalResponse.Err)))
+				}
 			} else {
 				println()
 			}
 		} else if s.Status.Status != "" {
 			// print status about process that will start after the defined WAIT value
-			fmt.Printf(format,
-				"",
-				"",
-				"",
-				immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)),
-				immortal.Yellow(fmt.Sprintf("%s - %s\n", s.Status.Cmd, s.Status.Status)))
+			if *asciiOnly {
+				fmt.Printf(format,
+					"",
+					"",
+					"",
+					fmt.Sprintf("%-*s", pname, s.Name),
+					fmt.Sprintf("%s - %s\n", s.Status.Cmd, s.Status.Status))
+			} else {
+				fmt.Printf(format,
+					"",
+					"",
+					"",
+					immortal.Green(fmt.Sprintf("%-*s", pname, s.Name)),
+					immortal.Yellow(fmt.Sprintf("%s - %s\n", s.Status.Cmd, s.Status.Status)))
+			}
 		}
 	}
 }
