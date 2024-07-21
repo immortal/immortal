@@ -1,6 +1,6 @@
 module github.com/immortal/immortal
 
-go 1.22.5
+go 1.22
 
 require (
 	github.com/immortal/logrotate v0.0.0-20180922190115-5a04431dbafb
