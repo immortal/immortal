@@ -1,11 +1,11 @@
+---
 version: 2
 workflows:
   version: 2
   test:
     jobs:
       - test-latest
-      - test-1.17
-      - test-1.16
+      - test-1.22
 jobs:
   test-latest: &test-template
     docker:
@@ -14,11 +14,7 @@ jobs:
     steps:
       - checkout
       - run: go test -race -v
-  test-1.14:
+  test-1.22:
     <<: *test-template
     docker:
-      - image: circleci/golang:1.17
-  test-1.13:
-    <<: *test-template
-    docker:
-      - image: circleci/golang:1.16
+      - image: circleci/golang:1.22

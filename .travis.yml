@@ -1,3 +1,4 @@
+---
 dist: bionic
 language: go
 
@@ -6,7 +7,7 @@ os:
   - osx
 
 go:
-  - "1.17.x"
+  - 1.22.x
 
 before_install:
   - go get github.com/axw/gocov/gocov
@@ -17,7 +18,8 @@ before_install:
   - go get github.com/immortal/xtime
   - go get github.com/mattn/goveralls
   - go get github.com/nbari/violetear
-  - if ! go get github.com/golang/tools/cmd/cover; then go get golang.org/x/tools/cmd/cover; fi
+  - if ! go get github.com/golang/tools/cmd/cover; then go get golang.org/x/tools/cmd/cover;
+    fi
 
 script:
   - go build -o immortal cmd/immortal/main.go
