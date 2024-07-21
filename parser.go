@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/go-yaml/yaml"
+	"gopkg.in/yaml.v3"
 	"github.com/immortal/natcasesort"
 )
 

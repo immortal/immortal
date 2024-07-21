@@ -1,5 +1,3 @@
-github.com/go-yaml/yaml v2.1.0+incompatible h1:RYi2hDdss1u4YE7GwixGzWwVo47T8UQwnTLB6vQiq+o=
-github.com/go-yaml/yaml v2.1.0+incompatible/go.mod h1:w2MrLa16VYP0jy6N7M5kHaCkaLENm+P+Tv+MfurjSw0=
 github.com/immortal/logrotate v0.0.0-20180922190115-5a04431dbafb h1:sY1F9xSi+XwYMCZvM2O0Hf2ZE7+pktiqyqdejXAEt60=
 github.com/immortal/logrotate v0.0.0-20180922190115-5a04431dbafb/go.mod h1:ux2V8z1F/yRKtCi1JdbtKZBAjmE/CMm91u7x/vnBqAI=
 github.com/immortal/multiwriter v0.0.0-20180922214543-2e0dd11a3549 h1:9l48qS/06P9Twmg1BAJBHfcKoQxDN4/y5GrFX0iWduk=
@@ -8,15 +6,9 @@ github.com/immortal/natcasesort v0.0.0-20180922190600-53ad4be8bc1a h1:xGCNWvZqUk
 github.com/immortal/natcasesort v0.0.0-20180922190600-53ad4be8bc1a/go.mod h1:wrlf+Cc7o4fqKniC+4ebBmr6sJ8eeOjx5588f/4RgIU=
 github.com/immortal/xtime v0.0.0-20170317233522-fb1aca1146ea h1:A2jr6G4ZBCSWuGXxokX81LDZSd4z3JbGT04EEzdg1bA=
 github.com/immortal/xtime v0.0.0-20170317233522-fb1aca1146ea/go.mod h1:h+t/X/YvFrjugmbyexieB4t2EEcMrGU+ddxUtew4W3U=
-github.com/kr/pretty v0.2.1 h1:Fmg33tUaq4/8ym9TJN1x7sLJnHVwhP33CNkpYV/7rwI=
-github.com/kr/pretty v0.2.1/go.mod h1:ipq/a2n7PKx3OHsz4KJII5eveXtPO4qwEXGdVfWzfnI=
-github.com/kr/pty v1.1.1/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
-github.com/kr/text v0.1.0 h1:45sCR5RtlFHMR4UwH9sdQ5TC8v0qDQCHnXt+kaKSTVE=
-github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
 github.com/nbari/violetear v0.0.0-20210524103009-ce83b52538c9 h1:L5+NHqJtAZ/BBVY3A3YkAeiPp5q8bXuufST62E2Skpo=
 github.com/nbari/violetear v0.0.0-20210524103009-ce83b52538c9/go.mod h1:DZERM3bJoILVxK77tZRrEyLyAoQdgFEM2uYtwWMUjPU=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
-gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c h1:Hei/4ADfdWqJk1ZMxUNpqntNwaWcugrBjAiHlqqRiVk=
-gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c/go.mod h1:JHkPIbrfpd72SG/EVd6muEfDQjcINNoR0C8j2r3qZ4Q=
-gopkg.in/yaml.v2 v2.4.0 h1:D8xgwECY7CYvx+Y2n4sBz93Jn9JRvxdiyyo8CTfuKaY=
-gopkg.in/yaml.v2 v2.4.0/go.mod h1:RDklbk79AGWmwhnvt/jBztapEOGDOx6ZbXqjP6csGnQ=
+gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=

@@ -11,7 +11,6 @@ all: clean build
 
 get:
 	${GO} get
-	${GO} get -u github.com/go-yaml/yaml;
 	${GO} get -u github.com/nbari/violetear;
 	${GO} get -u github.com/immortal/logrotate;
 	${GO} get -u github.com/immortal/multiwriter;
