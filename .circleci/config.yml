@@ -5,16 +5,11 @@ workflows:
   test:
     jobs:
       - test-latest
-      - test-1.22
 jobs:
-  test-latest: &test-template
+  test-latest:
     docker:
       - image: circleci/golang:latest
     working_directory: /go/src/github.com/immortal/immortal
     steps:
       - checkout
       - run: go test -race -v
-  test-1.22:
-    <<: *test-template
-    docker:
-      - image: circleci/golang:1.22
