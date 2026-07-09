@@ -2,7 +2,6 @@ package immortal
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,7 +48,7 @@ func (c *Controller) SendSignal(socket, signal string) (*SignalResponse, error) 
 
 // FindServices return [name, socket path] of service
 func (c *Controller) FindServices(dir string) ([]*ServiceStatus, error) {
-	sdir, err := ioutil.ReadDir(dir)
+	sdir, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +76,7 @@ func (c *Controller) FindServices(dir string) ([]*ServiceStatus, error) {
 // PurgeServices remove unused service directory
 func (c *Controller) PurgeServices(dir string) error {
 	sdir := []string{"lock", "immortal.sock"}
-	files, err := ioutil.ReadDir(filepath.Dir(dir))
+	files, err := os.ReadDir(filepath.Dir(dir))
 	if err != nil {
 		return err
 	}

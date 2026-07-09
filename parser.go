@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -57,7 +56,7 @@ func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 }
 
 func (p *Parse) parseYml(file string) (*Config, error) {
-	f, err := ioutil.ReadFile(file)
+	f, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
@@ -80,13 +79,13 @@ func (p *Parse) parseEnvdir(dir string) (map[string]string, error) {
 	if !isDir(dir) {
 		return nil, fmt.Errorf("-e %q does not exist or has wrong permissions, use (\"%s -h\") for help", dir, os.Args[0])
 	}
-	files, err := ioutil.ReadDir(dir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	env := make(map[string]string)
 	for _, f := range files {
-		if f.Mode().IsRegular() {
+		if f.Type().IsRegular() {
 			lines := 0
 			ff, err := os.Open(filepath.Join(dir, f.Name()))
 			if err != nil {
