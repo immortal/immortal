@@ -3,7 +3,6 @@ package immortal
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -72,7 +71,7 @@ func (mc *mockController) Run(command string) ([]byte, error) {
 func TestScanner(t *testing.T) {
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
-	dir, err := ioutil.TempDir("", "scanner")
+	dir, err := os.MkdirTemp("", "scanner")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -88,11 +87,11 @@ func TestScanner(t *testing.T) {
 	// create lock
 	lockPath := filepath.Join(dir, "run")
 	os.MkdirAll(lockPath, os.ModePerm)
-	if err = ioutil.WriteFile(filepath.Join(lockPath, "lock"), []byte("stage 0"), 0644); err != nil {
+	if err = os.WriteFile(filepath.Join(lockPath, "lock"), []byte("stage 0"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	// create run.yml
-	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 0"), 0644); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 0"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	ctl := &mockController{
@@ -127,7 +126,7 @@ func TestScanner(t *testing.T) {
 	ctl.j = -1
 
 	// change service contents, a restart (exit, start) is expected
-	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 1"), 0644); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 1"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	s.Scanner(ctl)
@@ -149,7 +148,7 @@ func TestScanner(t *testing.T) {
 	expect(t, 0, len(s.services))
 
 	// new service
-	if err = ioutil.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 2"), 0644); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, "run.yml"), []byte("stage 2"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	s.Scanner(ctl)

@@ -1,7 +1,7 @@
 package immortal
 
 import (
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,12 +12,12 @@ import (
 )
 
 func TestNewStderrLogger(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "stderr")
+	tmpfile, err := os.CreateTemp("", "stderr")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer os.Remove(tmpfile.Name())
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	cfg := &Config{
 		Stderr: Log{
 			File: tmpfile.Name(),
@@ -28,7 +28,7 @@ func TestNewStderrLogger(t *testing.T) {
 }
 
 func TestNewStderrLoggerFileNone(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	cfg := &Config{
 		Stderr: Log{
 			File: "/dev/null/nonexist",
@@ -39,7 +39,7 @@ func TestNewStderrLoggerFileNone(t *testing.T) {
 }
 
 func TestNewLoggerFileNone(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	cfg := &Config{
 		Log: Log{
 			File: "/dev/null/nonexist",
@@ -51,7 +51,7 @@ func TestNewLoggerFileNone(t *testing.T) {
 }
 
 func TestNewLoggerBadLogger(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	cfg := &Config{
 		Logger: "any-logger",
 	}
@@ -111,12 +111,12 @@ func TestNewLoggerRetry(t *testing.T) {
 }
 
 func TestLogWriterLog(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestLogWriterLog")
+	sdir, err := os.MkdirTemp("", "TestLogWriterLog")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(sdir)
-	tmpfile, err := ioutil.TempFile(sdir, "log.")
+	tmpfile, err := os.CreateTemp(sdir, "log.")
 	if err != nil {
 		t.Error(err)
 	}

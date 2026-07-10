@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/user"
@@ -17,7 +16,7 @@ import (
 )
 
 func TestDaemonNewCtl(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestDaemonNewCtl")
+	dir, err := os.MkdirTemp("", "TestDaemonNewCtl")
 	if err != nil {
 		t.Error(err)
 	}
@@ -43,7 +42,7 @@ func TestDaemonNewCtl(t *testing.T) {
 }
 
 func TestDaemonNewCtlErr(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestDaemonNewCtlErr")
+	dir, err := os.MkdirTemp("", "TestDaemonNewCtlErr")
 	if err != nil {
 		t.Error(err)
 	}
@@ -67,7 +66,7 @@ func TestDaemonNewCtlErr(t *testing.T) {
 }
 
 func TestDaemonNewCtlCwd(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestDaemonNewCtrlCwd")
+	dir, err := os.MkdirTemp("", "TestDaemonNewCtrlCwd")
 	if err != nil {
 		t.Error(err)
 	}
@@ -100,7 +99,7 @@ func TestDaemonNewCtlCwd(t *testing.T) {
 }
 
 func TestBadUid(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestBadUid")
+	dir, err := os.MkdirTemp("", "TestBadUid")
 	if err != nil {
 		t.Error(err)
 	}
@@ -121,7 +120,7 @@ func TestBadUid(t *testing.T) {
 }
 
 func TestBadGid(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestBadGid")
+	dir, err := os.MkdirTemp("", "TestBadGid")
 	if err != nil {
 		t.Error(err)
 	}
@@ -142,7 +141,7 @@ func TestBadGid(t *testing.T) {
 }
 
 func TestBadPid(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestBadPid")
+	dir, err := os.MkdirTemp("", "TestBadPid")
 	if err != nil {
 		t.Error(err)
 	}
@@ -162,7 +161,7 @@ func TestBadPid(t *testing.T) {
 }
 
 func TestUser(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestUser")
+	dir, err := os.MkdirTemp("", "TestUser")
 	if err != nil {
 		t.Error(err)
 	}
@@ -183,7 +182,7 @@ func TestUser(t *testing.T) {
 }
 
 func TestBadWritePidParent(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestBadWritePidParent")
+	dir, err := os.MkdirTemp("", "TestBadWritePidParent")
 	if err != nil {
 		t.Error(err)
 	}
@@ -236,12 +235,12 @@ func TestBadWritePidChild(t *testing.T) {
 }
 
 func TestSignalsUDOT(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestSignalsUDOT")
+	sdir, err := os.MkdirTemp("", "TestSignalsUDOT")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(sdir)
-	tmpfile, err := ioutil.TempFile(sdir, "log.")
+	tmpfile, err := os.CreateTemp(sdir, "log.")
 	if err != nil {
 		t.Error(err)
 	}
@@ -449,7 +448,7 @@ DONE:
 
 	// test log content
 	t.Log("testing logfile")
-	content, err := ioutil.ReadFile(tmpfile.Name())
+	content, err := os.ReadFile(tmpfile.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,7 +508,7 @@ func TestDaemonNewEnvHOME(t *testing.T) {
 }
 
 func TestDaemonConfigFile(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestDaemonConfigFile")
+	sdir, err := os.MkdirTemp("", "TestDaemonConfigFile")
 	if err != nil {
 		t.Error(err)
 	}

@@ -1,7 +1,6 @@
 package immortal
 
 import (
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -24,7 +23,7 @@ func TestSendSignal(t *testing.T) {
 
 func TestFindServices(t *testing.T) {
 	ctl := &Controller{}
-	dir, err := ioutil.TempDir("", "FindServices")
+	dir, err := os.MkdirTemp("", "FindServices")
 	if err != nil {
 		t.Error(err)
 	}
@@ -54,7 +53,7 @@ func TestFindServicesNonexistent(t *testing.T) {
 func TestPurgeServices(t *testing.T) {
 	ctl := &Controller{}
 
-	dir, err := ioutil.TempDir("", "PurgeServices")
+	dir, err := os.MkdirTemp("", "PurgeServices")
 	if err != nil {
 		t.Error(err)
 	}
@@ -68,13 +67,13 @@ func TestPurgeServices(t *testing.T) {
 	os.Create(filepath.Join(tdir, "lock"))
 	os.Create(filepath.Join(tdir, "immortal.sock"))
 	os.Create(filepath.Join(tdir, "f3"))
-	files, _ := ioutil.ReadDir(tdir)
+	files, _ := os.ReadDir(tdir)
 	expect(t, 3, len(files))
 	err = ctl.PurgeServices(tdir)
 	if err == nil {
 		t.Error("Expecting and error")
 	}
-	files, _ = ioutil.ReadDir(tdir)
+	files, _ = os.ReadDir(tdir)
 	expect(t, 3, len(files))
 	err = ctl.PurgeServices(filepath.Join(tdir, "f3"))
 	if err == nil {
@@ -85,7 +84,7 @@ func TestPurgeServices(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	files, _ = ioutil.ReadDir(tdir)
+	files, _ = os.ReadDir(tdir)
 	expect(t, 0, len(files))
 	tdir = filepath.Join(dir, "test", "root")
 	os.MkdirAll(tdir, 0700)

@@ -2,7 +2,7 @@ package immortal
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -14,14 +14,14 @@ import (
 )
 
 func TestSupervise(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestSupervise")
+	sdir, err := os.MkdirTemp("", "TestSupervise")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(sdir)
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	log.SetFlags(0)
-	tmpfile, err := ioutil.TempFile(sdir, "follow.pid")
+	tmpfile, err := os.CreateTemp(sdir, "follow.pid")
 	if err != nil {
 		t.Error(err)
 	}
@@ -101,7 +101,7 @@ func TestSupervise(t *testing.T) {
 		cmd.Wait()
 	}()
 	watchPid := cmd.Process.Pid
-	err = ioutil.WriteFile(tmpfile.Name(), []byte(strconv.Itoa(watchPid)), 0644)
+	err = os.WriteFile(tmpfile.Name(), []byte(strconv.Itoa(watchPid)), 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -141,12 +141,12 @@ func TestSupervise(t *testing.T) {
 // TestSuperviseWait will test that the wait variable in supervise.go is set to
 // approximately 1 second (wait = time.Second - uptime) to avoid high CPU usage
 func TestSuperviseWait(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestSuperviseWait")
+	sdir, err := os.MkdirTemp("", "TestSuperviseWait")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(sdir)
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	log.SetFlags(0)
 	cfg := &Config{
 		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "nosleep"},
@@ -192,12 +192,12 @@ func TestSuperviseWait(t *testing.T) {
 }
 
 func TestRetries(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestRetries")
+	sdir, err := os.MkdirTemp("", "TestRetries")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(sdir)
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	log.SetFlags(0)
 
 	var tt = []struct {

@@ -1,9 +1,9 @@
+//go:build freebsd || netbsd || openbsd || dragonfly || darwin
 // +build freebsd netbsd openbsd dragonfly darwin
 
 package immortal
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,7 +27,7 @@ func TestNewScanDirNonexistent(t *testing.T) {
 // TestWathFile create a dummy file, do changes on it and WathFile should return
 // the same file
 func TestWathFile(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestWathFile")
+	dir, err := os.MkdirTemp("", "TestWathFile")
 	if err != nil {
 		t.Error(err)
 	}
@@ -37,13 +37,13 @@ func TestWathFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	file := filepath.Join(dir, "run.yml")
-	if err = ioutil.WriteFile(file, []byte(""), 0644); err != nil {
+	if err = os.WriteFile(file, []byte(""), 0644); err != nil {
 		t.Fatal(err)
 	}
 	go s.WatchFile(file)
 	go func() {
 		time.Sleep(time.Second)
-		if err = ioutil.WriteFile(file, []byte("--"), 0644); err != nil {
+		if err = os.WriteFile(file, []byte("--"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}()
@@ -67,7 +67,7 @@ func (mc *mockController) Run(command string) ([]byte, error) {
 }
 
 func TestScandir(t *testing.T) {
-	dir, err := ioutil.TempDir("", "TestWathFile")
+	dir, err := os.MkdirTemp("", "TestWathFile")
 	if err != nil {
 		t.Error(err)
 	}
@@ -81,12 +81,12 @@ func TestScandir(t *testing.T) {
 		t.Fatal(err)
 	}
 	file := filepath.Join(dir, "run.yml")
-	if err = ioutil.WriteFile(file, []byte(""), 0644); err != nil {
+	if err = os.WriteFile(file, []byte(""), 0644); err != nil {
 		t.Fatal(err)
 	}
 	go func() {
 		time.Sleep(time.Second)
-		if err = ioutil.WriteFile(file, []byte("--"), 0644); err != nil {
+		if err = os.WriteFile(file, []byte("--"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}()

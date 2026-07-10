@@ -1,7 +1,6 @@
 package immortal
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,7 +23,7 @@ func TestMd5sumNonexistent(t *testing.T) {
 }
 
 func TestMd5sum(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "md5")
+	tmpfile, err := os.CreateTemp("", "md5")
 	if err != nil {
 		t.Error(err)
 	}

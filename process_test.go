@@ -2,7 +2,6 @@ package immortal
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,16 +30,16 @@ func TestProcessStart(t *testing.T) {
 }
 
 func TestProcessLogStderrStdout(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestProcessLogStderrStdout")
+	sdir, err := os.MkdirTemp("", "TestProcessLogStderrStdout")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(sdir)
-	tmpfileStdout, err := ioutil.TempFile(sdir, "log.stdout")
+	tmpfileStdout, err := os.CreateTemp(sdir, "log.stdout")
 	if err != nil {
 		t.Error(err)
 	}
-	tmpfileStderr, err := ioutil.TempFile(sdir, "log.stderr")
+	tmpfileStderr, err := os.CreateTemp(sdir, "log.stderr")
 	if err != nil {
 		t.Error(err)
 	}
@@ -100,7 +99,7 @@ func TestProcessLogStderrStdout(t *testing.T) {
 	err = <-p.errch
 
 	t.Log("verifying stdout")
-	content, err := ioutil.ReadFile(tmpfileStdout.Name())
+	content, err := os.ReadFile(tmpfileStdout.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +107,7 @@ func TestProcessLogStderrStdout(t *testing.T) {
 	expect(t, expectStdout, string(content))
 
 	t.Log("verifying stderr")
-	content, err = ioutil.ReadFile(tmpfileStderr.Name())
+	content, err = os.ReadFile(tmpfileStderr.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,12 +120,12 @@ func TestProcessLogStderrStdout(t *testing.T) {
 }
 
 func TestProcessLogStderr(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestProcessLogStderr")
+	sdir, err := os.MkdirTemp("", "TestProcessLogStderr")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(sdir)
-	tmpfileStderr, err := ioutil.TempFile(sdir, "log.stderr")
+	tmpfileStderr, err := os.CreateTemp(sdir, "log.stderr")
 	if err != nil {
 		t.Error(err)
 	}
@@ -183,7 +182,7 @@ func TestProcessLogStderr(t *testing.T) {
 	err = <-p.errch
 
 	t.Log("verifying stderr")
-	content, err := ioutil.ReadFile(tmpfileStderr.Name())
+	content, err := os.ReadFile(tmpfileStderr.Name())
 	if err != nil {
 		t.Fatal(err)
 	}

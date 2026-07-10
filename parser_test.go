@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/user"
 	"reflect"
@@ -228,7 +227,7 @@ func TestParseArgsNoargs(t *testing.T) {
 func TestParseArgsTable(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
-	dir, err := ioutil.TempDir("", "TestParseArgsTable")
+	dir, err := os.MkdirTemp("", "TestParseArgsTable")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +297,7 @@ func TestParseArgsTable(t *testing.T) {
 }
 
 func TestParseYamlCmd(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlCmd")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlCmd")
 	if err != nil {
 		t.Error(err)
 	}
@@ -320,7 +319,7 @@ log:
 logger: logger -t unicorn
 user: www
 wait: 1`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -343,7 +342,7 @@ wait: 1`)
 }
 
 func TestParseYamlCwd(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlCwd")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlCwd")
 	if err != nil {
 		t.Error(err)
 	}
@@ -366,7 +365,7 @@ log:
 logger: logger -t unicorn
 user: www
 wait: 1`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -389,7 +388,7 @@ wait: 1`)
 }
 
 func TestParseYamlUsrErr(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlUsrErr")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlUsrErr")
 	if err != nil {
 		t.Error(err)
 	}
@@ -411,7 +410,7 @@ log:
 logger: logger -t unicorn
 user: nonexistent
 wait: 1`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -434,7 +433,7 @@ wait: 1`)
 }
 
 func TestParseYamlErr(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlErr")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlErr")
 	if err != nil {
 		t.Error(err)
 	}
@@ -444,7 +443,7 @@ func TestParseYamlErr(t *testing.T) {
     size: 1    # MegaBytes
 logger: logger -t unicorn
 user: nonexistent`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -474,7 +473,7 @@ func TestParseParseYmlioutil(t *testing.T) {
 }
 
 func TestParseYamlRequire(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlRequire")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlRequire")
 	if err != nil {
 		t.Error(err)
 	}
@@ -485,7 +484,7 @@ wait: 1
 require:
   - service1
   - service2`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -511,7 +510,7 @@ require:
 }
 
 func TestParseYamlRequireEmpty(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlRequire")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlRequire")
 	if err != nil {
 		t.Error(err)
 	}
@@ -519,7 +518,7 @@ func TestParseYamlRequireEmpty(t *testing.T) {
 	yaml := []byte(`
 cmd: command
 wait: 1`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -543,7 +542,7 @@ wait: 1`)
 }
 
 func TestParseYamlRequireCmd(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlRequireCmd")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlRequireCmd")
 	if err != nil {
 		t.Error(err)
 	}
@@ -552,7 +551,7 @@ func TestParseYamlRequireCmd(t *testing.T) {
 cmd: command
 wait: 1
 require_cmd: test -f /tmp/foo`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -575,7 +574,7 @@ require_cmd: test -f /tmp/foo`)
 }
 
 func TestParseYamlRequireEmptyCmd(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlRequireCmd")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlRequireCmd")
 	if err != nil {
 		t.Error(err)
 	}
@@ -583,7 +582,7 @@ func TestParseYamlRequireEmptyCmd(t *testing.T) {
 	yaml := []byte(`
 cmd: command
 wait: 1`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -605,14 +604,14 @@ wait: 1`)
 }
 
 func TestParseYamlRetriesDefaults(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlRetriesDefaults")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlRetriesDefaults")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.Remove(tmpfile.Name())
 	yaml := []byte(`
 cmd: command`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -634,7 +633,7 @@ cmd: command`)
 }
 
 func TestParseYamlCustomRetries0(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlRetriesDefaults")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlRetriesDefaults")
 	if err != nil {
 		t.Error(err)
 	}
@@ -642,7 +641,7 @@ func TestParseYamlCustomRetries0(t *testing.T) {
 	yaml := []byte(`
 cmd: command
 retries: 0`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -664,7 +663,7 @@ retries: 0`)
 }
 
 func TestParseYamlCustomRetries10(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseYamlRetriesDefaults")
+	tmpfile, err := os.CreateTemp("", "TestParseYamlRetriesDefaults")
 	if err != nil {
 		t.Error(err)
 	}
@@ -672,7 +671,7 @@ func TestParseYamlCustomRetries10(t *testing.T) {
 	yaml := []byte(`
 cmd: command
 retries: 10`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -694,7 +693,7 @@ retries: 10`)
 }
 
 func TestParseBadYaml(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseBadYaml")
+	tmpfile, err := os.CreateTemp("", "TestParseBadYaml")
 	if err != nil {
 		t.Error(err)
 	}
@@ -702,7 +701,7 @@ func TestParseBadYaml(t *testing.T) {
 	yaml := []byte(`
 cmd - command
 retries: 10`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -713,7 +712,7 @@ retries: 10`)
 }
 
 func TestParseArgsConfigfile(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseBadYaml")
+	tmpfile, err := os.CreateTemp("", "TestParseBadYaml")
 	if err != nil {
 		t.Error(err)
 	}
@@ -721,7 +720,7 @@ func TestParseArgsConfigfile(t *testing.T) {
 	yaml := []byte(`
 cmd - command
 wait: a`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}
@@ -742,7 +741,7 @@ wait: a`)
 }
 
 func TestParseArgsCheckConfig(t *testing.T) {
-	tmpfile, err := ioutil.TempFile("", "TestParseArgsCheckConfig")
+	tmpfile, err := os.CreateTemp("", "TestParseArgsCheckConfig")
 	if err != nil {
 		t.Error(err)
 	}
@@ -750,7 +749,7 @@ func TestParseArgsCheckConfig(t *testing.T) {
 	yaml := []byte(`
 cmd: command
 wait: 3`)
-	err = ioutil.WriteFile(tmpfile.Name(), yaml, 0644)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
 	if err != nil {
 		t.Error(err)
 	}

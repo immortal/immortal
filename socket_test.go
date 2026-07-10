@@ -1,13 +1,12 @@
 package immortal
 
 import (
-	"io/ioutil"
 	"os"
 	"testing"
 )
 
 func TestSocketListenError(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestSocketListenError")
+	sdir, err := os.MkdirTemp("", "TestSocketListenError")
 	if err != nil {
 		t.Error(err)
 	}

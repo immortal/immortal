@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -15,7 +14,7 @@ import (
 )
 
 func TestSignalsFiFo(t *testing.T) {
-	sdir, err := ioutil.TempDir("", "TestSignalsFiFo")
+	sdir, err := os.MkdirTemp("", "TestSignalsFiFo")
 	if err != nil {
 		t.Error(err)
 	}
@@ -24,7 +23,7 @@ func TestSignalsFiFo(t *testing.T) {
 	log.SetOutput(&mylog)
 	log.SetFlags(0)
 	// for writing the signals
-	tmpdir, err := ioutil.TempDir("", "signals")
+	tmpdir, err := os.MkdirTemp("", "signals")
 	if err != nil {
 		t.Fatal(err)
 	}

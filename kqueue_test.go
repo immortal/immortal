@@ -1,9 +1,9 @@
+//go:build freebsd || netbsd || openbsd || dragonfly || darwin
 // +build freebsd netbsd openbsd dragonfly darwin
 
 package immortal
 
 import (
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -13,7 +13,7 @@ import (
 
 func TestWatchDir(t *testing.T) {
 	ch := make(chan string)
-	dir, err := ioutil.TempDir("", "TestWatchDir")
+	dir, err := os.MkdirTemp("", "TestWatchDir")
 	if err != nil {
 		t.Error(err)
 	}
@@ -25,7 +25,7 @@ func TestWatchDir(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	tmpfn := filepath.Join(dir, "tmpfile")
-	if err = ioutil.WriteFile(tmpfn, []byte("something"), 0640); err != nil {
+	if err = os.WriteFile(tmpfn, []byte("something"), 0640); err != nil {
 		t.Error(err)
 	}
 
@@ -47,7 +47,7 @@ func TestWatchDirBadDir(t *testing.T) {
 
 func TestWatchFile(t *testing.T) {
 	ch := make(chan string, 1)
-	tmpfile, err := ioutil.TempFile("", "TestWatchFile")
+	tmpfile, err := os.CreateTemp("", "TestWatchFile")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestWatchFile(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	err = ioutil.WriteFile(tmpfile.Name(), []byte("foo"), 0644)
+	err = os.WriteFile(tmpfile.Name(), []byte("foo"), 0644)
 	if err != nil {
 		t.Error(err)
 	}
