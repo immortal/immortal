@@ -1,0 +1,17 @@
+[package]
+name = "immortal-core"
+description = "Core building blocks for the immortal process supervisor"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+fork.workspace = true
+
+[lints]
+workspace = true

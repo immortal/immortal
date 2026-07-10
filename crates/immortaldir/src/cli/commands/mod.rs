@@ -1,0 +1,187 @@
+//! Clap command and option definitions for `immortaldir`.
+
+use clap::{
+    Arg, ArgAction, ColorChoice, Command, ValueHint,
+    builder::styling::{AnsiColor, Effects, Styles},
+};
+
+/// Build the command-line interface.
+#[must_use]
+pub fn new() -> Command {
+    Command::new(env!("CARGO_PKG_NAME"))
+        .version(env!("CARGO_PKG_VERSION"))
+        .author(env!("CARGO_PKG_AUTHORS"))
+        .about(env!("CARGO_PKG_DESCRIPTION"))
+        .long_about(
+            "Reconcile immortal service definitions from a directory. The Rust rewrite currently \
+             defines this interface but does not yet scan files or manage supervisors.",
+        )
+        .after_help(
+            "Examples:
+  immortaldir /etc/immortal
+  immortaldir --runtime-dir /var/run/immortal /srv/immortal
+  immortaldir --once --dry-run ./services",
+        )
+        .color(ColorChoice::Auto)
+        .styles(styles())
+        .arg_required_else_help(true)
+        .disable_help_subcommand(true)
+        .arg(arg_directory())
+        .arg(arg_runtime_dir())
+        .arg(arg_scan_interval())
+        .arg(arg_once())
+        .arg(arg_dry_run())
+}
+
+fn styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Yellow.on_default() | Effects::BOLD)
+        .usage(AnsiColor::Green.on_default() | Effects::BOLD)
+        .literal(AnsiColor::Blue.on_default() | Effects::BOLD)
+        .placeholder(AnsiColor::Green.on_default())
+}
+
+fn arg_directory() -> Arg {
+    Arg::new("directory")
+        .value_name("DIRECTORY")
+        .value_hint(ValueHint::DirPath)
+        .help("Directory containing immortal service definitions")
+        .required(true)
+}
+
+fn arg_runtime_dir() -> Arg {
+    Arg::new("runtime-dir")
+        .long("runtime-dir")
+        .value_name("DIR")
+        .value_hint(ValueHint::DirPath)
+        .env("IMMORTAL_SDIR")
+        .default_value("/var/run/immortal")
+        .help("Store and discover supervisor state under DIR")
+}
+
+fn arg_scan_interval() -> Arg {
+    Arg::new("scan-interval")
+        .long("scan-interval")
+        .value_name("SECONDS")
+        .default_value("5")
+        .help("Maximum delay between reconciliation scans")
+        .value_parser(clap::value_parser!(u64).range(1..))
+}
+
+fn arg_once() -> Arg {
+    Arg::new("once")
+        .long("once")
+        .help("Reconcile once and exit instead of watching for changes")
+        .action(ArgAction::SetTrue)
+}
+
+fn arg_dry_run() -> Arg {
+    Arg::new("dry-run")
+        .long("dry-run")
+        .help("Print the reconciliation plan without changing supervisors")
+        .action(ArgAction::SetTrue)
+        .requires("once")
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{
+        builder::styling::{AnsiColor, Effects},
+        error::ErrorKind,
+    };
+
+    use super::new;
+
+    #[test]
+    fn command_definition_is_valid() {
+        new().debug_assert();
+    }
+
+    #[test]
+    fn help_uses_project_palette() {
+        let command = new();
+        let styles = command.get_styles();
+
+        assert_eq!(
+            styles.get_header(),
+            &(AnsiColor::Yellow.on_default() | Effects::BOLD)
+        );
+        assert_eq!(
+            styles.get_usage(),
+            &(AnsiColor::Green.on_default() | Effects::BOLD)
+        );
+        assert_eq!(
+            styles.get_literal(),
+            &(AnsiColor::Blue.on_default() | Effects::BOLD)
+        );
+        assert_eq!(styles.get_placeholder(), &AnsiColor::Green.on_default());
+    }
+
+    #[test]
+    fn help_is_available() {
+        let result = new().try_get_matches_from(["immortaldir", "--help"]);
+        assert_eq!(
+            result.err().map(|error| error.kind()),
+            Some(ErrorKind::DisplayHelp)
+        );
+    }
+
+    #[test]
+    fn version_is_available() {
+        let result = new().try_get_matches_from(["immortaldir", "--version"]);
+        assert_eq!(
+            result.err().map(|error| error.kind()),
+            Some(ErrorKind::DisplayVersion)
+        );
+    }
+
+    #[test]
+    fn directory_is_required() {
+        let result = new().try_get_matches_from(["immortaldir", "--once"]);
+        assert_eq!(
+            result.err().map(|error| error.kind()),
+            Some(ErrorKind::MissingRequiredArgument)
+        );
+    }
+
+    #[test]
+    fn reconciliation_options_are_typed() {
+        let result = new().try_get_matches_from([
+            "immortaldir",
+            "--runtime-dir",
+            "/tmp/run",
+            "--scan-interval",
+            "10",
+            "--once",
+            "--dry-run",
+            "/tmp/services",
+        ]);
+        assert!(result.is_ok());
+        let Some(matches) = result.ok() else {
+            return;
+        };
+
+        assert_eq!(matches.get_one::<u64>("scan-interval"), Some(&10));
+        assert!(matches.get_flag("once"));
+        assert!(matches.get_flag("dry-run"));
+    }
+
+    #[test]
+    fn scan_interval_must_be_positive() {
+        let result =
+            new().try_get_matches_from(["immortaldir", "--scan-interval", "0", "/tmp/services"]);
+        assert_eq!(
+            result.err().map(|error| error.kind()),
+            Some(ErrorKind::ValueValidation)
+        );
+    }
+
+    #[test]
+    fn dry_run_requires_one_shot_mode() {
+        let result = new().try_get_matches_from(["immortaldir", "--dry-run", "/tmp/services"]);
+        assert_eq!(
+            result.err().map(|error| error.kind()),
+            Some(ErrorKind::MissingRequiredArgument)
+        );
+    }
+}

@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/immortal-core",
+    "crates/immortal",
+    "crates/immortalctl",
+    "crates/immortaldir",
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Nicolas Embriz <nbari@tequila.io>"]
+edition = "2024"
+rust-version = "1.97"
+license = "BSD-3-Clause"
+repository = "https://github.com/immortal/immortal"
+homepage = "https://immortal.run"
+publish = false
+
+[workspace.dependencies]
+clap = { version = "4.6", features = ["env"] }
+fork = "0.8"
+immortal-core = { path = "crates/immortal-core" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+nursery = { level = "allow", priority = -1 }
+pedantic = "deny"
+all = "deny"
+correctness = "deny"
+suspicious = "deny"
+perf = "deny"
+complexity = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+await_holding_lock = "deny"
+needless_borrow = "deny"
+needless_collect = "deny"
+large_stack_arrays = "deny"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

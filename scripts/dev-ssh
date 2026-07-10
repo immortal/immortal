@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+set -eu
+
+workspace_name="${IMMORTAL_DEVPOD_ID:-immortal}"
+workspace_dir="${IMMORTAL_DEVPOD_WORKDIR:-/workspaces/immortal}"
+
+if ! command -v devpod >/dev/null 2>&1; then
+    echo "Error: devpod is not installed." >&2
+    exit 1
+fi
+
+if [ "$#" -eq 0 ]; then
+    exec devpod --silent ssh "$workspace_name" --workdir "$workspace_dir"
+fi
+
+command_string='export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"; '"$*"
+exec devpod --silent ssh "$workspace_name" \
+    --workdir "$workspace_dir" \
+    --start-services=false \
+    --command "$command_string"

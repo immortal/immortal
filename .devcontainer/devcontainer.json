@@ -1,0 +1,60 @@
+{
+  "name": "immortal (DevPod)",
+  "image": "mcr.microsoft.com/devcontainers/rust:trixie",
+  "workspaceFolder": "/workspaces/immortal",
+  "remoteUser": "vscode",
+  "init": true,
+  "runArgs": [
+    "--userns=keep-id",
+    "--security-opt=label=disable"
+  ],
+  "containerEnv": {
+    "DEVPOD": "true",
+    "DEVPOD_WORKSPACE_ID": "immortal",
+    "EDITOR": "nvim",
+    "VISUAL": "nvim",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "CARGO_HOME": "/home/vscode/.cargo",
+    "CARGO_TARGET_DIR": "/home/vscode/.cargo/target/build",
+    "MISE_DATA_DIR": "/home/vscode/.local/share/mise",
+    "MISE_CACHE_DIR": "/home/vscode/.cache/mise",
+    "MISE_CONFIG_DIR": "/home/vscode/.config/mise",
+    "MISE_CONFIG_FILE": "/workspaces/immortal/mise.toml",
+    "SSH_AUTH_SOCK": "${localEnv:IMMORTAL_CONTAINER_SSH_AUTH_SOCK}"
+  },
+  "mounts": [
+    "source=immortal-cargo-registry,target=/home/vscode/.cargo/registry,type=volume",
+    "source=immortal-cargo-git,target=/home/vscode/.cargo/git,type=volume",
+    "source=immortal-cargo-target,target=/home/vscode/.cargo/target,type=volume",
+    "source=immortal-rustup,target=/home/vscode/.rustup,type=volume",
+    "source=immortal-mise-data,target=/home/vscode/.local/share/mise,type=volume",
+    "source=immortal-mise-cache,target=/home/vscode/.cache/mise,type=volume",
+    "source=immortal-nvim-data,target=/home/vscode/.local/share/nvim,type=volume",
+    "source=immortal-nvim-state,target=/home/vscode/.local/state/nvim,type=volume",
+    "source=immortal-nvim-cache,target=/home/vscode/.cache/nvim,type=volume",
+    "source=${localEnv:IMMORTAL_SSH_AGENT_DIR},target=/home/vscode/.1password,type=bind,readonly"
+  ],
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "username": "vscode",
+      "upgradePackages": true
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/duduribeiro/devcontainer-features/neovim:1": {
+      "version": "stable"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/postcreate.sh",
+  "postStartCommand": "bash .devcontainer/post-start.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb"
+      ]
+    }
+  }
+}

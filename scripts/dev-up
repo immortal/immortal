@@ -1,0 +1,69 @@
+#!/usr/bin/env sh
+set -eu
+
+project_dir="$(
+    unset CDPATH
+    cd -- "$(dirname -- "$0")/.." && pwd
+)"
+workspace_name="${IMMORTAL_DEVPOD_ID:-immortal}"
+ssh_config="${DEVPOD_SSH_CONFIG:-$HOME/.ssh/devpod}"
+
+if ! command -v devpod >/dev/null 2>&1; then
+    echo "Error: devpod is not installed." >&2
+    exit 1
+fi
+
+case "$(uname -s)" in
+Darwin)
+    : "${XDG_RUNTIME_DIR:=$HOME/.cache/xdg-runtime}"
+    ;;
+*)
+    : "${XDG_RUNTIME_DIR:=/tmp/runtime-$(id -u)}"
+    ;;
+esac
+export XDG_RUNTIME_DIR
+mkdir -p "$XDG_RUNTIME_DIR"
+
+if [ -z "${DOCKER_HOST:-}" ] && command -v podman >/dev/null 2>&1; then
+    for candidate in \
+        "$XDG_RUNTIME_DIR/podman/podman.sock" \
+        "/run/user/$(id -u)/podman/podman.sock"; do
+        if [ -S "$candidate" ]; then
+            DOCKER_HOST="unix://$candidate"
+            export DOCKER_HOST
+            break
+        fi
+    done
+fi
+
+agent_dir="$XDG_RUNTIME_DIR/immortal-devpod-agent"
+IMMORTAL_CONTAINER_SSH_AUTH_SOCK=""
+if [ -S "$HOME/.1password/agent.sock" ]; then
+    agent_dir="$HOME/.1password"
+    IMMORTAL_CONTAINER_SSH_AUTH_SOCK="/home/vscode/.1password/agent.sock"
+    SSH_AUTH_SOCK="$HOME/.1password/agent.sock"
+    export SSH_AUTH_SOCK
+else
+    mkdir -p "$agent_dir"
+fi
+IMMORTAL_SSH_AGENT_DIR="$agent_dir"
+export IMMORTAL_SSH_AGENT_DIR IMMORTAL_CONTAINER_SSH_AUTH_SOCK
+
+set -- --ide none --id "$workspace_name" --ssh-config "$ssh_config" "$@"
+
+if [ -n "${GIT_USER_NAME:-}" ]; then
+    set -- "$@" --init-env "GIT_USER_NAME=$GIT_USER_NAME" --workspace-env "GIT_USER_NAME=$GIT_USER_NAME"
+fi
+if [ -n "${GIT_USER_EMAIL:-}" ]; then
+    set -- "$@" --init-env "GIT_USER_EMAIL=$GIT_USER_EMAIL" --workspace-env "GIT_USER_EMAIL=$GIT_USER_EMAIL"
+fi
+if [ -n "${GIT_SIGNING_KEY:-}" ]; then
+    set -- "$@" --init-env "GIT_SIGNING_KEY=$GIT_SIGNING_KEY" --workspace-env "GIT_SIGNING_KEY=$GIT_SIGNING_KEY"
+fi
+if [ -n "${DEVPOD_DOTFILES:-}" ]; then
+    set -- "$@" --init-env "DEVPOD_DOTFILES=$DEVPOD_DOTFILES" --workspace-env "DEVPOD_DOTFILES=$DEVPOD_DOTFILES"
+fi
+
+echo "Launching DevPod workspace: $workspace_name"
+devpod up "$project_dir" "$@"
+echo "Enter with: scripts/dev-ssh"

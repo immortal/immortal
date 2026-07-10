@@ -1,168 +1,78 @@
-# ⭕  immortal
+# immortal
 
-[![CircleCI](https://circleci.com/gh/immortal/immortal.svg?style=svg)](https://circleci.com/gh/immortal/immortal)
-[![Build Status](https://travis-ci.org/immortal/immortal.svg?branch=develop)](https://travis-ci.org/immortal/immortal)
-[![Coverage Status](https://coveralls.io/repos/github/immortal/immortal/badge.svg?branch=master)](https://coveralls.io/github/immortal/immortal?branch=master)
-[![codecov](https://codecov.io/gh/immortal/immortal/branch/master/graph/badge.svg)](https://codecov.io/gh/immortal/immortal)
-[![Go Report Card](https://goreportcard.com/badge/github.com/immortal/immortal)](https://goreportcard.com/report/github.com/immortal/immortal)
+Immortal is being rebuilt in Rust as a small, Unix-focused process supervisor.
+This branch is a clean foundation for that rewrite; it does not yet supervise
+processes and is not a replacement for the released Go implementation.
 
-A *nix cross-platform (OS agnostic) supervisor
+The Go project remains available on the `master` and `develop` branches while
+the Rust design evolves independently.
 
-https://immortal.run/
+## Workspace
 
-[![GitHub release](https://img.shields.io/github/release/immortal/immortal.svg)](https://github.com/immortal/immortal/releases)
-[![GoDoc](https://godoc.org/github.com/immortal/immortal?status.svg)](https://godoc.org/github.com/immortal/immortal)
-[![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/immortal/immortal/blob/master/CONTRIBUTING.md)
+The repository contains one shared library and three command-line applications:
 
-Linux precompiled binaries
+- `immortal-core`: process-supervision domain boundaries.
+- `immortal`: supervise one process.
+- `immortalctl`: inspect and control supervisors.
+- `immortaldir`: reconcile service definitions from a directory.
 
-[![deb](https://img.shields.io/badge/deb-packagecloud.io-844fec.svg)](https://packagecloud.io/immortal/immortal)
-[![rpm](https://img.shields.io/badge/rpm-packagecloud.io-844fec.svg)](https://packagecloud.io/immortal/immortal)
+Each executable follows the same CLI flow:
 
-## run on behalf other system user
-
-If services need to run on behalf other system user `www, nobody, www-data`,
-not `root`, **immortal** should be compiled from source for the desired
-target/architecture, otherwise, this error may be returned:
-
-    Error looking up user: "www". user: Lookup requires cgo
-
-See more: https://golang.org/cmd/cgo/
-
-If using [FreeBSD](https://github.com/freebsd/freebsd-ports/tree/master/sysutils/immortal)
-or [macOS](https://github.com/immortal/homebrew-tap)
-you can install using [pkg/ports](http://immortal.run/freebsd/)
-or [homebrew](http://immortal.run/mac/), for other platforms work is in
-progress, any help for making the port/package for other systems would be
-appreciated.
-
-## Compile from source
-
-Setup go environment https://golang.org/doc/install
-
-> go >= 1.12 is required
-
-For example using $HOME/go for your workspace
-
-    $ export GOPATH=$HOME/go
-
-Create the directory:
-
-    $ mkdir -p $HOME/go/src/github.com/immortal
-
-Clone project into that directory:
-
-    $ git clone git@github.com:immortal/immortal.git $HOME/go/src/github.com/immortal/immortal
-
-Build by just typing make:
-
-    $ cd $HOME/go/src/github.com/immortal/immortal
-    $ make
-
-To install/uninstall:
-
-    $ make install
-    $ make uninstall
-
-# configuration example
-
-Content of file `/usr/local/etc/immortal/www.yml`:
-
-```yaml
-# pkg install go-www
-cmd: www
-cwd: /usr/ports
-log:
-    file: /var/log/www.log
-    age: 10  # seconds
-    num: 7   # int
-    size: 1  # MegaBytes
-wait: 1
-require:
-  - foo
-  - bar
+```text
+commands -> dispatch -> actions -> start -> main
 ```
 
-If `foo` and `bar` are not running, the service `www` will not be started. Skip `age`, `num` & `size` options to avoid `log-rotation` completely.
+The three parsers use the Go commands as requirements inventories while providing
+clearer, typed interfaces through Clap. Breaking changes are allowed when they
+improve correctness, safety, or operability. Process supervision, control, and
+directory reconciliation are not yet implemented. See [`DESIGN.md`](DESIGN.md)
+for the intended boundaries and development rules.
 
-> `foo` and `bar` are the names for the services defined on the same path www.yaml is located, foo.yml & bar.yml
+## Build and test
 
-# Paths
+Rust stable is required.
 
-When using immortaldir:
+```sh
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features
+cargo fmt --all -- --check
+```
 
-    /usr/local/etc/immortal
-    |--foo.yml
-    |--bar.yml
-    `--www.yml
+The same checks are available through `just`:
 
-The name of the `file.yml` will be used to reference the service to be
-daemonized excluding the extension `.yml`.:
+```sh
+just ci
+```
 
-    foo
-    bar
-    www
+## Try the command shells
 
-## /var/run/immortal/<name>
+```sh
+cargo run -p immortal -- --help
+cargo run -p immortalctl -- --help
+cargo run -p immortaldir -- --help
+```
 
-    /var/run/immortal
-    |--foo
-    |  |-lock
-    |  `-immortal.sock
-    |--bar
-    |  |-lock
-    |  `-immortal.sock
-    `--www
-       |-lock
-       `-immortal.sock
+## DevPod
 
+The development container is a single image-based Rust environment for DevPod
+and local rootless Podman. It does not require a Compose stack.
 
-## immortal like non-root user
+```sh
+scripts/dev-up
+scripts/dev-ssh
+just ci
+```
 
-Any service launched like not using using ``immortaldir`` will follow this
-structure:
+The local configuration forwards Git identity, optional SSH signing through
+the 1Password agent, and optional chezmoi dotfiles. More details are in
+[`.devcontainer/README.md`](.devcontainer/README.md).
 
-    ~/.immortal
-    |--(pid)
-    |  |--lock
-    |  `--immortal.sock
-    |--(pid)
-    |  |--lock
-    |  `--immortal.sock
-    `--(pid)
-       |--lock
-       `--immortal.sock
+## Status
 
-The `-name` argument takes a non-path (e.g., "myservice"), and the argument will be used instead of the pid in the directory structure. For example, `immortal -ctl myservice sleep 1000` will be:
-
-    ~/.immortal
-    |--myservice
-    |  |--lock
-    |  `--immortal.sock
-
-The `-ctl` argument takes precedence over the `-name` argument.
-
-# immortalctl
-
-Will print current status and allow to manage the services
-
-# debug
-
-    pgrep -fl "immortal -ctl"  | awk '{print $1}' | xargs watch -n .1 pstree -p
-
-# Test status using curl & [jq](https://stedolan.github.io/jq/)
-
-status:
-
-    curl --unix-socket immortal.sock http:/status -s | jq
-
-> note the single '/' https://superuser.com/a/925610/284722
-
-
-down:
-
-    curl --unix-socket immortal.sock http://im/signal/d -s | jq
-
-up:
-
-    curl --unix-socket immortal.sock http://im/signal/u -s | jq
+This skeleton does not parse configuration yet, so YAML compatibility is not
+implemented or claimed. The existing Go `.yml` format is the baseline for the
+future Rust parser: its examples will become compatibility fixtures before the
+format is changed or extended. Runtime paths, control protocols, logging, and
+process lifecycle semantics will likewise be designed and tested feature by
+feature.
