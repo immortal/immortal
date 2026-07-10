@@ -3,9 +3,8 @@ package immortal
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"os"
+	"log"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -76,7 +75,7 @@ func (d *Daemon) Run(p Process) (*process, error) {
 
 // WritePid write pid to file
 func (d *Daemon) WritePid(file string, pid int) error {
-	return ioutil.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644)
+	return os.WriteFile(file, []byte(fmt.Sprintf("%d", pid)), 0644)
 }
 
 // IsRunning check if process is running
@@ -90,7 +89,7 @@ func (d *Daemon) IsRunning(pid int) bool {
 
 // ReadPidFile read pid from file if error returns pid 0
 func (d *Daemon) ReadPidFile(pidfile string) (int, error) {
-	content, err := ioutil.ReadFile(pidfile)
+	content, err := os.ReadFile(pidfile)
 	if err != nil {
 		return 0, err
 	}
