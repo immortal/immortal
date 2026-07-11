@@ -12,9 +12,6 @@ use std::{
     time::Duration,
 };
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::time::timeout;
-
 #[cfg(unix)]
 use std::{
     fs,
@@ -22,18 +19,24 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-#[cfg(unix)]
-use tokio::net::{UnixListener, UnixStream};
-#[cfg(unix)]
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
-#[cfg(unix)]
-use tokio::task::JoinSet;
-
-use crate::status::{
-    LastResult, LoggerStatus, MAX_STATUS_ARGUMENTS, ReadinessStatus, ServiceState, StatusSnapshot,
-    desired_state_code, desired_state_from_code,
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    time::timeout,
 };
-use crate::supervisor::{DesiredState, Generation, StateMachine, SupervisorState};
+#[cfg(unix)]
+use tokio::{
+    net::{UnixListener, UnixStream},
+    sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch},
+    task::JoinSet,
+};
+
+use crate::{
+    status::{
+        LastResult, LoggerStatus, MAX_STATUS_ARGUMENTS, ReadinessStatus, ServiceState,
+        StatusSnapshot, desired_state_code, desired_state_from_code,
+    },
+    supervisor::{DesiredState, Generation, StateMachine, SupervisorState},
+};
 
 const MAGIC: [u8; 4] = *b"IMMO";
 const HEADER_BYTES: usize = 18;

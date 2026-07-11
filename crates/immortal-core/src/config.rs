@@ -1,4 +1,4 @@
-//! Service configuration types, parsing, validation, and legacy resolution.
+//! Strict service configuration types, parsing, validation, and resolution.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -9,8 +9,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use serde::de::IgnoredAny;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::IgnoredAny};
 
 /// Maximum accepted size of one service definition.
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
@@ -21,39 +20,9 @@ const DEFAULT_BACKOFF_MULTIPLIER: u32 = 2;
 const DEFAULT_BACKOFF_JITTER_PERCENT: u8 = 20;
 const DEFAULT_BACKOFF_RESET_SECONDS: u64 = 60;
 const DEFAULT_READINESS_TIMEOUT_SECONDS: u64 = 30;
-const DEFAULT_CONDITION_TIMEOUT_SECONDS: u64 = 30;
 const DEFAULT_CONDITION_BACKOFF_MAX_SECONDS: u64 = 30;
 
-/// Source schema used to produce a normalized configuration.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SchemaVersion {
-    /// The unversioned YAML schema released by the Go implementation.
-    V1,
-    /// The strict, argv-based Rust schema.
-    V2,
-}
-
-/// A non-fatal migration or compatibility diagnostic.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ConfigWarning {
-    /// Configuration path related to this warning, when one is available.
-    pub path: Option<String>,
-    /// Human-readable action for an operator.
-    pub message: String,
-}
-
-/// A parsed and normalized service definition.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ParsedConfig {
-    /// Schema detected in the source document.
-    pub source: SchemaVersion,
-    /// Normalized configuration consumed by the supervisor.
-    pub service: ServiceConfig,
-    /// Migration and compatibility warnings.
-    pub warnings: Vec<ConfigWarning>,
-}
-
-/// Runtime service definition independent of its source schema.
+/// Validated runtime service definition.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ServiceConfig {
     /// Whether directory reconciliation should keep this service running.
@@ -82,9 +51,9 @@ pub struct ServiceConfig {
     pub post_exit: Option<CommandHook>,
     /// Standard-output and standard-error routing.
     pub logging: LoggingConfig,
-    /// Compatibility PID output paths.
+    /// Optional output-only PID paths.
     pub pid_files: PidFiles,
-    /// Explicit handling for self-daemonizing legacy programs.
+    /// Explicit handling for self-daemonizing programs.
     pub process_mode: ProcessMode,
 }
 
@@ -324,7 +293,7 @@ pub enum ProcessMode {
     /// The service remains a direct child in the managed process group.
     #[default]
     Foreground,
-    /// A legacy descriptor remains open across the application's own daemonization.
+    /// A descriptor remains open across the application's own daemonization.
     DescriptorTracking,
 }
 
@@ -337,6 +306,8 @@ pub enum ConfigError {
     Io(io::Error),
     /// YAML was malformed or did not match the selected schema.
     Parse(String),
+    /// The required configuration version marker was absent.
+    MissingVersion,
     /// A version marker was present but unsupported.
     UnsupportedVersion(u64),
     /// The document parsed but violated runtime invariants.
@@ -352,8 +323,14 @@ impl Display for ConfigError {
             ),
             Self::Io(error) => write!(formatter, "unable to read configuration: {error}"),
             Self::Parse(error) => write!(formatter, "invalid YAML configuration: {error}"),
+            Self::MissingVersion => formatter.write_str(
+                "configuration must declare `version: 2`; unversioned Go configuration is not supported",
+            ),
             Self::UnsupportedVersion(version) => {
-                write!(formatter, "unsupported configuration version {version}")
+                write!(
+                    formatter,
+                    "unsupported configuration version {version}; only version 2 is accepted"
+                )
             }
             Self::Validation(errors) => {
                 write!(
@@ -372,6 +349,7 @@ impl Error for ConfigError {
             Self::Io(error) => Some(error),
             Self::TooLarge { .. }
             | Self::Parse(_)
+            | Self::MissingVersion
             | Self::UnsupportedVersion(_)
             | Self::Validation(_) => None,
         }
@@ -390,7 +368,7 @@ impl From<io::Error> for ConfigError {
 ///
 /// Returns an error when the file cannot be read, exceeds the size limit, is
 /// malformed, selects an unsupported schema, or violates service invariants.
-pub fn parse_file(path: &Path) -> Result<ParsedConfig, ConfigError> {
+pub fn parse_file(path: &Path) -> Result<ServiceConfig, ConfigError> {
     let file = File::open(path)?;
     let declared_size = file.metadata()?.len();
     if declared_size > MAX_CONFIG_BYTES as u64 {
@@ -402,7 +380,7 @@ pub fn parse_file(path: &Path) -> Result<ParsedConfig, ConfigError> {
     let mut bytes = Vec::with_capacity(usize::try_from(declared_size).unwrap_or(0));
     file.take((MAX_CONFIG_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
-    let mut parsed = parse_bytes(&bytes)?;
+    let mut config = parse_bytes(&bytes)?;
     let absolute_source = if path.is_absolute() {
         path.to_owned()
     } else {
@@ -413,9 +391,9 @@ pub fn parse_file(path: &Path) -> Result<ParsedConfig, ConfigError> {
             "configuration path has no parent directory".to_owned(),
         ])
     })?;
-    resolve_paths(&mut parsed.service, base)?;
-    validate_resolved(&parsed.service)?;
-    Ok(parsed)
+    resolve_paths(&mut config, base)?;
+    validate_resolved(&config)?;
+    Ok(config)
 }
 
 /// Parse, normalize, and validate an in-memory service definition.
@@ -424,7 +402,7 @@ pub fn parse_file(path: &Path) -> Result<ParsedConfig, ConfigError> {
 ///
 /// Returns an error for oversized, non-UTF-8, malformed, unsupported, or
 /// semantically invalid input.
-pub fn parse_bytes(bytes: &[u8]) -> Result<ParsedConfig, ConfigError> {
+pub fn parse_bytes(bytes: &[u8]) -> Result<ServiceConfig, ConfigError> {
     if bytes.len() > MAX_CONFIG_BYTES {
         return Err(ConfigError::TooLarge {
             actual: bytes.len() as u64,
@@ -440,7 +418,7 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<ParsedConfig, ConfigError> {
 /// # Errors
 ///
 /// Returns an error for malformed, unsupported, or semantically invalid input.
-pub fn parse_str(source: &str) -> Result<ParsedConfig, ConfigError> {
+pub fn parse_str(source: &str) -> Result<ServiceConfig, ConfigError> {
     if source.len() > MAX_CONFIG_BYTES {
         return Err(ConfigError::TooLarge {
             actual: source.len() as u64,
@@ -458,39 +436,34 @@ pub fn parse_str(source: &str) -> Result<ParsedConfig, ConfigError> {
 
     let header: VersionHeader = serde_saphyr::from_str_with_options(source, yaml_options())
         .map_err(|error| ConfigError::Parse(error.to_string()))?;
-    let mut parsed = match header.version {
-        None => parse_v1(source)?,
-        Some(2) => parse_v2(source)?,
+    let config = match header.version {
+        None => return Err(ConfigError::MissingVersion),
+        Some(2) => parse_current(source)?,
         Some(version) => return Err(ConfigError::UnsupportedVersion(version)),
     };
-    validate(&parsed.service)?;
-    parsed.warnings.sort_by(|left, right| {
-        left.path
-            .cmp(&right.path)
-            .then_with(|| left.message.cmp(&right.message))
-    });
-    Ok(parsed)
+    validate(&config)?;
+    Ok(config)
 }
 
-/// Serialize a normalized configuration as strict schema v2 YAML.
+/// Serialize a validated configuration using the single supported schema.
 ///
 /// # Errors
 ///
 /// Returns an error if the normalized model cannot be represented by the YAML
 /// serializer.
-pub fn emit_v2(config: &ServiceConfig) -> Result<String, ConfigError> {
+pub fn emit_config(config: &ServiceConfig) -> Result<String, ConfigError> {
     #[derive(Serialize)]
-    struct V2Output<'a> {
+    struct ConfigOutput<'a> {
         version: u8,
         #[serde(flatten)]
         service: &'a ServiceConfig,
     }
 
-    serde_saphyr::to_string(&V2Output {
+    serde_saphyr::to_string(&ConfigOutput {
         version: 2,
         service: config,
     })
-    .map_err(|error| ConfigError::Parse(format!("unable to emit schema v2: {error}")))
+    .map_err(|error| ConfigError::Parse(format!("unable to emit configuration: {error}")))
 }
 
 #[derive(Deserialize)]
@@ -500,7 +473,7 @@ struct VersionHeader {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct V2Document {
+struct ConfigDocument {
     version: u8,
     #[serde(default = "default_true")]
     enabled: bool,
@@ -533,207 +506,27 @@ fn default_true() -> bool {
     true
 }
 
-fn parse_v2(source: &str) -> Result<ParsedConfig, ConfigError> {
-    let document: V2Document = serde_saphyr::from_str_with_options(source, yaml_options())
+fn parse_current(source: &str) -> Result<ServiceConfig, ConfigError> {
+    let document: ConfigDocument = serde_saphyr::from_str_with_options(source, yaml_options())
         .map_err(|error| ConfigError::Parse(error.to_string()))?;
     debug_assert_eq!(document.version, 2);
-    Ok(ParsedConfig {
-        source: SchemaVersion::V2,
-        service: ServiceConfig {
-            enabled: document.enabled,
-            command: document.command,
-            working_directory: document.working_directory,
-            environment: document.environment,
-            environment_mode: document.environment_mode,
-            user: document.user,
-            start_delay_seconds: document.start_delay_seconds,
-            restart: document.restart,
-            readiness: document.readiness,
-            requires: document.requires,
-            start_condition: document.start_condition,
-            post_exit: document.post_exit,
-            logging: document.logging,
-            pid_files: document.pid_files,
-            process_mode: document.process_mode,
-        },
-        warnings: Vec::new(),
+    Ok(ServiceConfig {
+        enabled: document.enabled,
+        command: document.command,
+        working_directory: document.working_directory,
+        environment: document.environment,
+        environment_mode: document.environment_mode,
+        user: document.user,
+        start_delay_seconds: document.start_delay_seconds,
+        restart: document.restart,
+        readiness: document.readiness,
+        requires: document.requires,
+        start_condition: document.start_condition,
+        post_exit: document.post_exit,
+        logging: document.logging,
+        pid_files: document.pid_files,
+        process_mode: document.process_mode,
     })
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum LegacyScalar {
-    String(String),
-    Signed(i64),
-    Unsigned(u64),
-    Bool(bool),
-}
-
-impl LegacyScalar {
-    fn into_string(self) -> String {
-        match self {
-            Self::String(value) => value,
-            Self::Signed(value) => value.to_string(),
-            Self::Unsigned(value) => value.to_string(),
-            Self::Bool(value) => value.to_string(),
-        }
-    }
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct LegacyDocument {
-    cmd: String,
-    cwd: Option<PathBuf>,
-    env: BTreeMap<String, LegacyScalar>,
-    log: LegacyLog,
-    stderr: LegacyLog,
-    logger: Option<String>,
-    require: Vec<String>,
-    require_cmd: Option<String>,
-    post_exit: Option<String>,
-    user: Option<String>,
-    wait: u64,
-    #[serde(default = "legacy_retries_default")]
-    retries: i64,
-    pid: LegacyPid,
-}
-
-fn legacy_retries_default() -> i64 {
-    -1
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct LegacyLog {
-    file: Option<PathBuf>,
-    age: i64,
-    num: i64,
-    size: i64,
-    timestamp: bool,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct LegacyPid {
-    follow: Option<PathBuf>,
-    parent: Option<PathBuf>,
-    child: Option<PathBuf>,
-}
-
-fn parse_v1(source: &str) -> Result<ParsedConfig, ConfigError> {
-    let mut ignored = Vec::new();
-    let document = deserialize_v1(source, &mut ignored)?;
-
-    let mut warnings = vec![ConfigWarning {
-        path: None,
-        message: "unversioned schema v1 is deprecated; migrate to version: 2".to_owned(),
-    }];
-    warnings.extend(ignored.into_iter().map(|path| ConfigWarning {
-        message: format!("unknown schema v1 field `{path}` was ignored"),
-        path: Some(path),
-    }));
-
-    let logger = legacy_logger(document.logger.as_deref(), &mut warnings);
-    let start_condition = document.require_cmd.as_deref().map(legacy_start_condition);
-    if start_condition.is_some() {
-        warnings.push(ConfigWarning {
-            path: Some("require_cmd".to_owned()),
-            message: "legacy shell condition retained through an explicit shell argv; migrate to a direct argv command"
-                .to_owned(),
-        });
-    }
-    let post_exit = document.post_exit.as_deref().map(legacy_shell_hook);
-    if post_exit.is_some() {
-        warnings.push(ConfigWarning {
-            path: Some("post_exit".to_owned()),
-            message: "legacy shell hook retained through an explicit shell argv; `$IMMORTAL_EXIT_STATUS` replaces the appended positional argument in v2"
-                .to_owned(),
-        });
-    }
-
-    let process_mode = if document.pid.follow.is_some() {
-        warnings.push(ConfigWarning {
-            path: Some("pid.follow".to_owned()),
-            message:
-                "PID adoption is unsafe; descriptor-tracking mode requires explicit lifecycle hooks"
-                    .to_owned(),
-        });
-        ProcessMode::DescriptorTracking
-    } else {
-        ProcessMode::Foreground
-    };
-    if document.pid.follow.is_some() {
-        warnings.push(ConfigWarning {
-            path: Some("pid.follow".to_owned()),
-            message: "the followed PID path is not used as process identity".to_owned(),
-        });
-    }
-
-    let limits = if document.retries < 0 {
-        RestartLimits::default()
-    } else {
-        RestartLimits {
-            max_retries: Some(u32::try_from(document.retries).map_err(|_| {
-                ConfigError::Validation(vec![
-                    "legacy retries exceeds the supported 32-bit limit".to_owned(),
-                ])
-            })?),
-            ..RestartLimits::default()
-        }
-    };
-    let stdout = OutputConfig {
-        file: convert_legacy_log(document.log, &mut warnings, "log"),
-        logger,
-    };
-    let combine_stderr = document.stderr.file.is_none();
-    let stderr = OutputConfig {
-        file: convert_legacy_log(document.stderr, &mut warnings, "stderr"),
-        logger: None,
-    };
-
-    Ok(ParsedConfig {
-        source: SchemaVersion::V1,
-        service: ServiceConfig {
-            enabled: true,
-            command: split_legacy_command(&document.cmd),
-            working_directory: document.cwd,
-            environment: document
-                .env
-                .into_iter()
-                .map(|(key, value)| (key, value.into_string()))
-                .collect(),
-            environment_mode: EnvironmentMode::Inherit,
-            user: document.user,
-            start_delay_seconds: document.wait,
-            restart: RestartConfig {
-                limits,
-                ..RestartConfig::default()
-            },
-            readiness: ReadinessConfig::default(),
-            requires: document.require,
-            start_condition,
-            post_exit,
-            logging: LoggingConfig {
-                combine_stderr,
-                stdout,
-                stderr,
-            },
-            pid_files: PidFiles {
-                supervisor: document.pid.parent,
-                main: document.pid.child,
-            },
-            process_mode,
-        },
-        warnings,
-    })
-}
-
-fn deserialize_v1(source: &str, ignored: &mut Vec<String>) -> Result<LegacyDocument, ConfigError> {
-    serde_saphyr::with_deserializer_from_str_with_options(source, yaml_options(), |deserializer| {
-        serde_ignored::deserialize(deserializer, |path| ignored.push(path.to_string()))
-    })
-    .map_err(|error| ConfigError::Parse(error.to_string()))
 }
 
 fn yaml_options() -> serde_saphyr::Options {
@@ -754,71 +547,6 @@ fn yaml_options() -> serde_saphyr::Options {
             max_replay_stack_depth: 32,
             max_alias_expansions_per_anchor: 128,
         },
-    }
-}
-
-fn split_legacy_command(command: &str) -> Vec<String> {
-    command.split_whitespace().map(ToOwned::to_owned).collect()
-}
-
-fn legacy_logger(command: Option<&str>, warnings: &mut Vec<ConfigWarning>) -> Option<Vec<String>> {
-    command.map(|value| {
-        warnings.push(ConfigWarning {
-            path: Some("logger".to_owned()),
-            message: "legacy logger text is split on whitespace; use an argv array in v2"
-                .to_owned(),
-        });
-        split_legacy_command(value)
-    })
-}
-
-fn legacy_shell_hook(command: &str) -> CommandHook {
-    CommandHook {
-        command: vec!["/bin/sh".to_owned(), "-c".to_owned(), command.to_owned()],
-        timeout_seconds: 30,
-    }
-}
-
-fn legacy_start_condition(command: &str) -> StartConditionConfig {
-    StartConditionConfig {
-        command: vec!["/bin/sh".to_owned(), "-c".to_owned(), command.to_owned()],
-        timeout_seconds: DEFAULT_CONDITION_TIMEOUT_SECONDS,
-        backoff: ConditionBackoffConfig::default(),
-    }
-}
-
-fn convert_legacy_log(
-    legacy: LegacyLog,
-    warnings: &mut Vec<ConfigWarning>,
-    path: &str,
-) -> FileLogConfig {
-    let max_age_seconds = positive_i64(legacy.age, warnings, &format!("{path}.age"));
-    let keep = positive_i64(legacy.num, warnings, &format!("{path}.num"))
-        .and_then(|value| u32::try_from(value).ok());
-    let max_bytes = positive_i64(legacy.size, warnings, &format!("{path}.size"))
-        .and_then(|value| value.checked_mul(1024 * 1024));
-    FileLogConfig {
-        file: legacy.file,
-        max_age_seconds,
-        keep,
-        max_bytes,
-        max_total_bytes: None,
-        timestamp: legacy.timestamp,
-    }
-}
-
-fn positive_i64(value: i64, warnings: &mut Vec<ConfigWarning>, path: &str) -> Option<u64> {
-    match value {
-        0 => None,
-        ..=-1 => {
-            warnings.push(ConfigWarning {
-                path: Some(path.to_owned()),
-                message: "negative legacy value is invalid and will be rejected by schema v2"
-                    .to_owned(),
-            });
-            None
-        }
-        1.. => u64::try_from(value).ok(),
     }
 }
 
@@ -1118,125 +846,19 @@ mod tests {
     use std::{error::Error, fs, io};
 
     use super::{
-        ConfigError, EnvironmentMode, MAX_CONFIG_BYTES, ProcessMode, RestartPolicy, SchemaVersion,
-        emit_v2, parse_bytes, parse_file, parse_str,
+        ConfigError, EnvironmentMode, MAX_CONFIG_BYTES, ProcessMode, RestartPolicy, emit_config,
+        parse_bytes, parse_file, parse_str,
     };
 
     #[test]
-    fn parses_and_normalizes_released_v1_example() -> Result<(), Box<dyn Error>> {
-        let parsed = parse_str(include_str!("../tests/fixtures/v1/run.yml"))?;
-
-        assert_eq!(parsed.source, SchemaVersion::V1);
-        assert_eq!(
-            parsed.service.command,
-            ["bundle", "exec", "unicorn", "-c", "unicorn.rb"]
-        );
-        assert_eq!(
-            parsed.service.environment.get("DEBUG").map(String::as_str),
-            Some("1")
-        );
-        assert_eq!(parsed.service.restart.policy, RestartPolicy::Always);
-        assert_eq!(parsed.service.restart.limits.max_retries, None);
-        assert_eq!(
-            parsed.service.logging.stdout.file.max_bytes,
-            Some(1_048_576)
-        );
-        assert_eq!(parsed.service.logging.stdout.file.keep, Some(7));
-        assert!(parsed.service.logging.stdout.logger.is_some());
-        assert!(parsed.service.logging.stderr.logger.is_none());
-        assert!(parsed.service.logging.combine_stderr);
-        assert!(!parsed.warnings.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn v1_retries_zero_means_no_restart_after_initial_start() -> Result<(), Box<dyn Error>> {
-        let parsed = parse_str("cmd: /bin/true\nretries: 0\n")?;
-        assert_eq!(parsed.service.restart.limits.max_retries, Some(0));
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_legacy_retry_values_that_cannot_be_enforced() {
-        let result = parse_str("cmd: /bin/true\nretries: 4294967296\n");
-        assert!(matches!(result, Err(ConfigError::Validation(_))));
-    }
-
-    #[test]
-    fn released_dependency_and_retry_fixtures_parse() -> Result<(), Box<dyn Error>> {
-        let required = parse_str(include_str!("../tests/fixtures/v1/require.yml"))?;
-        assert_eq!(required.service.requires, ["foo", "bar"]);
-        let retries = parse_str(include_str!("../tests/fixtures/v1/retries.yml"))?;
-        assert_eq!(retries.service.restart.limits.max_retries, Some(3));
-        Ok(())
-    }
-
-    #[test]
-    fn released_go_examples_have_explicit_migration_contracts() -> Result<(), Box<dyn Error>> {
-        let supported = [
-            ("bar", include_str!("../tests/fixtures/go-master/bar.yml")),
-            ("foo", include_str!("../tests/fixtures/go-master/foo.yml")),
-            (
-                "require",
-                include_str!("../tests/fixtures/go-master/require.yml"),
-            ),
-            (
-                "require_cmd",
-                include_str!("../tests/fixtures/go-master/require_cmd.yml"),
-            ),
-            (
-                "retries",
-                include_str!("../tests/fixtures/go-master/retries.yml"),
-            ),
-            ("test", include_str!("../tests/fixtures/go-master/test.yml")),
-            (
-                "test_only_stderr",
-                include_str!("../tests/fixtures/go-master/test_only_stderr.yml"),
-            ),
-            (
-                "test_stderr",
-                include_str!("../tests/fixtures/go-master/test_stderr.yml"),
-            ),
-        ];
-        for (name, source) in supported {
-            let parsed = parse_str(source).map_err(|error| {
-                io::Error::other(format!("released example {name} failed: {error}"))
-            })?;
-            let migrated = emit_v2(&parsed.service)?;
-            let reparsed = parse_str(&migrated)?;
-            assert_eq!(reparsed.service, parsed.service, "fixture {name}");
-        }
-
-        for (name, source) in [
-            (
-                "avoid-logrotate",
-                include_str!("../tests/fixtures/go-master/avoid-logrotate.yml"),
-            ),
-            ("run", include_str!("../tests/fixtures/go-master/run.yml")),
-        ] {
-            let Err(ConfigError::Validation(errors)) = parse_str(source) else {
-                return Err(io::Error::other(format!(
-                    "descriptor-tracking fixture {name} was accepted without a lifecycle hook"
-                ))
-                .into());
-            };
-            assert!(errors.iter().any(|error| error.contains("lifecycle hook")));
-        }
-        assert!(matches!(
-            parse_str(include_str!("../tests/fixtures/go-master/bad-run.yml")),
-            Err(ConfigError::Validation(_))
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn normalized_v1_emits_equivalent_strict_v2() -> Result<(), Box<dyn Error>> {
-        let legacy = parse_str("cmd: /bin/sleep 5\nenv:\n  COUNT: 2\nretries: 3\n")?;
-        let emitted = emit_v2(&legacy.service)?;
+    fn supported_configuration_round_trips() -> Result<(), Box<dyn Error>> {
+        let config = parse_str(
+            "version: 2\ncommand: [/bin/sleep, '5']\nenvironment:\n  COUNT: '2'\nrestart:\n  limits:\n    max_retries: 3\n",
+        )?;
+        let emitted = emit_config(&config)?;
         let reparsed = parse_str(&emitted)?;
 
-        assert_eq!(reparsed.source, SchemaVersion::V2);
-        assert_eq!(reparsed.service, legacy.service);
+        assert_eq!(reparsed, config);
         assert!(emitted.contains("version: 2"));
         Ok(())
     }
@@ -1246,25 +868,21 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let source = manifest.join("tests/fixtures/v2/relative.yml");
         let base = manifest.join("tests/fixtures/v2");
-        let parsed = parse_file(&source)?;
+        let config = parse_file(&source)?;
 
-        assert_eq!(parsed.service.environment_mode, EnvironmentMode::Clear);
-        assert_eq!(parsed.service.working_directory, Some(base.clone()));
+        assert_eq!(config.environment_mode, EnvironmentMode::Clear);
+        assert_eq!(config.working_directory, Some(base.clone()));
         assert_eq!(
-            parsed.service.command.first().map(String::as_str),
+            config.command.first().map(String::as_str),
             base.join("bin/api").to_str()
         );
         assert_eq!(
-            parsed.service.logging.stdout.file.file,
+            config.logging.stdout.file.file,
             Some(base.join("logs/api.log"))
         );
+        assert_eq!(config.pid_files.main, Some(base.join("run/main.pid")));
         assert_eq!(
-            parsed.service.pid_files.main,
-            Some(base.join("run/main.pid"))
-        );
-        assert_eq!(
-            parsed
-                .service
+            config
                 .start_condition
                 .as_ref()
                 .and_then(|hook| hook.command.first())
@@ -1282,31 +900,28 @@ mod tests {
             "working_directory: .",
             "working_directory: definitely-missing-directory",
         );
-        let mut parsed = parse_str(&yaml)?;
+        let mut config = parse_str(&yaml)?;
         let base = manifest.join("tests/fixtures/v2");
-        super::resolve_paths(&mut parsed.service, &base)?;
-        assert!(super::validate_resolved(&parsed.service).is_err());
+        super::resolve_paths(&mut config, &base)?;
+        assert!(super::validate_resolved(&config).is_err());
         Ok(())
     }
 
     #[test]
-    fn reports_unknown_v1_fields_but_rejects_unknown_v2_fields() -> Result<(), Box<dyn Error>> {
-        let legacy = parse_str("cmd: /bin/true\nfuture: value\n")?;
-        assert!(
-            legacy
-                .warnings
-                .iter()
-                .any(|warning| warning.path.as_deref() == Some("future"))
-        );
-
-        let modern = parse_str("version: 2\ncommand: [/bin/true]\nfuture: value\n");
-        assert!(matches!(modern, Err(ConfigError::Parse(_))));
-        Ok(())
+    fn rejects_unversioned_go_configuration_and_unknown_fields() {
+        assert!(matches!(
+            parse_str("cmd: /bin/true\n"),
+            Err(ConfigError::MissingVersion)
+        ));
+        assert!(matches!(
+            parse_str("version: 2\ncommand: [/bin/true]\nfuture: value\n"),
+            Err(ConfigError::Parse(_))
+        ));
     }
 
     #[test]
     fn parses_strict_v2_restart_and_readiness_policy() -> Result<(), Box<dyn Error>> {
-        let parsed = parse_str(
+        let config = parse_str(
             r"
 version: 2
 command: [/usr/bin/example, --foreground]
@@ -1332,17 +947,15 @@ readiness:
 ",
         )?;
 
-        assert_eq!(parsed.source, SchemaVersion::V2);
-        assert_eq!(parsed.service.restart.policy, RestartPolicy::OnFailure);
-        assert_eq!(parsed.service.restart.limits.max_retries, Some(10));
-        assert!(parsed.service.restart.exit_when_done);
-        assert!(parsed.warnings.is_empty());
+        assert_eq!(config.restart.policy, RestartPolicy::OnFailure);
+        assert_eq!(config.restart.limits.max_retries, Some(10));
+        assert!(config.restart.exit_when_done);
         Ok(())
     }
 
     #[test]
     fn start_condition_has_independent_typed_backoff() -> Result<(), Box<dyn Error>> {
-        let parsed = parse_str(
+        let config = parse_str(
             r"
 version: 2
 command: [service]
@@ -1356,8 +969,7 @@ start_condition:
     jitter_percent: 5
 ",
         )?;
-        let condition = parsed
-            .service
+        let condition = config
             .start_condition
             .as_ref()
             .ok_or_else(|| io::Error::other("start condition missing"))?;
@@ -1387,17 +999,20 @@ start_condition:
             parse_str("version: 3\ncommand: [/bin/true]\n"),
             Err(ConfigError::UnsupportedVersion(3))
         ));
-        assert!(parse_str("cmd: /bin/true\n---\ncmd: /bin/false\n").is_err());
+        assert!(
+            parse_str("version: 2\ncommand: [/bin/true]\n---\nversion: 2\ncommand: [/bin/false]\n")
+                .is_err()
+        );
     }
 
     #[test]
     fn rejects_duplicate_keys_excessive_depth_and_aliases() {
         assert!(matches!(
-            parse_str("cmd: /bin/true\ncmd: /bin/false\n"),
+            parse_str("version: 2\ncommand: [/bin/true]\ncommand: [/bin/false]\n"),
             Err(ConfigError::Parse(_))
         ));
 
-        let mut deeply_nested = "cmd: /bin/true\nfuture: ".to_owned();
+        let mut deeply_nested = "version: 2\ncommand: [/bin/true]\nfuture: ".to_owned();
         for _ in 0..40 {
             deeply_nested.push('[');
         }
@@ -1410,7 +1025,8 @@ start_condition:
             Err(ConfigError::Parse(_))
         ));
 
-        let mut aliases = "cmd: /bin/true\nanchor: &value item\nfuture: [".to_owned();
+        let mut aliases =
+            "version: 2\ncommand: [/bin/true]\nanchor: &value item\nfuture: [".to_owned();
         for position in 0..129 {
             if position != 0 {
                 aliases.push_str(", ");
@@ -1462,14 +1078,15 @@ process_mode: descriptor-tracking
     }
 
     #[test]
-    fn legacy_follow_requires_a_hook_in_normalized_configuration() -> Result<(), Box<dyn Error>> {
-        let result = parse_str("cmd: /bin/true\npid:\n  follow: /tmp/service.pid\n");
+    fn descriptor_tracking_requires_a_lifecycle_hook() -> Result<(), Box<dyn Error>> {
+        let result =
+            parse_str("version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\n");
         assert!(matches!(result, Err(ConfigError::Validation(_))));
 
-        let parsed = parse_str(
-            "cmd: /bin/true\npost_exit: service stop\npid:\n  follow: /tmp/service.pid\n",
+        let config = parse_str(
+            "version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\npost_exit:\n  command: [/usr/local/bin/service-stop]\n  timeout_seconds: 30\n",
         )?;
-        assert_eq!(parsed.service.process_mode, ProcessMode::DescriptorTracking);
+        assert_eq!(config.process_mode, ProcessMode::DescriptorTracking);
         Ok(())
     }
 }

@@ -7,8 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use immortal_core::exit::ExitClass;
-use immortal_core::logging::RotatingFile;
+use immortal_core::{exit::ExitClass, logging::RotatingFile};
 
 use crate::cli::dispatch::Action;
 

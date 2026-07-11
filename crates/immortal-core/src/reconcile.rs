@@ -11,8 +11,10 @@ use std::{
     time::SystemTime,
 };
 
-use crate::config::{ConfigError, MAX_CONFIG_BYTES, ParsedConfig, ServiceConfig, parse_bytes};
-use crate::platform::file_identity;
+use crate::{
+    config::{ConfigError, MAX_CONFIG_BYTES, ServiceConfig, parse_bytes},
+    platform::file_identity,
+};
 
 /// Default maximum number of candidate definitions accepted in one directory.
 pub const DEFAULT_MAX_DEFINITIONS: usize = 4096;
@@ -42,7 +44,7 @@ pub struct Definition {
     /// Source file observed during this scan.
     pub path: PathBuf,
     /// Parsed and normalized service configuration.
-    pub parsed: ParsedConfig,
+    pub config: ServiceConfig,
 }
 
 /// Non-fatal problem isolated to one scan or candidate.
@@ -155,14 +157,14 @@ pub fn scan_directory(directory: &Path, limits: ScanLimits) -> Result<ScanResult
             continue;
         };
         match read_definition(&path) {
-            Ok(parsed) => {
+            Ok(config) => {
                 if definitions.contains_key(&name) {
                     problems.push(ScanProblem {
                         path,
                         kind: ScanProblemKind::DuplicateName,
                     });
                 } else {
-                    definitions.insert(name.clone(), Definition { name, path, parsed });
+                    definitions.insert(name.clone(), Definition { name, path, config });
                 }
             }
             Err(kind) => problems.push(ScanProblem { path, kind }),
@@ -219,7 +221,7 @@ fn definition_name(path: &Path) -> Option<String> {
     safe.then(|| name.to_owned())
 }
 
-fn read_definition(path: &Path) -> Result<ParsedConfig, ScanProblemKind> {
+fn read_definition(path: &Path) -> Result<ServiceConfig, ScanProblemKind> {
     let path_before = fs::symlink_metadata(path).map_err(ScanProblemKind::Io)?;
     if path_before.file_type().is_symlink() {
         return Err(ScanProblemKind::Symlink);
@@ -311,7 +313,7 @@ pub fn retain_last_known_good(
     desired.extend(
         scan.definitions
             .iter()
-            .map(|(name, definition)| (name.clone(), definition.parsed.service.clone())),
+            .map(|(name, definition)| (name.clone(), definition.config.clone())),
     );
     desired
 }
@@ -372,9 +374,8 @@ impl DesiredStateTracker {
         let mut actions = BTreeMap::new();
 
         for (name, definition) in &scan.definitions {
-            let action = compare(self.desired.get(name), Some(&definition.parsed.service));
-            self.desired
-                .insert(name.clone(), definition.parsed.service.clone());
+            let action = compare(self.desired.get(name), Some(&definition.config));
+            self.desired.insert(name.clone(), definition.config.clone());
             self.absent_scans.remove(name);
             actions.insert(name.clone(), action);
         }
@@ -574,13 +575,22 @@ mod tests {
     #[test]
     fn scans_only_top_level_visible_yml_files() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
-        fs::write(directory.path().join("api.yml"), "cmd: /bin/true\n")?;
-        fs::write(directory.path().join("notes.yaml"), "cmd: /bin/false\n")?;
-        fs::write(directory.path().join(".hidden.yml"), "cmd: /bin/false\n")?;
+        fs::write(
+            directory.path().join("api.yml"),
+            "version: 2\ncommand: [/bin/true]\n",
+        )?;
+        fs::write(
+            directory.path().join("notes.yaml"),
+            "version: 2\ncommand: [/bin/false]\n",
+        )?;
+        fs::write(
+            directory.path().join(".hidden.yml"),
+            "version: 2\ncommand: [/bin/false]\n",
+        )?;
         fs::create_dir(directory.path().join("nested"))?;
         fs::write(
             directory.path().join("nested/worker.yml"),
-            "cmd: /bin/false\n",
+            "version: 2\ncommand: [/bin/false]\n",
         )?;
 
         let scan = scan_directory(directory.path(), ScanLimits::default())?;
@@ -635,10 +645,16 @@ mod tests {
 
         let directory = TestDirectory::new()?;
         let target = directory.path().join("target");
-        fs::write(&target, "cmd: /bin/true\n")?;
+        fs::write(&target, "version: 2\ncommand: [/bin/true]\n")?;
         symlink(&target, directory.path().join("linked.yml"))?;
-        fs::write(directory.path().join("unsafe name.yml"), "cmd: /bin/true\n")?;
-        fs::write(directory.path().join("valid.yml"), "cmd: /bin/true\n")?;
+        fs::write(
+            directory.path().join("unsafe name.yml"),
+            "version: 2\ncommand: [/bin/true]\n",
+        )?;
+        fs::write(
+            directory.path().join("valid.yml"),
+            "version: 2\ncommand: [/bin/true]\n",
+        )?;
 
         let scan = scan_directory(directory.path(), ScanLimits::default())?;
         assert!(scan.definitions.contains_key("valid"));
@@ -658,9 +674,15 @@ mod tests {
     #[test]
     fn isolates_invalid_files_and_enforces_definition_limit() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
-        fs::write(directory.path().join("a.yml"), "cmd: /bin/true\n")?;
+        fs::write(
+            directory.path().join("a.yml"),
+            "version: 2\ncommand: [/bin/true]\n",
+        )?;
         fs::write(directory.path().join("b.yml"), "not: [valid\n")?;
-        fs::write(directory.path().join("c.yml"), "cmd: /bin/true\n")?;
+        fs::write(
+            directory.path().join("c.yml"),
+            "version: 2\ncommand: [/bin/true]\n",
+        )?;
 
         let scan = scan_directory(directory.path(), ScanLimits { max_definitions: 2 })?;
         assert!(scan.definitions.len() <= 2);
@@ -695,21 +717,18 @@ mod tests {
     #[test]
     fn compares_semantics_instead_of_file_metadata() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
-        fs::write(directory.path().join("api.yml"), "cmd: /bin/true\n")?;
+        fs::write(
+            directory.path().join("api.yml"),
+            "version: 2\ncommand: [/bin/true]\n",
+        )?;
         let first = scan_directory(directory.path(), ScanLimits::default())?;
         fs::write(
             directory.path().join("api.yml"),
-            "cmd: /bin/true\n# metadata-only change\n",
+            "version: 2\ncommand: [/bin/true]\n# metadata-only change\n",
         )?;
         let second = scan_directory(directory.path(), ScanLimits::default())?;
-        let old = first
-            .definitions
-            .get("api")
-            .map(|value| &value.parsed.service);
-        let new = second
-            .definitions
-            .get("api")
-            .map(|value| &value.parsed.service);
+        let old = first.definitions.get("api").map(|value| &value.config);
+        let new = second.definitions.get("api").map(|value| &value.config);
         assert_eq!(compare(old, new), ReconcileAction::Keep);
         Ok(())
     }
@@ -718,10 +737,10 @@ mod tests {
     fn invalid_replacement_retains_last_known_good() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
         let path = directory.path().join("api.yml");
-        fs::write(&path, "cmd: /bin/true\n")?;
+        fs::write(&path, "version: 2\ncommand: [/bin/true]\n")?;
         let valid = scan_directory(directory.path(), ScanLimits::default())?;
         let desired = retain_last_known_good(&BTreeMap::default(), &valid);
-        fs::write(&path, "cmd: []\n")?;
+        fs::write(&path, "version: 2\ncommand: []\n")?;
         let invalid = scan_directory(directory.path(), ScanLimits::default())?;
         let retained = retain_last_known_good(&desired, &invalid);
         assert_eq!(retained, desired);
@@ -732,7 +751,7 @@ mod tests {
     fn desired_tracker_confirms_deletion_and_emits_stop_once() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
         let path = directory.path().join("api.yml");
-        fs::write(&path, "cmd: /bin/true\n")?;
+        fs::write(&path, "version: 2\ncommand: [/bin/true]\n")?;
         let mut tracker = DesiredStateTracker::new(NonZeroUsize::new(2).ok_or("invalid limit")?);
 
         let present = scan_directory(directory.path(), ScanLimits::default())?;
@@ -765,7 +784,7 @@ mod tests {
     {
         let directory = TestDirectory::new()?;
         let path = directory.path().join("api.yml");
-        fs::write(&path, "cmd: /bin/true\n")?;
+        fs::write(&path, "version: 2\ncommand: [/bin/true]\n")?;
         let mut tracker = DesiredStateTracker::default();
         let valid = scan_directory(directory.path(), ScanLimits::default())?;
         assert_eq!(
@@ -773,7 +792,7 @@ mod tests {
             Some(&ReconcileAction::Start)
         );
 
-        fs::write(&path, "cmd: []\n")?;
+        fs::write(&path, "version: 2\ncommand: []\n")?;
         for _ in 0..3 {
             let invalid = scan_directory(directory.path(), ScanLimits::default())?;
             assert_eq!(
@@ -796,7 +815,7 @@ mod tests {
     -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
         let path = directory.path().join("api.yml");
-        fs::write(&path, "cmd: /bin/true\n")?;
+        fs::write(&path, "version: 2\ncommand: [/bin/true]\n")?;
         let mut tracker = DesiredStateTracker::default();
         let valid = scan_directory(directory.path(), ScanLimits::default())?;
         assert_eq!(
@@ -837,14 +856,14 @@ mod tests {
         let directory = TestDirectory::new()?;
         let path = directory.path().join("api.yml");
         let mut tracker = DesiredStateTracker::default();
-        fs::write(&path, "cmd: /bin/true\n")?;
+        fs::write(&path, "version: 2\ncommand: [/bin/true]\n")?;
         let first = scan_directory(directory.path(), ScanLimits::default())?;
         assert_eq!(
             tracker.apply(&first).get("api"),
             Some(&ReconcileAction::Start)
         );
 
-        fs::write(&path, "cmd: /bin/false\n")?;
+        fs::write(&path, "version: 2\ncommand: [/bin/false]\n")?;
         let changed = scan_directory(directory.path(), ScanLimits::default())?;
         assert_eq!(
             tracker.apply(&changed).get("api"),
@@ -878,15 +897,21 @@ mod tests {
     #[test]
     fn dependency_plan_groups_independent_services() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
-        fs::write(directory.path().join("database.yml"), "cmd: database\n")?;
-        fs::write(directory.path().join("cache.yml"), "cmd: cache\n")?;
+        fs::write(
+            directory.path().join("database.yml"),
+            "version: 2\ncommand: [database]\n",
+        )?;
+        fs::write(
+            directory.path().join("cache.yml"),
+            "version: 2\ncommand: [cache]\n",
+        )?;
         fs::write(
             directory.path().join("api.yml"),
-            "cmd: api\nrequire: [database, cache]\n",
+            "version: 2\ncommand: [api]\nrequires: [database, cache]\n",
         )?;
         fs::write(
             directory.path().join("worker.yml"),
-            "cmd: worker\nrequire: [database]\n",
+            "version: 2\ncommand: [worker]\nrequires: [database]\n",
         )?;
         let scan = scan_directory(directory.path(), ScanLimits::default())?;
         let desired = retain_last_known_good(&BTreeMap::default(), &scan);
@@ -906,7 +931,7 @@ mod tests {
         let directory = TestDirectory::new()?;
         fs::write(
             directory.path().join("api.yml"),
-            "cmd: api\nrequire: [database]\n",
+            "version: 2\ncommand: [api]\nrequires: [database]\n",
         )?;
         let scan = scan_directory(directory.path(), ScanLimits::default())?;
         let mut desired = retain_last_known_good(&BTreeMap::default(), &scan);

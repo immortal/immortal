@@ -7,12 +7,14 @@ use std::{
     time::Duration,
 };
 
-use immortal_core::exit::ExitClass;
-use immortal_core::reconcile::{
-    DesiredStateTracker, ReconcileAction, ScanError, ScanLimits, ScanResult,
-    canonical_definitions_directory, scan_directory,
+use immortal_core::{
+    exit::ExitClass,
+    reconcile::{
+        DesiredStateTracker, ReconcileAction, ScanError, ScanLimits, ScanResult,
+        canonical_definitions_directory, scan_directory,
+    },
+    watch::{DEFAULT_DEBOUNCE, ReconcileTriggers, WatchError},
 };
-use immortal_core::watch::{DEFAULT_DEBOUNCE, ReconcileTriggers, WatchError};
 
 use crate::cli::dispatch::Action;
 
@@ -142,11 +144,6 @@ fn write_plan(
         };
         writeln!(stdout, "{verb}\t{name}")?;
     }
-    for (name, definition) in scan.definitions {
-        for warning in definition.parsed.warnings {
-            writeln!(stderr, "{}: warning: {}", name, warning.message)?;
-        }
-    }
     for problem in scan.problems {
         writeln!(stderr, "{}: {:?}", problem.path.display(), problem.kind)?;
     }
@@ -206,7 +203,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn one_shot_dry_run_scans_successfully() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
-        fs::write(directory.path().join("api.yml"), "cmd: /bin/true\n")?;
+        fs::write(
+            directory.path().join("api.yml"),
+            "version: 2\ncommand: [/bin/true]\n",
+        )?;
         execute(&action(directory.path(), true)).await?;
         Ok(())
     }
@@ -224,8 +224,14 @@ mod tests {
     #[test]
     fn plan_output_is_deterministic_and_keeps_diagnostics_separate() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
-        fs::write(directory.path().join("api.yml"), "cmd: /bin/true\n")?;
-        fs::write(directory.path().join("broken.yml"), "cmd: []\n")?;
+        fs::write(
+            directory.path().join("api.yml"),
+            "version: 2\ncommand: [/bin/true]\n",
+        )?;
+        fs::write(
+            directory.path().join("broken.yml"),
+            "version: 2\ncommand: []\n",
+        )?;
         let scan = scan_directory(directory.path(), ScanLimits::default())?;
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -235,7 +241,6 @@ mod tests {
         assert_eq!(String::from_utf8(stdout)?, "START\tapi\n");
         let diagnostics = String::from_utf8(stderr)?;
         assert!(diagnostics.contains("broken.yml"));
-        assert!(diagnostics.contains("api: warning:"));
         Ok(())
     }
 
@@ -243,7 +248,7 @@ mod tests {
     fn repeated_plans_confirm_deletion_without_duplicate_stop() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
         let path = directory.path().join("api.yml");
-        fs::write(&path, "cmd: /bin/true\n")?;
+        fs::write(&path, "version: 2\ncommand: [/bin/true]\n")?;
         let mut tracker = DesiredStateTracker::default();
 
         let mut stdout = Vec::new();

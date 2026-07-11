@@ -6,17 +6,21 @@ use std::{
     io::{self, Write},
 };
 
-use immortal_core::control::{
-    CONTROL_IO_TIMEOUT, GenerationMatch, Operation, Request, Response, ResponseCode, Signal,
-    SignalScope, TransportError, read_response, write_request,
+use immortal_core::{
+    control::{
+        CONTROL_IO_TIMEOUT, GenerationMatch, Operation, Request, Response, ResponseCode, Signal,
+        SignalScope, TransportError, read_response, write_request,
+    },
+    exit::ExitClass,
+    runtime::{RuntimeRootError, RuntimeService, discover},
+    status::{ServiceState, StatusSnapshot, desired_state_name},
+    supervisor::Generation,
 };
-use immortal_core::exit::ExitClass;
-use immortal_core::runtime::{RuntimeRootError, RuntimeService, discover};
-use immortal_core::status::{ServiceState, StatusSnapshot, desired_state_name};
-use immortal_core::supervisor::Generation;
 use serde::Serialize;
-use tokio::net::UnixStream;
-use tokio::time::{sleep, timeout};
+use tokio::{
+    net::UnixStream,
+    time::{sleep, timeout},
+};
 
 use crate::cli::dispatch::{Action, OutputFormat, Target};
 

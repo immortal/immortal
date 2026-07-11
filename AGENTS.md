@@ -18,6 +18,7 @@ The Cargo workspace contains:
 - `immortal`: supervise one process.
 - `immortalctl`: inspect and control supervisors.
 - `immortaldir`: reconcile service definitions from a directory.
+- `immortallog`: minimal replaceable file-logging adapter.
 
 Keep process management, configuration, control protocols, logging, supervision,
 and platform behavior in `immortal-core`.
@@ -35,6 +36,18 @@ commands -> dispatch -> actions -> start -> main
 - `main` remains a thin process entry point.
 
 Do not put operating-system or supervision logic in CLI modules.
+
+## Rust style
+
+- Group imports by root: standard library, external crates, then local `crate`
+  or `super` modules, with a blank line between groups.
+- When importing more than one path from the same crate, use one nested import
+  tree such as `use immortal_core::{config::parse_str, control::{...}};` instead
+  of repeating `use immortal_core::...` statements. Separate trees are allowed
+  when they have different `cfg` conditions.
+- Keep grouped entries in a predictable lexical order where practical and let
+  `rustfmt` determine the final layout.
+- Do not add braces around a single import merely for visual symmetry.
 
 ## Process and daemon safety
 
@@ -55,14 +68,19 @@ forking, daemonization, sessions, and child waiting.
 
 ## Go implementation as a reference
 
-The Go implementation is a requirements and migration reference, not a design
-constraint. Breaking CLI, configuration, and protocol changes are allowed when
-they materially improve correctness, safety, clarity, or operability.
+The Go implementation is a requirements and historical reference, not a design
+constraint or compatibility target. Breaking CLI, configuration, and protocol
+changes are allowed when they materially improve correctness, safety, clarity,
+or operability.
 
 - Inspect old behavior with `git show master:path/to/file`; keep the Go branches
   unchanged.
-- Convert relevant Go examples into Rust migration or contract fixtures.
-- Test fields, defaults, environment handling, invalid input, and migration paths.
+- Convert relevant Go behavior into Rust requirements or contract tests where it
+  remains applicable.
+- Accept only the strict `version: 2` configuration schema. Do not restore an
+  unversioned Go compatibility or runtime migration parser.
+- Test fields, defaults, environment handling, invalid input, and unsupported
+  version rejection.
 - Make breaking changes explicit and document their rationale and upgrade path.
 - Do not claim compatibility unless the corresponding contract suite passes.
 - Document and test every new configuration field.

@@ -6,8 +6,10 @@ use std::{
     io::{self, Write},
 };
 
-use immortal_core::config::{ConfigError, emit_v2, parse_file};
-use immortal_core::exit::ExitClass;
+use immortal_core::{
+    config::{ConfigError, emit_config, parse_file},
+    exit::ExitClass,
+};
 
 use crate::cli::dispatch::Action;
 
@@ -77,13 +79,8 @@ impl ActionError {
 pub fn execute(action: Action) -> Result<(), ActionError> {
     match action {
         Action::CheckConfig(path) => {
-            let parsed = parse_file(&path)?;
-            let output = emit_v2(&parsed.service)?;
-            let stderr = io::stderr();
-            let mut diagnostics = stderr.lock();
-            for warning in parsed.warnings {
-                writeln!(diagnostics, "warning: {}", warning.message)?;
-            }
+            let config = parse_file(&path)?;
+            let output = emit_config(&config)?;
             io::stdout().lock().write_all(output.as_bytes())?;
             Ok(())
         }

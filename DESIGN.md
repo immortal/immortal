@@ -145,6 +145,9 @@ with direct `libc` or add a second process library.
 - The immortal [`fork`](https://github.com/immortal/fork) crate is the canonical
   source of Unix fork, daemon, session, and wait primitives; direct use stays
   behind `immortal-core::process` and the platform boundary.
+- `fork` owns reusable Unix mechanisms, not supervision policy. Immortal owns
+  broker IPC, generation identity, restart decisions, readiness, logger graphs,
+  control, status, and reconciliation.
 - Prefer safe standard-library interfaces and small focused dependencies.
 - Do not add dependencies for hypothetical future behavior.
 - Avoid panics in production paths; errors must retain actionable context.
@@ -154,9 +157,8 @@ with direct `libc` or add a second process library.
   correctness concerns, not implementation details.
 - Filesystem notifications may accelerate reconciliation but never replace it.
 - Public CLI, configuration, and protocol decisions require contract tests.
-- Existing Go service files are the compatibility baseline for the Rust YAML
-  schema; accepted fields, defaults, aliases, and errors require fixtures before
-  compatibility can be claimed.
+- The Rust rewrite accepts only its strict `version: 2` YAML schema. Unversioned
+  Go definitions are requirements references, not accepted runtime input.
 - The Go implementation is a reference for externally visible behavior, not a
   constraint on the Rust architecture or internal APIs.
 
@@ -169,8 +171,8 @@ Remaining milestones are vertical and contract-tested:
 3. Integrate readiness, hooks, logger chains, restart policy, and shutdown.
 4. Run the authenticated control loop and populate complete typed status.
 5. Apply `immortaldir` plans with bounded concurrency and idempotent recovery.
-6. Pass Go migration contracts, native lifecycle jobs, benchmarks, fuzzing, and
-   packaging gates before any compatibility or production-readiness claim.
+6. Pass native lifecycle jobs, benchmarks, fuzzing, and packaging gates before
+   any production-readiness claim.
 
-Packaging, compatibility policy, release branches, and Go deprecation are
-deliberately outside the skeleton milestone.
+Packaging, release branches, and Go deprecation are deliberately outside the
+skeleton milestone.

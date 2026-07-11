@@ -13,8 +13,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::config::{FileLogConfig, LoggingConfig, OutputConfig};
-use crate::supervisor::SupervisorState;
+use crate::{
+    config::{FileLogConfig, LoggingConfig, OutputConfig},
+    supervisor::SupervisorState,
+};
 
 /// Child output stream attached to one pipeline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -733,9 +735,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_file_and_logger_become_one_combined_process_chain() -> Result<(), Box<dyn Error>> {
-        let parsed = parse_str(include_str!("../tests/fixtures/v1/run.yml"))?;
-        let plan = LoggingPlan::from_config(&parsed.service.logging)?;
+    fn file_and_logger_become_one_combined_process_chain() -> Result<(), Box<dyn Error>> {
+        let config = parse_str(
+            "version: 2\ncommand: [/bin/true]\nlogging:\n  combine_stderr: true\n  stdout:\n    file:\n      file: /tmp/out.log\n    logger: [/usr/bin/logger, -t, service]\n",
+        )?;
+        let plan = LoggingPlan::from_config(&config.logging)?;
         assert_eq!(plan.pipelines.len(), 1);
         let pipeline = plan.pipelines.first().ok_or("pipeline missing")?;
         assert_eq!(pipeline.stream, OutputStream::Combined);
@@ -753,10 +757,10 @@ mod tests {
 
     #[test]
     fn explicit_stderr_creates_independent_pipeline() -> Result<(), Box<dyn Error>> {
-        let parsed = parse_str(
-            "cmd: /bin/true\nlog:\n  file: /tmp/out.log\nstderr:\n  file: /tmp/err.log\n",
+        let config = parse_str(
+            "version: 2\ncommand: [/bin/true]\nlogging:\n  stdout:\n    file:\n      file: /tmp/out.log\n  stderr:\n    file:\n      file: /tmp/err.log\n",
         )?;
-        let plan = LoggingPlan::from_config(&parsed.service.logging)?;
+        let plan = LoggingPlan::from_config(&config.logging)?;
         assert_eq!(plan.pipelines.len(), 2);
         assert_eq!(
             plan.pipelines.first().map(|value| value.stream),
@@ -771,8 +775,10 @@ mod tests {
 
     #[test]
     fn logger_restart_preserves_pipe_and_reports_health() -> Result<(), Box<dyn Error>> {
-        let parsed = parse_str(include_str!("../tests/fixtures/v1/run.yml"))?;
-        let mut runtime = LoggingRuntime::new(LoggingPlan::from_config(&parsed.service.logging)?);
+        let config = parse_str(
+            "version: 2\ncommand: [/bin/true]\nlogging:\n  combine_stderr: true\n  stdout:\n    file:\n      file: /tmp/out.log\n    logger: [/usr/bin/logger, -t, service]\n",
+        )?;
+        let mut runtime = LoggingRuntime::new(LoggingPlan::from_config(&config.logging)?);
         let pipe = runtime.pipe(OutputStream::Combined).ok_or("pipe missing")?;
         assert_eq!(
             runtime.health(OutputStream::Combined),

@@ -1,3 +1,0 @@
-cmd: sleep 30
-log:
-  file: /tmp/foo.log

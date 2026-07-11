@@ -17,9 +17,9 @@ immortalctl -------- authenticated local control --------> immortal
 ```
 
 The Go implementation remains available on `master` and `develop` as a
-requirements and migration reference. Those branches are read-only during the
-Rust rewrite. Compatibility is claimed only after the corresponding contract
-suite passes.
+requirements and historical reference. Those branches are read-only during the
+Rust rewrite. The Rust generation deliberately does not promise drop-in
+configuration or protocol compatibility.
 
 ## Design direction
 
@@ -70,7 +70,11 @@ library also provides safe wrappers for:
 
 These capabilities will be added and tested in `fork`, then consumed only
 through `immortal-core::process`. Immortal will not add direct `libc` calls or a
-second process library to work around the boundary.
+second process library to work around the boundary. The required generic API is
+tracked in [`immortal/fork#16`](https://github.com/immortal/fork/issues/16).
+`fork` owns the safety-sensitive Unix mechanisms; Immortal continues to own the
+broker protocol, lifecycle generations, supervision policy, readiness, logging,
+control, status, and reconciliation.
 
 Dependency planning is deterministic and portable. Enabled services are
 topologically sorted into start waves; services in one wave may start
@@ -97,19 +101,25 @@ Each CLI follows the one-way flow:
 commands -> dispatch -> actions -> start -> main
 ```
 
-## Compatibility policy
+## Compatibility and upgrade policy
 
-The unversioned Go YAML format is schema v1. A strict schema v2 will use argv
-arrays and explicit lifecycle policy. Go CLI spellings remain accepted aliases.
-Intentional behavior changes are documented and tested instead of being hidden.
+The Rust rewrite is a new major generation, not a drop-in replacement for the
+Go release. It accepts one configuration schema only: the strict document with
+`version: 2`. Unversioned Go YAML and every other version fail validation; there
+is no runtime migration or compatibility parser. Operators must deliberately
+rewrite and validate definitions before upgrading.
+
+Selected Go CLI spellings remain aliases where they are unambiguous and safe.
+This convenience does not imply configuration, control-protocol, process, or
+behavioral compatibility. Intentional changes are documented and tested.
 
 | Contract | Rust policy |
 |---|---|
 | Go CLI flags and signal aliases | Preserve as aliases and contract fixtures |
-| Unversioned `.yml` definitions | Parse as v1 and emit migration warnings |
+| Unversioned Go `.yml` definitions | Reject; rewrite explicitly as `version: 2` |
 | Runtime paths and service names | Preserve where safe; validate ownership |
 | PID output files | Preserve as output-only metadata |
-| `pid.follow` / `-f` | Migrate to descriptor tracking plus explicit hooks |
+| Go `pid.follow` configuration | Reject; use explicit descriptor tracking and lifecycle hooks |
 | HTTP-over-Unix-socket control | Replace with a bounded versioned protocol |
 | Go status JSON | Preserve equivalent information in `immortalctl --output json` |
 | Exact internal Go architecture | Do not preserve |
@@ -123,26 +133,12 @@ Two open requests are explicit requirements:
   readiness and start conditions. OS-specific boot ordering remains the init
   system's responsibility.
 
-### Configuration schemas
+### Configuration schema
 
-Schema v1 is the released, unversioned Go format. It remains readable with
-migration warnings. Its `cmd`, `logger`, `require_cmd`, and `post_exit` strings
-have legacy whitespace/shell behavior; normalized output makes those choices
-explicit. `retries: -1` means unbounded restarts, `0` means the initial start
-only, and a positive value is the number of restarts after the initial start.
-Legacy log `size` is interpreted in MiB. Environment scalars are converted to
-strings as the Go parser did. A `pid.follow` path selects descriptor-tracking
-compatibility mode but is never trusted as process identity.
-
-The released Go example files are retained as migration fixtures. Examples
-which used `pid.follow` without an explicit lifecycle hook are intentionally
-rejected: the Rust implementation will not guess how to stop or reload a
-self-daemonized process. Supported examples must round-trip through emitted
-schema v2 without semantic changes.
-
-Schema v2 is strict: unknown fields fail validation, commands are argv arrays,
-durations state their unit, and every nested policy is typed. The complete
-currently implemented shape is:
+The only accepted schema is `version: 2`. The version marker is mandatory,
+unknown fields fail validation, commands are argv arrays, durations state their
+unit, and every nested policy is typed. The complete currently implemented
+shape is:
 
 ```yaml
 version: 2
@@ -238,8 +234,9 @@ replacement, and enforces archive-count and aggregate-byte limits both on open
 and after rotation.
 
 Exactly one service source is accepted. With `--config`, direct command options
-are rejected instead of being silently merged; change the definition or emit
-and edit schema v2. Without `--config`, CLI defaults are resolved first and
+are rejected instead of being silently merged; change the definition directly.
+`--check-config` validates and emits the same canonical schema without modifying
+the input. Without `--config`, CLI defaults are resolved first and
 explicit CLI values override only those defaults. Arguments after the child
 command begins are always child argv, even when they look like Immortal flags.
 
@@ -328,10 +325,11 @@ failure tests, and required CI pass.
 - [x] DevPod CI and FreeBSD cross-check baseline.
 - [x] Document focused-supervisor scope and reject PID 1 ambitions.
 - [x] Record research findings and compatibility decisions.
-- [x] Capture released Go CLI, YAML example, and migration contract fixtures.
-- [ ] Add fork-backed Go process/path behavior contract fixtures.
-- [x] Add resource-bounded schema v1/v2 configuration parsing.
-- [x] Add normalized configuration resolution and migration output.
+- [x] Capture relevant released Go behavior as requirements research.
+- [ ] Add fork-backed process/path lifecycle contract fixtures.
+- [x] Add resource-bounded strict `version: 2` configuration parsing.
+- [x] Reject unversioned Go definitions and every unsupported version.
+- [x] Add normalized configuration resolution and canonical output.
 - [x] Define stable application errors and CLI exit codes.
 - [x] Add safe runtime-directory ownership and permission policy.
 - [x] Add process-generation identifiers independent of PIDs.
@@ -351,7 +349,7 @@ failure tests, and required CI pass.
 - [x] Preserve option-looking child arguments after the command begins.
 - [x] Define configuration versus CLI precedence explicitly.
 - [x] Implement `--check-config` / `-cc` success and failure behavior.
-- [x] Emit equivalent schema v2 without modifying the input file.
+- [x] Emit the canonical supported schema without modifying the input file.
 - [x] Validate command, cwd, environment, PID outputs, logger, hooks, readiness,
   restart policy, and start conditions.
 - [ ] Resolve configured users against the target OS account database.
@@ -387,14 +385,13 @@ failure tests, and required CI pass.
 - [x] Implement `always`, `on-failure`, and `never` restart policies.
 - [x] Implement configurable successful exit codes and `exit_when_done`.
 - [x] Implement exponential backoff with a stable-runtime reset.
-- [x] Implement legacy retry limits plus v2 attempt, burst/window, and elapsed
-  retry limits.
+- [x] Implement attempt, burst/window, and elapsed retry limits.
 - [x] Keep condition failure/backoff separate from service attempts.
 - [ ] Ensure manual start/restart resets Backoff and Failed.
 - [ ] Return valid status in every state, including before the first child.
 - [ ] Gracefully halt on supervisor `SIGTERM` and `SIGINT`.
 
-#### Readiness, hooks, and compatibility
+#### Readiness, hooks, and self-daemonizing applications
 
 - [ ] Support immediate readiness after successful exec.
 - [x] Define and test the bounded `IMMORTAL_READY_FD` token and timeout reader.
@@ -513,12 +510,12 @@ failure tests, and required CI pass.
 - [x] Plan portable start conditions with independent timeout/backoff.
 - [ ] Gate operational starts on broker-executed condition success.
 - [ ] Document Linux, FreeBSD, and macOS boot/network ordering.
-- [ ] Add issue #68 compatibility and regression fixtures.
+- [ ] Add issue #68 readiness and condition regression fixtures.
 
 ### Logging
 
 - [ ] Supervise external logger commands as independent children.
-- [x] Use argv rather than implicit shell strings in v2.
+- [x] Use argv rather than implicit shell strings.
 - [ ] Confirm logger readiness before starting its service.
 - [ ] Preserve stable pipe endpoints across service/logger restarts.
 - [ ] Restart service and logger independently without losing the pipe.
@@ -548,7 +545,7 @@ informational reference points:
 
 | Contract | Median |
 |---|---:|
-| Representative schema-v2 parse | 82,602 ns/op |
+| Representative configuration parse | 82,602 ns/op |
 | Control request encode + decode | 39 ns/op |
 | Typed status encode + decode | 130 ns/op |
 

@@ -7,8 +7,10 @@ use std::{
     time::Duration,
 };
 
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::time::timeout;
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    time::timeout,
+};
 
 /// Exact token a service writes once it is ready to receive work.
 pub const READY_TOKEN: [u8; 6] = *b"READY\n";

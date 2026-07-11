@@ -4,12 +4,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use immortal_core::config::parse_str;
-use immortal_core::control::{
-    GenerationMatch, Operation, Request, Response, ResponseCode, SignalScope,
+use immortal_core::{
+    config::parse_str,
+    control::{GenerationMatch, Operation, Request, Response, ResponseCode, SignalScope},
+    status::StatusSnapshot,
+    supervisor::StateMachine,
 };
-use immortal_core::status::StatusSnapshot;
-use immortal_core::supervisor::StateMachine;
 
 const SAMPLES: usize = 9;
 const CONFIG_ITERATIONS: u64 = 1_000;

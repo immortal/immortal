@@ -11,7 +11,7 @@ use clap::ArgMatches;
 /// Typed operation selected by the command line.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
-    /// Validate a file and emit its normalized schema v2 representation.
+    /// Validate a file and emit the normalized supported schema.
     CheckConfig(PathBuf),
     /// Supervise the service described by a configuration file.
     SuperviseConfig(PathBuf),

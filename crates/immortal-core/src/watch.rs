@@ -8,8 +8,10 @@ use std::{
 };
 
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use tokio::sync::mpsc;
-use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at, sleep_until};
+use tokio::{
+    sync::mpsc,
+    time::{Instant, Interval, MissedTickBehavior, interval_at, sleep_until},
+};
 
 /// Bounded native events retained until the next full reconciliation.
 pub const WATCH_EVENT_CAPACITY: usize = 256;
@@ -215,7 +217,10 @@ mod tests {
             Duration::from_secs(30),
         )?;
         assert_eq!(triggers.next().await.reason, TriggerReason::Initial);
-        fs::write(directory.path().join("api.yml"), b"cmd: /bin/true\n")?;
+        fs::write(
+            directory.path().join("api.yml"),
+            b"version: 2\ncommand: [/bin/true]\n",
+        )?;
 
         let trigger = timeout(Duration::from_secs(2), triggers.next()).await?;
         assert_eq!(trigger.reason, TriggerReason::Filesystem);

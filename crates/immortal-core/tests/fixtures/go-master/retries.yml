@@ -1,3 +1,0 @@
-cmd: sleep 3
-wait: 30
-retries: 3

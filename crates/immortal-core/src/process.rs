@@ -6,8 +6,10 @@
 
 use std::{collections::BTreeMap, ffi::OsString, io};
 
-use crate::config::{EnvironmentMode, ServiceConfig};
-use crate::supervisor::ChildResult;
+use crate::{
+    config::{EnvironmentMode, ServiceConfig},
+    supervisor::ChildResult,
+};
 
 /// Deterministic environment passed to a service or lifecycle hook.
 pub type ProcessEnvironment = BTreeMap<OsString, OsString>;
@@ -109,11 +111,11 @@ mod tests {
     #[test]
     fn configured_values_override_one_explicit_inherited_snapshot()
     -> Result<(), Box<dyn std::error::Error>> {
-        let parsed = parse_str(
+        let config = parse_str(
             "version: 2\ncommand: [service]\nenvironment:\n  KEEP: configured\n  NEW: value\n",
         )?;
         let environment = resolve_environment(
-            &parsed.service,
+            &config,
             [
                 (OsString::from("KEEP"), OsString::from("old")),
                 (OsString::from("BASE"), OsString::from("base")),
@@ -136,14 +138,13 @@ mod tests {
 
     #[test]
     fn clear_mode_discards_every_inherited_entry() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parsed = parse_str("version: 2\ncommand: [service]\n")?;
-        parsed.service.environment_mode = EnvironmentMode::Clear;
-        parsed
-            .service
+        let mut config = parse_str("version: 2\ncommand: [service]\n")?;
+        config.environment_mode = EnvironmentMode::Clear;
+        config
             .environment
             .insert("ONLY".to_owned(), "configured".to_owned());
         let environment = resolve_environment(
-            &parsed.service,
+            &config,
             [(OsString::from("SECRET"), OsString::from("inherited"))],
         );
         assert_eq!(environment.len(), 1);

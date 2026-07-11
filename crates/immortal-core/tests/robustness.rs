@@ -1,6 +1,6 @@
-use immortal_core::config::{MAX_CONFIG_BYTES, parse_bytes};
-use immortal_core::control::{
-    GenerationMatch, Operation, Request, Response, ResponseCode, SignalScope,
+use immortal_core::{
+    config::{MAX_CONFIG_BYTES, parse_bytes},
+    control::{GenerationMatch, Operation, Request, Response, ResponseCode, SignalScope},
 };
 
 const CASES: usize = 4_096;
