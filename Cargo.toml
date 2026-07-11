@@ -19,6 +19,7 @@ homepage = "https://immortal.run"
 publish = false
 
 [workspace.dependencies]
+built = { version = "0.8.1", features = ["git2"] }
 clap = { version = "4.6", features = ["env"] }
 fork = "0.8"
 immortal-core = { path = "crates/immortal-core" }

@@ -10,6 +10,7 @@ use clap::{
 pub fn new() -> Command {
     Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
+        .long_version(immortal_core::build_info::long_version())
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .long_about(
@@ -128,6 +129,35 @@ mod tests {
 
     #[test]
     fn version_is_available() {
+        let short = new()
+            .try_get_matches_from(["immortaldir", "-V"])
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            short,
+            Some(format!(
+                "{} {}\n",
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION")
+            ))
+        );
+
+        let long = new()
+            .try_get_matches_from(["immortaldir", "--version"])
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            long,
+            Some(format!(
+                "{} {}\n",
+                env!("CARGO_PKG_NAME"),
+                immortal_core::build_info::long_version()
+            ))
+        );
+        assert_eq!(
+            new().get_long_version(),
+            Some(immortal_core::build_info::long_version())
+        );
         let result = new().try_get_matches_from(["immortaldir", "--version"]);
         assert_eq!(
             result.err().map(|error| error.kind()),

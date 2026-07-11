@@ -96,6 +96,10 @@ The initial supported platforms are Linux, macOS, and FreeBSD.
 
 ## Dependencies
 
+- Keep every workspace crate on `version.workspace = true`; Immortal binaries
+  and `immortal-core` are released as one versioned product.
+- Generate source revision metadata once in `immortal-core` and use its shared
+  long-version helper in every executable.
 - Declare shared versions in the root `Cargo.toml`.
 - Consume shared dependencies with `dependency.workspace = true`.
 - Add dependencies only for behavior currently being implemented.

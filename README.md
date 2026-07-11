@@ -101,6 +101,11 @@ Each CLI follows the one-way flow:
 commands -> dispatch -> actions -> start -> main
 ```
 
+Every executable's `--version` output includes the shared package version and
+the full source commit, for example `immortal 0.1.0 - 446209f...`. Builds made
+without Git metadata report `unknown` instead of failing. The short `-V` form
+prints only the executable name and package version, such as `immortal 0.1.0`.
+
 ## Compatibility and upgrade policy
 
 The Rust rewrite is a new major generation, not a drop-in replacement for the
@@ -322,6 +327,7 @@ failure tests, and required CI pass.
 
 - [x] Rust workspace and one-way CLI layering.
 - [x] Initial CLI parsers and parser unit tests.
+- [x] Include the source Git commit in every executable's long version output.
 - [x] DevPod CI and FreeBSD cross-check baseline.
 - [x] Document focused-supervisor scope and reject PID 1 ambitions.
 - [x] Record research findings and compatibility decisions.

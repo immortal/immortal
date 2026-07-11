@@ -19,6 +19,9 @@ tokio.workspace = true
 [target.'cfg(unix)'.dependencies]
 fork.workspace = true
 
+[build-dependencies]
+built.workspace = true
+
 [lints]
 workspace = true
 

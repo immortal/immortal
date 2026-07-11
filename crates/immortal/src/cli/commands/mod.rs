@@ -26,6 +26,7 @@ const CONFIG_CONFLICTS: [&str; 11] = [
 pub fn new() -> Command {
     Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
+        .long_version(immortal_core::build_info::long_version())
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .long_about(
@@ -355,6 +356,33 @@ mod tests {
 
     #[test]
     fn version_is_available() {
+        let short = try_get_matches_from(["immortal", "-V"])
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            short,
+            Some(format!(
+                "{} {}\n",
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION")
+            ))
+        );
+
+        let long = try_get_matches_from(["immortal", "--version"])
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            long,
+            Some(format!(
+                "{} {}\n",
+                env!("CARGO_PKG_NAME"),
+                immortal_core::build_info::long_version()
+            ))
+        );
+        assert_eq!(
+            new().get_long_version(),
+            Some(immortal_core::build_info::long_version())
+        );
         for option in ["-v", "-V", "--version"] {
             let result = try_get_matches_from(["immortal", option]);
             assert_eq!(

@@ -3,6 +3,7 @@
 //! This crate deliberately contains only architectural boundaries in the initial
 //! skeleton. Public behavior will be added alongside tests as the rewrite grows.
 
+pub mod build_info;
 pub mod config;
 pub mod control;
 pub mod exit;

@@ -7,6 +7,7 @@ use clap::{Arg, ArgAction, ColorChoice, Command, ValueHint};
 pub fn new() -> Command {
     Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
+        .long_version(immortal_core::build_info::long_version())
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .color(ColorChoice::Auto)
         .arg(
@@ -64,6 +65,41 @@ mod tests {
     #[test]
     fn definition_is_valid() {
         new().debug_assert();
+    }
+
+    #[test]
+    fn version_includes_the_source_revision() {
+        let command = new();
+        assert_eq!(
+            command.get_long_version(),
+            Some(immortal_core::build_info::long_version())
+        );
+
+        let short = new()
+            .try_get_matches_from(["immortallog", "-V"])
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            short,
+            Some(format!(
+                "{} {}\n",
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION")
+            ))
+        );
+
+        let long = command
+            .try_get_matches_from(["immortallog", "--version"])
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(
+            long,
+            Some(format!(
+                "{} {}\n",
+                env!("CARGO_PKG_NAME"),
+                immortal_core::build_info::long_version()
+            ))
+        );
     }
 
     #[test]
