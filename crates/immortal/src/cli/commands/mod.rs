@@ -1,7 +1,9 @@
 //! Clap command and option definitions for `immortal`.
 
+use std::ffi::{OsStr, OsString};
+
 use clap::{
-    Arg, ArgAction, ArgGroup, ColorChoice, Command, ValueHint,
+    Arg, ArgAction, ArgGroup, ArgMatches, ColorChoice, Command, Error, ValueHint,
     builder::styling::{AnsiColor, Effects, Styles},
 };
 
@@ -64,6 +66,87 @@ pub fn new() -> Command {
         .arg(arg_working_dir())
         .arg(arg_wait())
         .arg(arg_command())
+}
+
+/// Parse arguments after translating released multi-character single-dash flags.
+///
+/// Translation stops at the child command so option-looking child arguments
+/// remain byte-for-byte unchanged.
+///
+/// # Errors
+///
+/// Returns Clap's structured syntax or validation error.
+pub fn try_get_matches_from<I, T>(arguments: I) -> Result<ArgMatches, Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let arguments: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
+    let mut normalized = Vec::with_capacity(arguments.len());
+    let mut expects_value = false;
+    let mut command_started = false;
+    for (position, argument) in arguments.into_iter().enumerate() {
+        if position == 0 || command_started {
+            normalized.push(argument);
+            continue;
+        }
+        if expects_value {
+            expects_value = false;
+            normalized.push(argument);
+            continue;
+        }
+        if takes_value(&argument) {
+            expects_value = true;
+        } else if !argument.as_encoded_bytes().starts_with(b"-") {
+            command_started = true;
+        }
+        normalized.push(normalize_legacy_option(argument));
+    }
+    new().try_get_matches_from(normalized)
+}
+
+fn takes_value(argument: &OsStr) -> bool {
+    matches!(
+        argument.to_str(),
+        Some(
+            "-r" | "--retries"
+                | "-p"
+                | "--child-pid"
+                | "-c"
+                | "--config"
+                | "-ctl"
+                | "--control-dir"
+                | "-e"
+                | "--env-dir"
+                | "-f"
+                | "--follow-pid"
+                | "-l"
+                | "--log-file"
+                | "-logger"
+                | "--logger"
+                | "-name"
+                | "--name"
+                | "-P"
+                | "--supervisor-pid"
+                | "-u"
+                | "--user"
+                | "-d"
+                | "--working-dir"
+                | "-w"
+                | "--wait"
+        )
+    )
+}
+
+fn normalize_legacy_option(argument: OsString) -> OsString {
+    match argument.to_str() {
+        Some("-cc") => OsString::from("--check-config"),
+        Some("-ctl") => OsString::from("--control-dir"),
+        Some("-logger") => OsString::from("--logger"),
+        Some("-name") => OsString::from("--name"),
+        Some("-v") => OsString::from("--version"),
+        Some(_) | None => argument,
+    }
 }
 
 fn styles() -> Styles {
@@ -234,7 +317,7 @@ mod tests {
         error::ErrorKind,
     };
 
-    use super::new;
+    use super::{new, try_get_matches_from};
 
     #[test]
     fn command_definition_is_valid() {
@@ -272,8 +355,8 @@ mod tests {
 
     #[test]
     fn version_is_available() {
-        for option in ["-V", "--version"] {
-            let result = new().try_get_matches_from(["immortal", option]);
+        for option in ["-v", "-V", "--version"] {
+            let result = try_get_matches_from(["immortal", option]);
             assert_eq!(
                 result.err().map(|error| error.kind()),
                 Some(ErrorKind::DisplayVersion)
@@ -351,6 +434,37 @@ mod tests {
             invalid.err().map(|error| error.kind()),
             Some(ErrorKind::MissingRequiredArgument)
         );
+    }
+
+    #[test]
+    fn released_multi_character_flags_are_accepted() {
+        let check = try_get_matches_from(["immortal", "-c", "run.yml", "-cc"]);
+        assert!(check.is_ok());
+        let control = try_get_matches_from([
+            "immortal",
+            "-ctl",
+            "/tmp/control",
+            "-logger",
+            "logger -t api",
+            "/bin/true",
+        ]);
+        assert!(control.is_ok());
+        let name = try_get_matches_from(["immortal", "-name", "api", "/bin/true"]);
+        assert!(name.is_ok());
+    }
+
+    #[test]
+    fn legacy_options_after_child_command_are_not_rewritten() {
+        let matches = try_get_matches_from(["immortal", "/bin/echo", "-logger", "child"]);
+        assert!(matches.is_ok());
+        let Some(matches) = matches.ok() else {
+            return;
+        };
+        let command = matches
+            .get_many::<String>("command")
+            .map(|values| values.map(String::as_str).collect::<Vec<_>>())
+            .unwrap_or_default();
+        assert_eq!(command, ["/bin/echo", "-logger", "child"]);
     }
 
     #[test]

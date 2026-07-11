@@ -1,0 +1,11 @@
+cmd: /tmp/stdout
+cwd: /tmp/
+log:
+  file: /tmp/app.log
+  age: 10
+  num: 7
+  size: 1
+wait: 2
+require:
+  - foo
+  - bar

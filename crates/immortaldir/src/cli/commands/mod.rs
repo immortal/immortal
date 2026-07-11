@@ -13,8 +13,9 @@ pub fn new() -> Command {
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .long_about(
-            "Reconcile immortal service definitions from a directory. The Rust rewrite currently \
-             defines this interface but does not yet scan files or manage supervisors.",
+            "Reconcile immortal service definitions from a directory. Dry-run mode performs \
+             bounded scans and can watch for changes; supervisor mutations remain gated until \
+             the process-control runtime is implemented.",
         )
         .after_help(
             "Examples:
@@ -63,7 +64,7 @@ fn arg_scan_interval() -> Arg {
     Arg::new("scan-interval")
         .long("scan-interval")
         .value_name("SECONDS")
-        .default_value("5")
+        .default_value("30")
         .help("Maximum delay between reconciliation scans")
         .value_parser(clap::value_parser!(u64).range(1..))
 }
@@ -80,7 +81,6 @@ fn arg_dry_run() -> Arg {
         .long("dry-run")
         .help("Print the reconciliation plan without changing supervisors")
         .action(ArgAction::SetTrue)
-        .requires("once")
 }
 
 #[cfg(test)]
@@ -177,11 +177,8 @@ mod tests {
     }
 
     #[test]
-    fn dry_run_requires_one_shot_mode() {
+    fn dry_run_can_watch_without_mutation() {
         let result = new().try_get_matches_from(["immortaldir", "--dry-run", "/tmp/services"]);
-        assert_eq!(
-            result.err().map(|error| error.kind()),
-            Some(ErrorKind::MissingRequiredArgument)
-        );
+        assert!(result.is_ok());
     }
 }

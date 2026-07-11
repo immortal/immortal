@@ -1,3 +1,3 @@
-fn main() {
-    immortaldir::cli::start();
+fn main() -> std::process::ExitCode {
+    immortaldir::cli::start()
 }

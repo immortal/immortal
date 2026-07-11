@@ -5,7 +5,14 @@
 
 pub mod config;
 pub mod control;
+pub mod exit;
 pub mod logging;
 pub mod platform;
 pub mod process;
+pub mod readiness;
+pub mod reconcile;
+#[cfg(unix)]
+pub mod runtime;
+pub mod status;
 pub mod supervisor;
+pub mod watch;

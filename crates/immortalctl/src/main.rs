@@ -1,3 +1,3 @@
-fn main() {
-    immortalctl::cli::start();
+fn main() -> std::process::ExitCode {
+    immortalctl::cli::start()
 }

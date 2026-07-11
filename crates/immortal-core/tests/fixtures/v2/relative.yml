@@ -1,0 +1,17 @@
+version: 2
+command: [./bin/api, --foreground]
+working_directory: .
+environment_mode: clear
+environment:
+  PATH: /usr/local/bin:/usr/bin:/bin
+start_condition:
+  command: [./checks/network-ready]
+  timeout_seconds: 5
+logging:
+  stdout:
+    file:
+      file: logs/api.log
+    logger: [./loggers/tag, api]
+pid_files:
+  supervisor: run/supervisor.pid
+  main: run/main.pid

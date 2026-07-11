@@ -2,9 +2,11 @@
 
 ## Purpose
 
-The first milestone is a reliable project foundation, not a partial supervisor.
-The workspace establishes ownership boundaries, development tooling, and a
-consistent CLI architecture before any runtime contract becomes public.
+The current branch is a contract-first rebuild, not a production-ready partial
+supervisor. Configuration, lifecycle policy, control, logging, status, and
+reconciliation can be implemented and tested before the process executor, but
+the binaries must fail closed until the complete fork-backed lifecycle passes
+native contract tests.
 
 The implementation should remain understandable without sacrificing operating
 system correctness. New behavior must arrive with tests and documentation in the
@@ -51,12 +53,10 @@ The layers have strict responsibilities:
 - `start` initializes diagnostics and connects the layers.
 - `main` translates the final result into process output and an exit status.
 
-The initial skeleton stops after command parsing because there are no real
-actions yet. `immortal` uses the Go options as a requirements inventory while
-adopting idiomatic Clap names, validation, value hints, and conventions. Backward
-compatibility is secondary to a safer and clearer interface. Parsing an option
-does not imply its behavior is implemented. New behavior must arrive through
-typed dispatch and actions with contract tests.
+`immortal` uses the Go options as a requirements inventory while adopting typed
+Clap names, validation, value hints, and conventions. Parsing an option does not
+imply its process behavior is implemented. New behavior arrives through typed
+dispatch and actions with contract tests.
 
 ## Core boundaries
 
@@ -66,11 +66,78 @@ typed dispatch and actions with contract tests.
 - `supervisor`: desired state, retries, transitions, and shutdown coordination.
 - `logging`: stdout/stderr routing, files, rotation, and external sinks.
 - `control`: local protocol types plus client and server responsibilities.
+- `status`: bounded transport-independent supervisor observations.
+- `readiness`: the `IMMORTAL_READY_FD` token and deadline contract.
+- `runtime`: safe runtime-root and supervisor discovery policy.
+- `reconcile`: stable definition snapshots and desired-state planning.
+- `watch`: native notification hints plus periodic reconciliation triggers.
 - `platform`: the smallest possible Linux, macOS, and FreeBSD adaptations.
 
 These modules are boundaries rather than finalized APIs. Types remain private
 until more than one consumer needs them, and `immortal-core` stays unpublished
 while the design is evolving.
+
+## Process broker architecture
+
+Calling `fork()` after Tokio or any other thread exists is not an acceptable
+restart strategy. The child inherits process-wide locks and library state from
+threads which no longer exist, and only async-signal-safe operations are valid
+before `exec`. A dedicated single-threaded process broker avoids that hazard.
+
+```text
+invoking process
+  -> checked daemonization and startup channel
+      -> supervisor (still single-threaded)
+          -> create bounded broker channel
+          -> fork one process broker
+          -> only now create the Tokio runtime
+
+Tokio supervisor <---- bounded typed IPC ----> single-threaded broker
+                                               -> service process groups
+                                               -> logger chains
+                                               -> readiness/exec-status pipes
+                                               -> bounded hooks
+                                               -> wait/reap events
+```
+
+The broker remains the direct parent and sole reaper of every managed child. It
+assigns no durable meaning to a PID: every request and event includes the
+supervisor's monotonic generation identity. The supervisor owns policy and
+desired state; the broker owns operating-system process handles and performs
+only requested mechanisms.
+
+Before each broker fork, argv, environment, user/group transition, working
+directory, descriptor actions, and process-group identity are fully validated
+and materialized. The post-fork child performs only reviewed async-signal-safe
+descriptor, credential, group, and `execve` operations. An exec-status channel
+distinguishes exec failure from a successfully executed program before the
+generation becomes Running.
+
+Broker IPC is bounded, versioned, and private. EOF or supervisor death makes the
+broker stop and reap owned groups before exiting. Broker death places the
+supervisor in a terminal failure state; it must never spawn an untracked
+replacement path. Daemon startup is reported to the invoking process only after
+the broker, service lock, runtime directory, and control socket are ready.
+
+### Required `immortal/fork` contract
+
+The canonical sibling `fork` crate must provide safe, portable primitives for:
+
+- typed nonblocking `Exited`, `Signalled`, `Stopped`, and `Continued` events,
+  with child PID and `EINTR` handling;
+- positive PID/process-group newtypes, `setpgid`, and explicit process versus
+  process-group signal delivery without accepting ambiguous raw negative PIDs;
+- CLOEXEC pipe/socket pairs, owned descriptors, reviewed `dup2`/close actions,
+  and an explicit inherited-descriptor allow-list;
+- checked double-fork/session setup which does not exit the invoking process
+  before a bounded startup result is received;
+- a precomputed exec specification whose post-fork path performs no allocation
+  or non-async-signal-safe Rust cleanup.
+
+Upstream acceptance tests must cover exit, signal, stop/continue, exec failure,
+group cleanup, descriptor inheritance, startup failure, `EINTR`, and child
+draining on Linux, macOS, and FreeBSD. Immortal will not reproduce these calls
+with direct `libc` or add a second process library.
 
 ## Engineering rules
 
@@ -95,14 +162,15 @@ while the design is evolving.
 
 ## Incremental development
 
-Future milestones should be vertical and independently useful:
+Remaining milestones are vertical and contract-tested:
 
-1. Define and validate one minimal service configuration.
-2. Run one foreground child and report its exit accurately.
-3. Add an explicit supervisor state machine and controlled restart behavior.
-4. Introduce local status/control communication and then `immortalctl` actions.
-5. Add logging, process identity, PID following, and other advanced behavior.
-6. Implement directory reconciliation and native platform verification.
+1. Extend `immortal/fork` and prove the broker primitives on all three targets.
+2. Run one foreground process group and report exec/exit/signal accurately.
+3. Integrate readiness, hooks, logger chains, restart policy, and shutdown.
+4. Run the authenticated control loop and populate complete typed status.
+5. Apply `immortaldir` plans with bounded concurrency and idempotent recovery.
+6. Pass Go migration contracts, native lifecycle jobs, benchmarks, fuzzing, and
+   packaging gates before any compatibility or production-readiness claim.
 
 Packaging, compatibility policy, release branches, and Go deprecation are
 deliberately outside the skeleton milestone.

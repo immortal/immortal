@@ -1,0 +1,15 @@
+cmd: /tmp/stdout
+cwd: /tmp/
+env:
+  DEBUG: 1
+  ENVIRONMENT: playground
+pid:
+  parent: /tmp/parent.pid
+  child: /tmp/child.pid
+stderr:
+  file: /tmp/app-err.log
+  age: 10
+  num: 7
+  size: 1
+logger: logger -t test
+wait: 1

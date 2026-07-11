@@ -1,0 +1,18 @@
+[package]
+name = "immortallog"
+description = "Replaceable file logging compatibility adapter for immortal"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap.workspace = true
+immortal-core.workspace = true
+
+[lints]
+workspace = true
