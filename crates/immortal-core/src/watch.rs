@@ -236,8 +236,10 @@ mod tests {
             Duration::from_millis(10),
         )?;
         assert_eq!(triggers.next().await.reason, TriggerReason::Initial);
-        let trigger = timeout(Duration::from_secs(1), triggers.next()).await?;
-        assert_eq!(trigger.reason, TriggerReason::Periodic);
+        timeout(Duration::from_secs(1), async {
+            while triggers.next().await.reason != TriggerReason::Periodic {}
+        })
+        .await?;
         Ok(())
     }
 

@@ -1403,7 +1403,11 @@ pub async fn run_control_server(
                         let _isolated_error = serve_control_connection(connection, sender).await;
                     });
                 }
-                Err(AcceptError::Timeout | AcceptError::PermissionDenied { .. }) => {}
+                Err(
+                    AcceptError::Timeout
+                    | AcceptError::PeerCredentials(_)
+                    | AcceptError::PermissionDenied { .. },
+                ) => {}
                 Err(error) => return Err(error),
             },
             Some(_completed) = tasks.join_next(), if !tasks.is_empty() => {}
@@ -1448,8 +1452,10 @@ async fn serve_control_connection(
 #[cfg(unix)]
 #[derive(Debug)]
 pub enum AcceptError {
-    /// Listener or peer-credential operation failed.
+    /// Listener operation failed.
     Io(io::Error),
+    /// The accepted peer disconnected before its credentials were available.
+    PeerCredentials(io::Error),
     /// No client slot or connection arrived before the deadline.
     Timeout,
     /// Semaphore was closed during shutdown.
@@ -1466,6 +1472,9 @@ impl Display for AcceptError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "unable to accept control connection: {error}"),
+            Self::PeerCredentials(error) => {
+                write!(formatter, "unable to authenticate control peer: {error}")
+            }
             Self::Timeout => formatter.write_str("control accept deadline exceeded"),
             Self::ShuttingDown => formatter.write_str("control listener is shutting down"),
             Self::PermissionDenied { uid } => {
@@ -1479,7 +1488,7 @@ impl Display for AcceptError {
 impl Error for AcceptError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Io(error) => Some(error),
+            Self::Io(error) | Self::PeerCredentials(error) => Some(error),
             Self::Timeout | Self::ShuttingDown | Self::PermissionDenied { .. } => None,
         }
     }
@@ -1620,7 +1629,7 @@ impl ControlListener {
         let (stream, _) = timeout(idle_timeout, self.listener.accept())
             .await
             .map_err(|_| AcceptError::Timeout)??;
-        let credentials = stream.peer_cred()?;
+        let credentials = stream.peer_cred().map_err(AcceptError::PeerCredentials)?;
         let peer = PeerCredentials {
             uid: credentials.uid(),
             gid: credentials.gid(),
