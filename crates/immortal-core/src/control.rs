@@ -2311,7 +2311,7 @@ mod tests {
         let owner_uid = listener.owner_uid();
         let (sender, mut commands) = mpsc::channel(1);
         let (shutdown_sender, shutdown) = watch::channel(false);
-        let server = tokio::spawn(run_control_server(Arc::clone(&listener), sender, shutdown));
+        let mut server = tokio::spawn(run_control_server(Arc::clone(&listener), sender, shutdown));
 
         let mut malformed = UnixStream::connect(&path).await?;
         malformed.write_all(b"bad").await?;
@@ -2331,7 +2331,12 @@ mod tests {
             Ok::<Response, Box<dyn Error>>(response)
         };
         let dispatch = async {
-            let command = commands.recv().await.ok_or("control command missing")?;
+            let command = tokio::select! {
+                command = commands.recv() => command.ok_or("control command missing")?,
+                result = &mut server => {
+                    return Err(format!("control server stopped before dispatch: {result:?}").into());
+                }
+            };
             assert_eq!(command.request(), &request);
             assert!(command.peer().uid == 0 || command.peer().uid == owner_uid);
             command
