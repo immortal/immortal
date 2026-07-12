@@ -7,6 +7,7 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -26,6 +27,7 @@ use tokio::{net::UnixStream, runtime::Builder};
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 const DIAGNOSTIC_LIMIT: u64 = 16 * 1024;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+static RUNTIME_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let binary = Path::new(env!("CARGO_BIN_EXE_immortal"));
@@ -825,10 +827,10 @@ impl RuntimeDirectory {
     }
 
     fn new_named(service_name: &str) -> std::io::Result<Self> {
-        let root = std::env::temp_dir().join(format!(
-            "immortal-controlled-{service_name}-{}-{}",
+        let root = Path::new("/tmp").join(format!(
+            "immortal-{}-{}",
             std::process::id(),
-            Instant::now().elapsed().as_nanos()
+            RUNTIME_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root)?;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o755))?;
