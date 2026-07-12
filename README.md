@@ -839,6 +839,11 @@ median fork-spawn-wait and fork-spawn-signal-wait latency on all three operating
 systems. The lifecycle harness includes command materialization, broker IPC,
 process creation, acknowledgement, and terminal reaping; it uses hard event and
 cleanup deadlines and retains the active process-group identity until reaping.
+Each native job uploads a 90-day `lifecycle-benchmark-*` artifact containing the
+two medians plus commit, workflow-run, runner, kernel, and pinned-toolchain
+metadata. Rerunning the same workflow attempt creates a distinct artifact, so
+reviewers can retain every valid sample without copying values from console
+logs.
 The checklist remains pending until multiple remote runs establish reviewed
 per-platform budgets rather than thresholds inferred from one Linux machine.
 

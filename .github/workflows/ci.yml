@@ -38,8 +38,10 @@ jobs:
       matrix:
         include:
           - name: Linux
+            artifact: linux
             os: ubuntu-24.04
           - name: macOS
+            artifact: macos
             os: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -47,7 +49,26 @@ jobs:
         with:
           toolchain: 1.97.0
       - run: cargo test --workspace --locked
-      - run: cargo bench -p immortal-core --bench lifecycle_contracts --locked
+      - name: Record lifecycle benchmark
+        env:
+          REPORT_DIRECTORY: benchmark-results/${{ matrix.artifact }}
+        run: |
+          mkdir -p "$REPORT_DIRECTORY"
+          printf 'commit\t%s\nrun_id\t%s\nrun_attempt\t%s\nrunner\t%s\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNNER_OS" \
+            > "$REPORT_DIRECTORY/metadata.txt"
+          uname -a >> "$REPORT_DIRECTORY/metadata.txt"
+          rustc --version --verbose >> "$REPORT_DIRECTORY/metadata.txt"
+          cargo bench -p immortal-core --bench lifecycle_contracts --locked \
+            > "$REPORT_DIRECTORY/lifecycle.txt"
+          sed -n '1,20p' "$REPORT_DIRECTORY/lifecycle.txt"
+      - name: Upload lifecycle benchmark evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lifecycle-benchmark-${{ matrix.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: benchmark-results/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 90
       - run: cargo run --quiet -p immortal -- --version
       - run: cargo run --quiet -p immortalctl -- --version
       - run: cargo run --quiet -p immortaldir -- --version
@@ -76,7 +97,7 @@ jobs:
           release: "14.3"
           usesh: true
           sync: rsync
-          copyback: false
+          copyback: true
           prepare: |
             pkg install -y rustup-init
             rustup-init --profile minimal --default-toolchain 1.97.0 -y
@@ -84,7 +105,20 @@ jobs:
             export PATH="$HOME/.cargo/bin:$PATH"
             rustc --version --verbose
             cargo test --workspace --locked
-            cargo bench -p immortal-core --bench lifecycle_contracts --locked
+            mkdir -p benchmark-results/freebsd
+            printf 'commit\t${{ github.sha }}\nrun_id\t${{ github.run_id }}\nrun_attempt\t${{ github.run_attempt }}\nrunner\tFreeBSD 14.3\n' > benchmark-results/freebsd/metadata.txt
+            uname -a >> benchmark-results/freebsd/metadata.txt
+            rustc --version --verbose >> benchmark-results/freebsd/metadata.txt
+            cargo bench -p immortal-core --bench lifecycle_contracts --locked > benchmark-results/freebsd/lifecycle.txt
+            sed -n '1,20p' benchmark-results/freebsd/lifecycle.txt
             cargo run --quiet -p immortal -- --version
             cargo run --quiet -p immortalctl -- --version
             cargo run --quiet -p immortaldir -- --version
+            cargo clean
+      - name: Upload lifecycle benchmark evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lifecycle-benchmark-freebsd-${{ github.run_id }}-${{ github.run_attempt }}
+          path: benchmark-results/freebsd
+          if-no-files-found: error
+          retention-days: 90
