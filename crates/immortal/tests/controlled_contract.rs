@@ -2,7 +2,8 @@
 
 use std::{
     error::Error,
-    fs,
+    fs::{self, File},
+    io::Read,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
@@ -23,6 +24,7 @@ use immortal_core::{
 use tokio::{net::UnixStream, runtime::Builder};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+const DIAGNOSTIC_LIMIT: u64 = 16 * 1024;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -568,6 +570,10 @@ fn spawn_immortal(
     config: &ConfigFile,
     service: &Path,
 ) -> Result<Child, Box<dyn Error>> {
+    let root = service
+        .parent()
+        .ok_or("test service directory has no runtime root")?;
+    let diagnostics = File::create(root.join("immortal.stderr"))?;
     Ok(Command::new(binary)
         .args([
             "--foreground",
@@ -578,7 +584,7 @@ fn spawn_immortal(
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(diagnostics))
         .spawn()?)
 }
 
@@ -806,6 +812,7 @@ fn assert_status(
 }
 
 struct RuntimeDirectory {
+    diagnostics: PathBuf,
     name: String,
     root: PathBuf,
     service: PathBuf,
@@ -827,7 +834,9 @@ impl RuntimeDirectory {
         fs::set_permissions(&root, fs::Permissions::from_mode(0o755))?;
         let service = root.join(service_name);
         let socket = service.join("immortal.sock");
+        let diagnostics = root.join("immortal.stderr");
         Ok(Self {
+            diagnostics,
             name: service_name.to_owned(),
             root,
             service,
@@ -859,11 +868,21 @@ impl RuntimeDirectory {
             }
             thread::sleep(POLL_INTERVAL);
         }
+        let diagnostics = read_diagnostics(&self.diagnostics)
+            .unwrap_or_else(|error| format!("diagnostics unavailable: {error}"));
         Err(std::io::Error::new(
             std::io::ErrorKind::TimedOut,
-            "control socket was not created",
+            format!("control socket was not created; supervisor diagnostics: {diagnostics}"),
         ))
     }
+}
+
+fn read_diagnostics(path: &Path) -> std::io::Result<String> {
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(DIAGNOSTIC_LIMIT)
+        .read_to_end(&mut bytes)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 impl Drop for RuntimeDirectory {
