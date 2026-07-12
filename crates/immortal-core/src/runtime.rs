@@ -10,12 +10,56 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use nix::unistd::{Uid, User};
+
 /// Control socket filename inside each service runtime directory.
 pub const CONTROL_SOCKET_NAME: &str = "immortal.sock";
 /// Advisory supervisor lock held for the complete runtime-directory lifetime.
 pub const SUPERVISOR_LOCK_NAME: &str = "supervisor.lock";
 /// Maximum safely discoverable services in one runtime root.
 pub const MAX_RUNTIME_SERVICES: usize = 4096;
+
+#[cfg(target_os = "linux")]
+const SYSTEM_RUNTIME_ROOT: &str = "/run/immortal";
+#[cfg(any(target_os = "freebsd", target_os = "macos"))]
+const SYSTEM_RUNTIME_ROOT: &str = "/var/run/immortal";
+
+/// Return the platform system-supervisor discovery root.
+#[must_use]
+pub fn system_runtime_root() -> &'static Path {
+    Path::new(SYSTEM_RUNTIME_ROOT)
+}
+
+/// Resolve the effective user's portable supervisor discovery root.
+///
+/// An absolute nonempty `HOME` is preferred. If it is unavailable, the
+/// effective account database entry supplies the home directory. Discovery
+/// separately verifies that the resulting root belongs to the effective UID.
+///
+/// # Errors
+///
+/// Returns an error when neither source provides an absolute home directory.
+pub fn user_runtime_root() -> io::Result<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+        let home = PathBuf::from(home);
+        if home.is_absolute() {
+            return Ok(home.join(".immortal"));
+        }
+    }
+    let user = User::from_uid(Uid::effective())?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "effective user has no account database entry",
+        )
+    })?;
+    if !user.dir.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "effective user home directory is not absolute",
+        ));
+    }
+    Ok(user.dir.join(".immortal"))
+}
 
 /// Exclusive ownership of one service runtime directory.
 #[derive(Debug)]
@@ -282,7 +326,33 @@ impl Error for RuntimeRootError {
 /// Returns an error when the runtime root is noncanonical, a symlink, not a
 /// directory, writable by group/other, or cannot be read.
 pub fn discover(root: &Path) -> Result<DiscoveryResult, RuntimeRootError> {
+    discover_with_owner(root, None)
+}
+
+/// Discover endpoints below a root owned by the effective user.
+///
+/// This adds a root-owner check to [`discover`], preventing a forged `HOME`
+/// from redirecting automatic user discovery into another account's tree.
+///
+/// # Errors
+///
+/// Returns the same errors as [`discover`] and rejects roots whose owner does
+/// not match the effective UID.
+pub fn discover_user(root: &Path) -> Result<DiscoveryResult, RuntimeRootError> {
+    discover_with_owner(root, Some(Uid::effective().as_raw()))
+}
+
+fn discover_with_owner(
+    root: &Path,
+    expected_owner: Option<u32>,
+) -> Result<DiscoveryResult, RuntimeRootError> {
     let root_metadata = validate_root(root).map_err(RuntimeRootError)?;
+    if expected_owner.is_some_and(|owner| root_metadata.uid() != owner) {
+        return Err(RuntimeRootError(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "user runtime root owner differs from the effective user",
+        )));
+    }
     let entries = fs::read_dir(root).map_err(RuntimeRootError)?;
     let mut result = DiscoveryResult::default();
 
@@ -470,7 +540,7 @@ mod tests {
     use std::{
         error::Error,
         fs, io,
-        os::unix::fs::{PermissionsExt, symlink},
+        os::unix::fs::{MetadataExt, PermissionsExt, symlink},
         os::unix::net::UnixListener as StdUnixListener,
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
@@ -480,10 +550,19 @@ mod tests {
 
     use super::{
         CONTROL_SOCKET_NAME, DiscoveryProblemKind, RuntimeOwner, SUPERVISOR_LOCK_NAME, discover,
-        supervisor_is_active,
+        discover_user, discover_with_owner, supervisor_is_active, system_runtime_root,
     };
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn platform_system_root_is_absolute_and_native() {
+        assert!(system_runtime_root().is_absolute());
+        #[cfg(target_os = "linux")]
+        assert_eq!(system_runtime_root(), Path::new("/run/immortal"));
+        #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+        assert_eq!(system_runtime_root(), Path::new("/var/run/immortal"));
+    }
 
     struct TestDirectory(PathBuf);
 
@@ -567,6 +646,18 @@ mod tests {
         let root = TestDirectory::new()?;
         fs::set_permissions(root.path(), fs::Permissions::from_mode(0o777))?;
         assert!(discover(root.path()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn user_discovery_accepts_only_the_effective_users_root() -> Result<(), Box<dyn Error>> {
+        let root = TestDirectory::new()?;
+        let result = discover_user(root.path())?;
+        assert!(result.services.is_empty());
+        assert!(result.problems.is_empty());
+        let owner = fs::symlink_metadata(root.path())?.uid();
+        let mismatched = owner.checked_add(1).unwrap_or(owner.saturating_sub(1));
+        assert!(discover_with_owner(root.path(), Some(mismatched)).is_err());
         Ok(())
     }
 

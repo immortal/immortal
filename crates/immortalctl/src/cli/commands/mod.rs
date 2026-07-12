@@ -25,13 +25,15 @@ pub fn new() -> Command {
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .long_about(
             "Inspect immortal supervisors and request lifecycle or signal operations. With no \
-             subcommand, status for all safely discoverable services is selected. Lifecycle \
-             commands wait for typed completion by default; --no-wait returns after acceptance.",
+             subcommand, status for safely discoverable system and user services is selected. \
+             Lifecycle commands wait for typed completion by default; --no-wait returns after \
+             acceptance.",
         )
         .after_help(
             "Examples:
   immortalctl
   immortalctl status api
+  immortalctl --runtime-scope user status api
   immortalctl restart api
   immortalctl stop --all
   immortalctl signal usr2 worker",
@@ -42,6 +44,7 @@ pub fn new() -> Command {
         .disable_help_subcommand(true)
         .arg(arg_help())
         .arg(arg_runtime_dir())
+        .arg(arg_runtime_scope())
         .arg(arg_output())
         .arg(arg_color())
         .arg(arg_no_header())
@@ -169,8 +172,18 @@ fn arg_runtime_dir() -> Arg {
         .value_name("DIR")
         .value_hint(ValueHint::DirPath)
         .env("IMMORTAL_SDIR")
-        .default_value("/var/run/immortal")
-        .help("Discover system supervisors under DIR")
+        .help("Discover supervisors only under DIR instead of automatic system/user roots")
+        .conflicts_with("runtime-scope")
+        .global(true)
+}
+
+fn arg_runtime_scope() -> Arg {
+    Arg::new("runtime-scope")
+        .long("runtime-scope")
+        .value_name("SCOPE")
+        .value_parser(["all", "system", "user"])
+        .default_value("all")
+        .help("Limit automatic discovery to system or user supervisors")
         .global(true)
 }
 
@@ -376,6 +389,21 @@ mod tests {
         };
 
         assert!(matches.subcommand().is_none());
+    }
+
+    #[test]
+    fn runtime_root_override_conflicts_with_automatic_scope() {
+        let result = new().try_get_matches_from([
+            "immortalctl",
+            "--runtime-dir",
+            "/tmp/immortal",
+            "--runtime-scope",
+            "user",
+        ]);
+        assert_eq!(
+            result.err().map(|error| error.kind()),
+            Some(ErrorKind::ArgumentConflict)
+        );
     }
 
     #[test]

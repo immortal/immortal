@@ -28,8 +28,132 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 fn main() -> Result<(), Box<dyn Error>> {
     let binary = Path::new(env!("CARGO_BIN_EXE_immortal"));
     prove_controlled_lifecycle(binary)?;
+    prove_descriptor_tracking_lifecycle(binary)?;
     prove_explicit_exit_leaves_the_child(binary)?;
+    prove_initializing_is_published_until_loggers_are_ready(binary)?;
+    prove_direct_logger_permission_denial(binary)?;
     prove_logger_retry_exhaustion_and_recovery(binary)
+}
+
+fn prove_descriptor_tracking_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let runtime = RuntimeDirectory::new()?;
+    let stop = runtime.root().join("stop");
+    let stop_allowed = runtime.root().join("stop-allowed");
+    let reload = runtime.root().join("reload");
+    let reload_allowed = runtime.root().join("reload-allowed");
+    let config = ConfigFile::new(
+        "descriptor-tracking",
+        &format!(
+            "version: 2\ncommand:\n  - /bin/sh\n  - -c\n  - |\n      rm -f \"$STOP\"\n      (while [ ! -e \"$STOP\" ]; do /bin/sleep 0.02; done) &\n      exit 0\nenvironment:\n  STOP: '{}'\n  STOP_ALLOWED: '{}'\n  RELOAD: '{}'\n  RELOAD_ALLOWED: '{}'\nrestart:\n  policy: never\nprocess_mode: descriptor-tracking\ndescriptor_tracking:\n  stop:\n    command: [/bin/sh, -c, 'if test -e \"$STOP_ALLOWED\"; then : > \"$STOP\"; else /bin/sleep 3; fi']\n    timeout_seconds: 2\n  reload:\n    command: [/bin/sh, -c, 'test -e \"$RELOAD_ALLOWED\" && : > \"$RELOAD\"']\n    timeout_seconds: 2\n  lifetime_timeout_seconds: 2\n",
+            path_str(&stop)?,
+            path_str(&stop_allowed)?,
+            path_str(&reload)?,
+            path_str(&reload_allowed)?,
+        ),
+    )?;
+    let supervisor = ChildGuard::new(spawn_immortal(binary, &config, runtime.service())?);
+    runtime.wait_for_socket(COMMAND_TIMEOUT)?;
+    let generation = wait_for_state(runtime.socket(), ServiceState::Ready, None, COMMAND_TIMEOUT)?;
+    wait_for_no_main_pid(runtime.socket(), COMMAND_TIMEOUT)?;
+    reject_descriptor_direct_control(runtime.socket(), runtime.service_name(), generation)?;
+
+    let failed_reload = request(
+        runtime.socket(),
+        &Request {
+            operation: Operation::Signal,
+            service: runtime.service_name().to_owned(),
+            expected_generation: GenerationMatch::Exact(generation),
+            scope: SignalScope::Main,
+            signal: Some(Signal::Hangup),
+        },
+    )?;
+    if failed_reload.code != ResponseCode::Internal {
+        return Err("failed descriptor reload hook was not reported".into());
+    }
+    require_state(&status(runtime.socket())?, ServiceState::Ready)?;
+    fs::write(&reload_allowed, [])?;
+    let reload_response = request(
+        runtime.socket(),
+        &Request {
+            operation: Operation::Signal,
+            service: runtime.service_name().to_owned(),
+            expected_generation: GenerationMatch::Exact(generation),
+            scope: SignalScope::Main,
+            signal: Some(Signal::Hangup),
+        },
+    )?;
+    require_ok(&reload_response, "descriptor reload hook")?;
+    wait_for_file(&reload, COMMAND_TIMEOUT)?;
+
+    let failed_stop = lifecycle_request(
+        runtime.socket(),
+        runtime.service_name(),
+        Operation::Stop,
+        generation,
+    )?;
+    if failed_stop.code != ResponseCode::Internal {
+        return Err("failed descriptor stop hook was not reported".into());
+    }
+    require_state(&status(runtime.socket())?, ServiceState::Ready)?;
+    fs::write(&stop_allowed, [])?;
+    let stop_response = lifecycle_request(
+        runtime.socket(),
+        runtime.service_name(),
+        Operation::Stop,
+        generation,
+    )?;
+    require_ok(&stop_response, "descriptor stop hook")?;
+    wait_for_state(runtime.socket(), ServiceState::Down, None, COMMAND_TIMEOUT)?;
+    let snapshot = status(runtime.socket())?
+        .status
+        .ok_or("descriptor Down status payload is absent")?;
+    if snapshot.main_pid.is_some()
+        || snapshot.last_result != Some(immortal_core::status::LastResult::LifetimeClosed)
+    {
+        return Err(format!("invalid descriptor Down status: {snapshot:?}").into());
+    }
+
+    let halt = request(
+        runtime.socket(),
+        &Request {
+            operation: Operation::Halt,
+            service: runtime.service_name().to_owned(),
+            expected_generation: GenerationMatch::NoChild,
+            scope: SignalScope::Main,
+            signal: None,
+        },
+    )?;
+    require_ok(&halt, "descriptor supervisor halt")?;
+    assert_status(
+        supervisor.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "descriptor supervisor completion",
+    )
+}
+
+fn reject_descriptor_direct_control(
+    socket: &Path,
+    service: &str,
+    generation: Generation,
+) -> Result<(), Box<dyn Error>> {
+    let raw_signal = request(
+        socket,
+        &Request {
+            operation: Operation::Signal,
+            service: service.to_owned(),
+            expected_generation: GenerationMatch::Exact(generation),
+            scope: SignalScope::Group,
+            signal: Some(Signal::User1),
+        },
+    )?;
+    if raw_signal.code != ResponseCode::Invalid {
+        return Err("descriptor-tracked raw signal was not rejected".into());
+    }
+    let detach = lifecycle_request(socket, service, Operation::Exit, generation)?;
+    if detach.code != ResponseCode::Invalid {
+        return Err("descriptor-tracked supervisor detach was not rejected".into());
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -348,6 +472,97 @@ fn prove_logger_retry_exhaustion_and_recovery(binary: &Path) -> Result<(), Box<d
     )
 }
 
+fn prove_direct_logger_permission_denial(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let runtime = RuntimeDirectory::new_named("logger-permission")?;
+    let logger = runtime.root().join("logger");
+    let service_marker = runtime.root().join("service-started");
+    fs::write(&logger, "#!/bin/sh\nexec /bin/cat\n")?;
+    fs::set_permissions(&logger, fs::Permissions::from_mode(0o600))?;
+    let config = ConfigFile::new(
+        "logger-permission",
+        &format!(
+            "version: 2\ncommand: [/bin/sh, -c, ': > \"$SERVICE_MARKER\"']\nenvironment:\n  SERVICE_MARKER: '{}'\nlogging:\n  combine_stderr: true\n  restart:\n    max_retries: 0\n  stdout:\n    logger: ['{}']\n",
+            path_str(&service_marker)?,
+            path_str(&logger)?
+        ),
+    )?;
+    let supervisor = ChildGuard::new(spawn_immortal(binary, &config, runtime.service())?);
+    runtime.wait_for_socket(COMMAND_TIMEOUT)?;
+    wait_for_state(
+        runtime.socket(),
+        ServiceState::Failed,
+        None,
+        COMMAND_TIMEOUT,
+    )?;
+    let failed = status(runtime.socket())?;
+    if failed.status.as_ref().is_none_or(|status| {
+        status.logger != LoggerStatus::Failed || status.starts != 0 || service_marker.exists()
+    }) {
+        return Err("direct logger permission denial was not published".into());
+    }
+    let halt = request(
+        runtime.socket(),
+        &Request {
+            operation: Operation::Halt,
+            service: runtime.service_name().to_owned(),
+            expected_generation: GenerationMatch::NoChild,
+            scope: SignalScope::Main,
+            signal: None,
+        },
+    )?;
+    require_ok(&halt, "permission-denied logger halt")?;
+    assert_status(
+        supervisor.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "permission-denied logger supervisor halt",
+    )
+}
+
+fn prove_initializing_is_published_until_loggers_are_ready(
+    binary: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let runtime = RuntimeDirectory::new_named("initializing")?;
+    let logger = runtime.root().join("delayed-logger");
+    let config = ConfigFile::new(
+        "initializing",
+        &format!(
+            "version: 2\ncommand: [/bin/sleep, '30']\nlogging:\n  combine_stderr: true\n  restart:\n    backoff:\n      initial_seconds: 2\n      max_seconds: 2\n      multiplier: 1\n      jitter_percent: 0\n      reset_after_seconds: 60\n  stdout:\n    logger: ['{}']\n",
+            path_str(&logger)?
+        ),
+    )?;
+    let supervisor = ChildGuard::new(spawn_immortal(binary, &config, runtime.service())?);
+    runtime.wait_for_socket(COMMAND_TIMEOUT)?;
+    let initializing = wait_for_state_and_logger(
+        runtime.socket(),
+        ServiceState::Initializing,
+        LoggerStatus::Backoff,
+        COMMAND_TIMEOUT,
+    )?;
+    if initializing
+        .status
+        .as_ref()
+        .is_none_or(|status| status.main_pid.is_some() || status.starts != 0)
+    {
+        return Err("initializing status claimed a service generation".into());
+    }
+
+    fs::write(&logger, "#!/bin/sh\nexec /bin/cat\n")?;
+    fs::set_permissions(&logger, fs::Permissions::from_mode(0o755))?;
+    let generation = wait_for_state(runtime.socket(), ServiceState::Ready, None, COMMAND_TIMEOUT)?;
+    let halt = lifecycle_request(
+        runtime.socket(),
+        runtime.service_name(),
+        Operation::Halt,
+        generation,
+    )?;
+    require_ok(&halt, "initializing supervisor halt")?;
+    assert_status(
+        supervisor.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "initializing supervisor completion",
+    )
+}
+
 fn spawn_immortal(
     binary: &Path,
     config: &ConfigFile,
@@ -461,6 +676,48 @@ fn wait_for_state(
             return Err(format!(
                 "service did not reach {expected:?}; last status was {snapshot:?}, generation {:?}",
                 response.generation
+            )
+            .into());
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn wait_for_no_main_pid(socket: &Path, timeout: Duration) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let response = status(socket)?;
+        require_ok(&response, "descriptor status")?;
+        if response
+            .status
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.main_pid.is_none())
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("descriptor launcher PID remained published".into());
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn wait_for_state_and_logger(
+    socket: &Path,
+    expected_state: ServiceState,
+    expected_logger: LoggerStatus,
+    timeout: Duration,
+) -> Result<Response, Box<dyn Error>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let response = status(socket)?;
+        let snapshot = response.status.as_ref().ok_or("status payload is absent")?;
+        if snapshot.state == expected_state && snapshot.logger == expected_logger {
+            return Ok(response);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "service did not reach {expected_state:?}/{expected_logger:?}; last status was {snapshot:?}"
             )
             .into());
         }

@@ -1,24 +1,27 @@
 //! One fresh process proving the pre-Tokio broker and its IPC lifecycle.
 
+#[path = "support/broker_guard.rs"]
+mod broker_guard;
+
 use std::{
     error::Error,
     ffi::OsString,
     fs, io,
     path::{Path, PathBuf},
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use immortal_core::{
     process::{
         BrokerSignalScope, BrokerTaskId, ChildEvent, ProcessBrokerEvent, ProcessCommand,
-        ProcessCredentials, ProcessEnvironment, ProcessId, ProcessSignal, ReadinessFailure,
-        SignalTarget, SpawnFailure, SpawnStage, SupplementaryGroups, reap_any_event, signal,
-        start_process_broker,
+        ProcessCredentials, ProcessEnvironment, ProcessSignal, ReadinessFailure, SpawnFailure,
+        SpawnStage, SupplementaryGroups, start_process_broker,
     },
     supervisor::Generation,
 };
 use tokio::runtime::Builder;
+
+use crate::broker_guard::BrokerGuard;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 const EVENT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -27,7 +30,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(5);
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
     let endpoint = start_process_broker()?;
-    let mut broker = BrokerGuard::new(endpoint.process());
+    let mut broker = BrokerGuard::new(endpoint.process(), EVENT_TIMEOUT, POLL_INTERVAL);
     let runtime = Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -220,6 +223,69 @@ fn main() -> Result<(), Box<dyn Error>> {
         let event = tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??;
         assert_child_signaled(event, stopped)?;
 
+        let tracked = generation(9)?;
+        let mut command = ProcessCommand::new("/bin/sh");
+        command
+            .argument("-c")
+            .argument("(/bin/sleep 0.15) & exit 0");
+        client
+            .spawn_with_lifetime(tracked, command, STARTUP_TIMEOUT, None)
+            .await?;
+        assert_started(client.next_event().await?, tracked)?;
+        let exited = tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??;
+        assert_child_exit(exited, tracked, 0)?;
+        match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await?? {
+            ProcessBrokerEvent::LifetimeClosed { generation } if generation == tracked => {}
+            event => {
+                return Err(io::Error::other(format!(
+                    "expected inherited lifetime closure, received {event:?}"
+                ))
+                .into());
+            }
+        }
+        client
+            .signal(tracked, BrokerSignalScope::Group, ProcessSignal::Terminate)
+            .await?;
+        match client.next_event().await? {
+            ProcessBrokerEvent::SignalFailed { generation, .. } if generation == tracked => {}
+            event => {
+                return Err(io::Error::other(format!(
+                    "expected closed lifetime to reject raw signals, received {event:?}"
+                ))
+                .into());
+            }
+        }
+
+        let invalid_lifetime = generation(10)?;
+        let mut command = ProcessCommand::new("/bin/sh");
+        command
+            .argument("-c")
+            .argument("eval \"printf x >&$IMMORTAL_LIFETIME_FD\"; exec /bin/sleep 5");
+        client
+            .spawn_with_lifetime(invalid_lifetime, command, STARTUP_TIMEOUT, None)
+            .await?;
+        assert_started(client.next_event().await?, invalid_lifetime)?;
+        match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await?? {
+            ProcessBrokerEvent::LifetimeFailed { generation } if generation == invalid_lifetime => {
+            }
+            event => {
+                return Err(io::Error::other(format!(
+                    "expected lifetime protocol failure, received {event:?}"
+                ))
+                .into());
+            }
+        }
+        client
+            .signal(
+                invalid_lifetime,
+                BrokerSignalScope::Group,
+                ProcessSignal::Kill,
+            )
+            .await?;
+        assert_signal_delivered(client.next_event().await?, invalid_lifetime)?;
+        let event = tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??;
+        assert_child_signaled(event, invalid_lifetime)?;
+
         let task = BrokerTaskId::new(1).ok_or("invalid auxiliary task ID")?;
         client
             .spawn_task(task, ProcessCommand::new("/bin/true"), STARTUP_TIMEOUT)
@@ -297,7 +363,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     })?;
     drop(runtime);
-    broker.wait(EVENT_TIMEOUT)?;
+    broker.wait()?;
     Ok(())
 }
 
@@ -411,71 +477,6 @@ fn assert_broker_exec_failure(
         event => Err(
             io::Error::other(format!("expected broker exec failure, received {event:?}")).into(),
         ),
-    }
-}
-
-struct BrokerGuard {
-    process: ProcessId,
-    reaped: bool,
-}
-
-impl BrokerGuard {
-    const fn new(process: ProcessId) -> Self {
-        Self {
-            process,
-            reaped: false,
-        }
-    }
-
-    fn wait(&mut self, timeout: Duration) -> io::Result<()> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            match reap_any_event() {
-                Ok(Some(event)) if event.pid() == self.process && event.is_terminal() => {
-                    self.reaped = true;
-                    return match event {
-                        ChildEvent::Exited { code: 0, .. } => Ok(()),
-                        _ => Err(io::Error::other(format!(
-                            "broker terminated unsuccessfully: {event:?}"
-                        ))),
-                    };
-                }
-                Ok(Some(event)) => {
-                    return Err(io::Error::other(format!(
-                        "supervisor reaped unexpected child event {event:?}"
-                    )));
-                }
-                Ok(None) => {}
-                Err(error) => return Err(error),
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "timed out waiting for process broker",
-                ));
-            }
-            thread::sleep(POLL_INTERVAL);
-        }
-    }
-}
-
-impl Drop for BrokerGuard {
-    fn drop(&mut self) {
-        if self.reaped {
-            return;
-        }
-        let _ = signal(SignalTarget::Process(self.process), ProcessSignal::Kill);
-        let deadline = Instant::now() + EVENT_TIMEOUT;
-        while Instant::now() < deadline {
-            match reap_any_event() {
-                Ok(Some(event)) if event.pid() == self.process && event.is_terminal() => {
-                    self.reaped = true;
-                    return;
-                }
-                Ok(Some(_) | None) => thread::sleep(POLL_INTERVAL),
-                Err(_) => return,
-            }
-        }
     }
 }
 

@@ -19,7 +19,7 @@ use super::{
 
 const MAGIC: [u8; 4] = *b"IMBR";
 pub(super) const HEADER_BYTES: usize = 10;
-const VERSION: u8 = 4;
+const VERSION: u8 = 5;
 const REQUEST_SPAWN: u8 = 1;
 const REQUEST_SIGNAL: u8 = 2;
 const REQUEST_SHUTDOWN: u8 = 3;
@@ -39,6 +39,8 @@ const EVENT_DETACH_FAILED: u8 = 10;
 const EVENT_GENERATION_READY: u8 = 11;
 const EVENT_READINESS_FAILED: u8 = 12;
 const EVENT_LOGGER_INPUTS_CLOSED: u8 = 13;
+const EVENT_LIFETIME_CLOSED: u8 = 14;
+const EVENT_LIFETIME_FAILED: u8 = 15;
 const CHILD_EXITED: u8 = 1;
 const CHILD_SIGNALED: u8 = 2;
 const CHILD_STOPPED: u8 = 3;
@@ -74,6 +76,7 @@ pub(super) enum BrokerRequest {
         command: ProcessCommand,
         startup_timeout: Duration,
         readiness_timeout: Option<Duration>,
+        lifetime_tracking: bool,
     },
     Signal {
         generation: Generation,
@@ -101,10 +104,12 @@ impl BrokerRequest {
                 command,
                 startup_timeout,
                 readiness_timeout,
+                lifetime_tracking,
             } => {
                 encode_generation(*generation, &mut payload);
                 encode_timeout(*startup_timeout, &mut payload)?;
                 encode_optional_timeout(*readiness_timeout, &mut payload)?;
+                payload.push(u8::from(*lifetime_tracking));
                 encode_command(command, &mut payload)?;
                 REQUEST_SPAWN
             }
@@ -150,6 +155,7 @@ impl BrokerRequest {
                 generation: decode_generation(&mut cursor)?,
                 startup_timeout: decode_timeout(&mut cursor)?,
                 readiness_timeout: decode_optional_timeout(&mut cursor)?,
+                lifetime_tracking: decode_boolean(&mut cursor)?,
                 command: decode_command(&mut cursor)?,
             },
             REQUEST_SIGNAL => {
@@ -226,6 +232,12 @@ pub(super) enum BrokerEvent {
     ReadinessFailed {
         generation: Generation,
         failure: BrokerReadinessFailure,
+    },
+    LifetimeClosed {
+        generation: Generation,
+    },
+    LifetimeFailed {
+        generation: Generation,
     },
     LoggerInputsClosed,
     ShutdownComplete,
@@ -304,6 +316,14 @@ impl BrokerEvent {
                 });
                 EVENT_READINESS_FAILED
             }
+            Self::LifetimeClosed { generation } => {
+                encode_generation(*generation, &mut payload);
+                EVENT_LIFETIME_CLOSED
+            }
+            Self::LifetimeFailed { generation } => {
+                encode_generation(*generation, &mut payload);
+                EVENT_LIFETIME_FAILED
+            }
             Self::LoggerInputsClosed => EVENT_LOGGER_INPUTS_CLOSED,
             Self::ShutdownComplete => EVENT_SHUTDOWN_COMPLETE,
             Self::ShutdownFailed { os_error } => {
@@ -360,6 +380,12 @@ impl BrokerEvent {
                     _ => return Err(BrokerProtocolError::InvalidReadinessFailure),
                 },
             },
+            EVENT_LIFETIME_CLOSED => Self::LifetimeClosed {
+                generation: decode_generation(&mut cursor)?,
+            },
+            EVENT_LIFETIME_FAILED => Self::LifetimeFailed {
+                generation: decode_generation(&mut cursor)?,
+            },
             EVENT_LOGGER_INPUTS_CLOSED => Self::LoggerInputsClosed,
             EVENT_SHUTDOWN_COMPLETE => Self::ShutdownComplete,
             EVENT_SHUTDOWN_FAILED => Self::ShutdownFailed {
@@ -395,6 +421,7 @@ pub(super) enum BrokerProtocolError {
     InvalidSpawnFailure,
     InvalidChildEvent,
     InvalidOptionalValue,
+    InvalidBoolean,
     InvalidReadinessFailure,
     DuplicateEnvironmentKey,
     InvalidCredentials,
@@ -453,6 +480,7 @@ impl Display for BrokerProtocolError {
             Self::InvalidSpawnFailure => formatter.write_str("invalid broker spawn failure"),
             Self::InvalidChildEvent => formatter.write_str("invalid broker child event"),
             Self::InvalidOptionalValue => formatter.write_str("invalid broker optional value flag"),
+            Self::InvalidBoolean => formatter.write_str("invalid broker boolean value"),
             Self::InvalidReadinessFailure => {
                 formatter.write_str("invalid broker readiness failure")
             }
@@ -467,6 +495,14 @@ impl Display for BrokerProtocolError {
                 "broker command has {actual} supplementary groups; limit is {MAX_SUPPLEMENTARY_GROUPS}"
             ),
         }
+    }
+}
+
+fn decode_boolean(cursor: &mut Cursor<'_>) -> Result<bool, BrokerProtocolError> {
+    match cursor.byte()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(BrokerProtocolError::InvalidBoolean),
     }
 }
 
@@ -981,6 +1017,7 @@ mod tests {
             command,
             startup_timeout: Duration::from_millis(1_500),
             readiness_timeout: Some(Duration::from_secs(2)),
+            lifetime_tracking: true,
         };
         assert_eq!(BrokerRequest::decode(&request.encode()?)?, request);
         Ok(())
@@ -1070,6 +1107,8 @@ mod tests {
                 generation,
                 failure: BrokerReadinessFailure::Timeout,
             },
+            BrokerEvent::LifetimeClosed { generation },
+            BrokerEvent::LifetimeFailed { generation },
             BrokerEvent::LoggerInputsClosed,
             BrokerEvent::ShutdownComplete,
             BrokerEvent::ShutdownFailed { os_error: None },
@@ -1139,6 +1178,7 @@ mod tests {
             command: ProcessCommand::new("/bin/true"),
             startup_timeout: Duration::from_secs(1),
             readiness_timeout: None,
+            lifetime_tracking: false,
         };
         let mut frame = spawn.encode()?;
         frame
@@ -1155,6 +1195,7 @@ mod tests {
             command: ProcessCommand::new("/bin/true"),
             startup_timeout: Duration::from_secs(1),
             readiness_timeout: Some(Duration::from_secs(1)),
+            lifetime_tracking: false,
         };
         let mut frame = spawn.encode()?;
         frame
@@ -1164,6 +1205,15 @@ mod tests {
         assert_eq!(
             BrokerRequest::decode(&frame),
             Err(BrokerProtocolError::InvalidReadinessTimeout)
+        );
+
+        let mut frame = spawn.encode()?;
+        *frame
+            .get_mut(34)
+            .ok_or_else(|| io::Error::other("missing lifetime-tracking byte"))? = 2;
+        assert_eq!(
+            BrokerRequest::decode(&frame),
+            Err(BrokerProtocolError::InvalidBoolean)
         );
         Ok(())
     }

@@ -1,0 +1,5 @@
+version: 2
+command: [/bin/true]
+restart:
+  policy: on-failure
+process_mode: foreground

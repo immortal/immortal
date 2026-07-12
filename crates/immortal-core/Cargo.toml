@@ -31,6 +31,10 @@ workspace = true
 name = "core_contracts"
 harness = false
 
+[[bench]]
+name = "lifecycle_contracts"
+harness = false
+
 [[test]]
 name = "process_contract"
 path = "tests/process_contract.rs"
@@ -42,8 +46,18 @@ path = "tests/broker_contract.rs"
 harness = false
 
 [[test]]
+name = "broker_supervisor_loss_contract"
+path = "tests/broker_supervisor_loss_contract.rs"
+harness = false
+
+[[test]]
 name = "executor_contract"
 path = "tests/executor_contract.rs"
+harness = false
+
+[[test]]
+name = "descriptor_lifetime_contract"
+path = "tests/descriptor_lifetime_contract.rs"
 harness = false
 
 [[test]]

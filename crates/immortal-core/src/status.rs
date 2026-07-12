@@ -196,6 +196,10 @@ pub enum LastResult {
     SpawnFailed,
     /// Child failed to become ready before its deadline.
     ReadinessTimeout,
+    /// A descriptor-tracked generation ended when its lifetime capability closed.
+    LifetimeClosed,
+    /// A descriptor-tracked generation violated its lifetime capability contract.
+    LifetimeFailed,
 }
 
 impl LastResult {
@@ -207,6 +211,8 @@ impl LastResult {
             Self::Signaled(signal) => format!("signal:{signal}"),
             Self::SpawnFailed => "spawn-failed".to_owned(),
             Self::ReadinessTimeout => "readiness-timeout".to_owned(),
+            Self::LifetimeClosed => "lifetime-closed".to_owned(),
+            Self::LifetimeFailed => "lifetime-failed".to_owned(),
         }
     }
 
@@ -216,6 +222,8 @@ impl LastResult {
             Self::Signaled(value) => (2, value),
             Self::SpawnFailed => (3, 0),
             Self::ReadinessTimeout => (4, 0),
+            Self::LifetimeClosed => (5, 0),
+            Self::LifetimeFailed => (6, 0),
         }
     }
 
@@ -225,6 +233,8 @@ impl LastResult {
             2 => Some(Self::Signaled(value)),
             3 if value == 0 => Some(Self::SpawnFailed),
             4 if value == 0 => Some(Self::ReadinessTimeout),
+            5 if value == 0 => Some(Self::LifetimeClosed),
+            6 if value == 0 => Some(Self::LifetimeFailed),
             _ => None,
         }
     }
@@ -233,7 +243,7 @@ impl LastResult {
 /// Complete bounded status published by one supervisor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatusSnapshot {
-    /// Supervisor process ID when runtime initialization has completed.
+    /// Supervisor process ID after the status-serving runtime has started.
     pub supervisor_pid: Option<u32>,
     /// Owned main-child PID, never an adopted PID-file value.
     pub main_pid: Option<u32>,
@@ -346,7 +356,7 @@ pub(crate) const fn desired_state_from_code(code: u8) -> Option<DesiredState> {
 
 #[cfg(test)]
 mod tests {
-    use super::ServiceState;
+    use super::{LastResult, ServiceState};
 
     #[test]
     fn service_state_codes_are_unique_and_round_trip() {
@@ -373,5 +383,23 @@ mod tests {
         }
         assert_eq!(ServiceState::from_code(0), None);
         assert_eq!(ServiceState::from_code(13), None);
+    }
+
+    #[test]
+    fn last_result_codes_round_trip_and_reject_invalid_payloads() {
+        for result in [
+            LastResult::Exited(7),
+            LastResult::Signaled(9),
+            LastResult::SpawnFailed,
+            LastResult::ReadinessTimeout,
+            LastResult::LifetimeClosed,
+            LastResult::LifetimeFailed,
+        ] {
+            let (kind, value) = result.code();
+            assert_eq!(LastResult::from_code(kind, value), Some(result));
+        }
+        assert_eq!(LastResult::from_code(5, 1), None);
+        assert_eq!(LastResult::from_code(6, 1), None);
+        assert_eq!(LastResult::from_code(7, 0), None);
     }
 }

@@ -1,10 +1,16 @@
 //! Dedicated single-threaded child-process broker and supervisor endpoint.
+//!
+//! The broker exclusively owns direct children, process groups, descriptor
+//! endpoints, waits, and supervisor-loss cleanup. Descriptor generations retain
+//! logical ownership after their launcher exits; EOF and the pre-runtime stop
+//! plan are handled without adopting an application PID.
 
 use std::{
     collections::BTreeMap,
     error::Error,
     fmt::{self, Display, Formatter},
     io,
+    net::Shutdown,
     os::fd::OwnedFd,
     os::unix::net::UnixStream as StdUnixStream,
     process,
@@ -41,6 +47,9 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const SHUTDOWN_KILL_WAIT: Duration = Duration::from_secs(3);
 const READINESS_DESCRIPTOR: i32 = 3;
 const READINESS_EVENT_CAPACITY: usize = 32;
+const LIFETIME_DESCRIPTOR: i32 = 4;
+const LIFETIME_EVENT_CAPACITY: usize = 32;
+const MAX_LIFETIME_CLEANUP_TIMEOUT: Duration = Duration::from_hours(24);
 const AUXILIARY_GENERATION_BASE: u64 = 1_u64 << 63;
 
 /// Bounded address of one logger stage inside the broker-owned graph.
@@ -282,6 +291,43 @@ pub enum ReadinessFailure {
     InvalidToken,
 }
 
+/// Broker-owned fallback needed to stop a descriptor generation after supervisor loss.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BrokerLifetimePlan {
+    stop: ProcessCommand,
+    stop_timeout: Duration,
+    lifetime_timeout: Duration,
+}
+
+impl BrokerLifetimePlan {
+    /// Build the materialized stop command and its two hard deadlines.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidInput` when either deadline is zero or exceeds 24 hours.
+    pub fn new(
+        stop: ProcessCommand,
+        stop_timeout: Duration,
+        lifetime_timeout: Duration,
+    ) -> io::Result<Self> {
+        if stop_timeout.is_zero()
+            || lifetime_timeout.is_zero()
+            || stop_timeout > MAX_LIFETIME_CLEANUP_TIMEOUT
+            || lifetime_timeout > MAX_LIFETIME_CLEANUP_TIMEOUT
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "broker lifetime cleanup deadlines must be greater than zero and at most 24 hours",
+            ));
+        }
+        Ok(Self {
+            stop,
+            stop_timeout,
+            lifetime_timeout,
+        })
+    }
+}
+
 /// Typed observation delivered by the broker to its supervisor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProcessBrokerEvent {
@@ -344,6 +390,12 @@ pub enum ProcessBrokerEvent {
     ReadinessFailed {
         generation: Generation,
         failure: ReadinessFailure,
+    },
+    LifetimeClosed {
+        generation: Generation,
+    },
+    LifetimeFailed {
+        generation: Generation,
     },
     LoggerInputsClosed,
     ShutdownComplete,
@@ -429,6 +481,8 @@ impl From<BrokerEvent> for ProcessBrokerEvent {
                     BrokerReadinessFailure::InvalidToken => ReadinessFailure::InvalidToken,
                 },
             },
+            BrokerEvent::LifetimeClosed { generation } => Self::LifetimeClosed { generation },
+            BrokerEvent::LifetimeFailed { generation } => Self::LifetimeFailed { generation },
             BrokerEvent::LoggerInputsClosed => Self::LoggerInputsClosed,
             BrokerEvent::ShutdownComplete => Self::ShutdownComplete,
             BrokerEvent::ShutdownFailed { os_error } => Self::ShutdownFailed { os_error },
@@ -577,6 +631,7 @@ impl ProcessBrokerClient {
                 command,
                 startup_timeout,
                 readiness_timeout: None,
+                lifetime_tracking: false,
             },
         )
         .await
@@ -605,6 +660,37 @@ impl ProcessBrokerClient {
                 command,
                 startup_timeout,
                 readiness_timeout: Some(readiness_timeout),
+                lifetime_tracking: false,
+            },
+        )
+        .await
+    }
+
+    /// Request one generation whose logical lifetime is represented by descriptor 4.
+    ///
+    /// The child receives `IMMORTAL_LIFETIME_FD=4`. The broker retains the
+    /// peer endpoint and reports closure only after every inherited child
+    /// endpoint has closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a bounded protocol or socket error. Completion arrives through
+    /// [`Self::next_event`].
+    pub async fn spawn_with_lifetime(
+        &mut self,
+        generation: Generation,
+        command: ProcessCommand,
+        startup_timeout: Duration,
+        readiness_timeout: Option<Duration>,
+    ) -> Result<(), ProcessBrokerError> {
+        write_request(
+            &mut self.writer,
+            &BrokerRequest::Spawn {
+                generation,
+                command,
+                startup_timeout,
+                readiness_timeout,
+                lifetime_tracking: true,
             },
         )
         .await
@@ -632,6 +718,7 @@ impl ProcessBrokerClient {
                 command,
                 startup_timeout,
                 readiness_timeout: None,
+                lifetime_tracking: false,
             },
         )
         .await
@@ -793,11 +880,26 @@ impl Drop for ProcessBrokerClient {
 ///
 /// Returns a socket-pair or fork error in the supervisor process.
 pub fn start_process_broker() -> io::Result<ProcessBrokerEndpoint> {
-    start_process_broker_with_logging(BrokerLoggingPlan::default())
+    start_process_broker_with_logging(BrokerLoggingPlan::default(), None)
+}
+
+/// Fork a process broker with one pre-runtime descriptor-cleanup contract.
+///
+/// The broker invokes this stop command only if its supervisor connection is
+/// lost while a descriptor-tracked generation remains active.
+///
+/// # Errors
+///
+/// Returns a socket-pair or fork error in the supervisor process.
+pub fn start_process_broker_with_lifetime(
+    lifetime: BrokerLifetimePlan,
+) -> io::Result<ProcessBrokerEndpoint> {
+    start_process_broker_with_logging(BrokerLoggingPlan::default(), Some(lifetime))
 }
 
 pub(crate) fn start_process_broker_with_logging(
     logging: BrokerLoggingPlan,
+    lifetime_cleanup: Option<BrokerLifetimePlan>,
 ) -> io::Result<ProcessBrokerEndpoint> {
     let pair = fork::socket_pair_cloexec()?;
     let (supervisor_socket, broker_socket) = pair.into_parts();
@@ -811,7 +913,7 @@ pub(crate) fn start_process_broker_with_logging(
         }
         fork::ProcessFork::Child => {
             drop(supervisor_socket);
-            let exit = match run_broker_process(broker_socket, logging) {
+            let exit = match run_broker_process(broker_socket, logging, lifetime_cleanup) {
                 Ok(()) => 0,
                 Err(error) => {
                     eprintln!("immortal process broker: {error}");
@@ -826,6 +928,7 @@ pub(crate) fn start_process_broker_with_logging(
 fn run_broker_process(
     socket: OwnedFd,
     logging: BrokerLoggingPlan,
+    lifetime_cleanup: Option<BrokerLifetimePlan>,
 ) -> Result<(), ProcessBrokerError> {
     let logging = BrokerLogging::prepare(logging)?;
     let stream = StdUnixStream::from(socket);
@@ -836,17 +939,24 @@ fn run_broker_process(
         .build()?;
     runtime.block_on(async move {
         let stream = UnixStream::from_std(stream)?;
-        run_broker(stream, logging).await
+        run_broker(stream, logging, lifetime_cleanup).await
     })
 }
 
-async fn run_broker(stream: UnixStream, logging: BrokerLogging) -> Result<(), ProcessBrokerError> {
+async fn run_broker(
+    stream: UnixStream,
+    logging: BrokerLogging,
+    lifetime_cleanup: Option<BrokerLifetimePlan>,
+) -> Result<(), ProcessBrokerError> {
     let (mut reader, mut writer) = stream.into_split();
     let mut child_signal = listen_for_signal(SignalKind::child())?;
     let (readiness_sender, mut readiness_events) = mpsc::channel(READINESS_EVENT_CAPACITY);
+    let (lifetime_sender, mut lifetime_events) = mpsc::channel(LIFETIME_EVENT_CAPACITY);
     let mut state = BrokerRuntimeState {
         generations: BTreeMap::new(),
         logging,
+        lifetime_cleanup,
+        lifetime_sender,
         processes: BTreeMap::new(),
         readiness_sender,
     };
@@ -863,6 +973,8 @@ async fn run_broker(stream: UnixStream, logging: BrokerLogging) -> Result<(), Pr
                             &mut state.generations,
                             &mut state.processes,
                             &mut state.logging,
+                            &mut lifetime_events,
+                            state.lifetime_cleanup.take(),
                         ).await?;
                         return Ok(());
                     }
@@ -897,13 +1009,31 @@ async fn run_broker(stream: UnixStream, logging: BrokerLogging) -> Result<(), Pr
                     write_event(&mut writer, &event).await?;
                 }
             }
+            Some(observation) = lifetime_events.recv() => {
+                handle_lifetime_observation(observation, &mut writer, &mut state.generations).await?;
+            }
         }
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LifetimeState {
+    Foreground,
+    Tracking,
+    Closed,
+    Failed,
+}
+
+struct BrokerGeneration {
+    child: Option<SpawnedProcess>,
+    lifetime: LifetimeState,
+}
+
 struct BrokerRuntimeState {
-    generations: BTreeMap<Generation, SpawnedProcess>,
+    generations: BTreeMap<Generation, BrokerGeneration>,
     logging: BrokerLogging,
+    lifetime_cleanup: Option<BrokerLifetimePlan>,
+    lifetime_sender: mpsc::Sender<LifetimeObservation>,
     processes: BTreeMap<ProcessId, Generation>,
     readiness_sender: mpsc::Sender<ReadinessObservation>,
 }
@@ -923,15 +1053,18 @@ where
             command,
             startup_timeout,
             readiness_timeout,
+            lifetime_tracking,
         } => {
             handle_spawn(
                 generation,
                 command,
                 startup_timeout,
                 readiness_timeout,
+                lifetime_tracking,
                 writer,
                 BrokerSpawnState {
                     generations: &mut state.generations,
+                    lifetime_sender: &state.lifetime_sender,
                     processes: &mut state.processes,
                     readiness_sender: &state.readiness_sender,
                     logging: &state.logging,
@@ -1001,8 +1134,14 @@ struct ReadinessObservation {
     result: Result<(), ReadinessError>,
 }
 
+struct LifetimeObservation {
+    generation: Generation,
+    result: io::Result<()>,
+}
+
 struct BrokerSpawnState<'a> {
-    generations: &'a mut BTreeMap<Generation, SpawnedProcess>,
+    generations: &'a mut BTreeMap<Generation, BrokerGeneration>,
+    lifetime_sender: &'a mpsc::Sender<LifetimeObservation>,
     processes: &'a mut BTreeMap<ProcessId, Generation>,
     readiness_sender: &'a mpsc::Sender<ReadinessObservation>,
     logging: &'a BrokerLogging,
@@ -1019,13 +1158,17 @@ fn readiness_failure(error: &ReadinessError) -> BrokerReadinessFailure {
 async fn handle_detach<W>(
     generation: Generation,
     writer: &mut W,
-    generations: &mut BTreeMap<Generation, SpawnedProcess>,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, Generation>,
 ) -> Result<(), ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
 {
-    let Some(child) = generations.get(&generation).copied() else {
+    let Some(child) = generations
+        .get(&generation)
+        .filter(|entry| entry.lifetime == LifetimeState::Foreground)
+        .and_then(|entry| entry.child)
+    else {
         return write_event(writer, &BrokerEvent::DetachFailed { generation }).await;
     };
     if generations.len() != 1
@@ -1044,6 +1187,7 @@ async fn handle_spawn<W>(
     command: ProcessCommand,
     startup_timeout: Duration,
     readiness_timeout: Option<Duration>,
+    lifetime_tracking: bool,
     writer: &mut W,
     state: BrokerSpawnState<'_>,
 ) -> Result<(), ProcessBrokerError>
@@ -1063,22 +1207,23 @@ where
         )
         .await;
     }
-    let prepared = match prepare_service_spawn(command, readiness_timeout, state.logging) {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            return write_event(
-                writer,
-                &BrokerEvent::SpawnFailed {
-                    generation,
-                    stage: SpawnStage::DescriptorMapping,
-                    failure: SpawnFailure::OperatingSystem,
-                    os_error: error.raw_os_error(),
-                    cleanup_pending: None,
-                },
-            )
-            .await;
-        }
-    };
+    let prepared =
+        match prepare_service_spawn(command, readiness_timeout, lifetime_tracking, state.logging) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                return write_event(
+                    writer,
+                    &BrokerEvent::SpawnFailed {
+                        generation,
+                        stage: SpawnStage::DescriptorMapping,
+                        failure: SpawnFailure::OperatingSystem,
+                        os_error: error.raw_os_error(),
+                        cleanup_pending: None,
+                    },
+                )
+                .await;
+            }
+        };
     let spawn_result = if prepared.descriptors.is_empty() {
         spawn(prepared.command, startup_timeout)
     } else {
@@ -1095,8 +1240,27 @@ where
                         .await;
                 });
             }
+            if let Some(mut broker_stream) = prepared.lifetime_waiter {
+                let sender = state.lifetime_sender.clone();
+                tokio::spawn(async move {
+                    let result = wait_for_lifetime_close(&mut broker_stream).await;
+                    let _ = sender
+                        .send(LifetimeObservation { generation, result })
+                        .await;
+                });
+            }
             state.processes.insert(child.process(), generation);
-            state.generations.insert(generation, child);
+            state.generations.insert(
+                generation,
+                BrokerGeneration {
+                    child: Some(child),
+                    lifetime: if lifetime_tracking {
+                        LifetimeState::Tracking
+                    } else {
+                        LifetimeState::Foreground
+                    },
+                },
+            );
             write_event(
                 writer,
                 &BrokerEvent::Started {
@@ -1129,12 +1293,14 @@ where
 struct PreparedServiceSpawn {
     command: ProcessCommand,
     descriptors: Vec<ProcessDescriptor>,
+    lifetime_waiter: Option<UnixStream>,
     readiness_waiter: Option<(UnixStream, Duration)>,
 }
 
 fn prepare_service_spawn(
     command: ProcessCommand,
     readiness_timeout: Option<Duration>,
+    lifetime_tracking: bool,
     logging: &BrokerLogging,
 ) -> io::Result<PreparedServiceSpawn> {
     let mut descriptors = logging.service_descriptors()?;
@@ -1150,9 +1316,12 @@ fn prepare_service_spawn(
             (command, Some((broker_stream, timeout)))
         }
     };
+    let (command, lifetime_waiter) =
+        prepare_lifetime(command, lifetime_tracking, &mut descriptors)?;
     Ok(PreparedServiceSpawn {
         command,
         descriptors,
+        lifetime_waiter,
         readiness_waiter,
     })
 }
@@ -1162,7 +1331,7 @@ async fn handle_logger_spawn<W>(
     logger: BrokerLoggerId,
     startup_timeout: Duration,
     writer: &mut W,
-    generations: &mut BTreeMap<Generation, SpawnedProcess>,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, Generation>,
     logging: &mut BrokerLogging,
 ) -> Result<(), ProcessBrokerError>
@@ -1202,7 +1371,13 @@ where
         Ok(child) => {
             logging.register(logger, generation)?;
             processes.insert(child.process(), generation);
-            generations.insert(generation, child);
+            generations.insert(
+                generation,
+                BrokerGeneration {
+                    child: Some(child),
+                    lifetime: LifetimeState::Foreground,
+                },
+            );
             write_event(
                 writer,
                 &BrokerEvent::Started {
@@ -1264,12 +1439,84 @@ fn prepare_readiness(
     })
 }
 
+fn prepare_lifetime(
+    mut command: ProcessCommand,
+    enabled: bool,
+    descriptors: &mut Vec<ProcessDescriptor>,
+) -> io::Result<(ProcessCommand, Option<UnixStream>)> {
+    if !enabled {
+        return Ok((command, None));
+    }
+    command.environment_variable("IMMORTAL_LIFETIME_FD", LIFETIME_DESCRIPTOR.to_string());
+    let pair = fork::socket_pair_cloexec()?;
+    let (broker_descriptor, child_descriptor) = pair.into_parts();
+    descriptors.push(ProcessDescriptor::map(
+        child_descriptor,
+        LIFETIME_DESCRIPTOR,
+    )?);
+    let stream = StdUnixStream::from(broker_descriptor);
+    stream.shutdown(Shutdown::Write)?;
+    stream.set_nonblocking(true)?;
+    Ok((command, Some(UnixStream::from_std(stream)?)))
+}
+
+async fn wait_for_lifetime_close(stream: &mut UnixStream) -> io::Result<()> {
+    let mut unexpected = [0_u8; 1];
+    match stream.read(&mut unexpected).await? {
+        0 => Ok(()),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "lifetime descriptor received data before closing",
+        )),
+    }
+}
+
+async fn handle_lifetime_observation<W>(
+    observation: LifetimeObservation,
+    writer: &mut W,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
+) -> Result<(), ProcessBrokerError>
+where
+    W: AsyncWrite + Unpin,
+{
+    if let Some(event) = record_lifetime_observation(&observation, generations) {
+        write_event(writer, &event).await?;
+    }
+    Ok(())
+}
+
+fn record_lifetime_observation(
+    observation: &LifetimeObservation,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
+) -> Option<BrokerEvent> {
+    let entry = generations.get_mut(&observation.generation)?;
+    if entry.lifetime != LifetimeState::Tracking {
+        return None;
+    }
+    let event = if observation.result.is_ok() {
+        entry.lifetime = LifetimeState::Closed;
+        BrokerEvent::LifetimeClosed {
+            generation: observation.generation,
+        }
+    } else {
+        entry.lifetime = LifetimeState::Failed;
+        BrokerEvent::LifetimeFailed {
+            generation: observation.generation,
+        }
+    };
+    let generation_finished = entry.child.is_none();
+    if generation_finished {
+        generations.remove(&observation.generation);
+    }
+    Some(event)
+}
+
 async fn handle_signal<W>(
     generation: Generation,
     target: BrokerSignalTarget,
     requested: ProcessSignal,
     writer: &mut W,
-    generations: &BTreeMap<Generation, SpawnedProcess>,
+    generations: &BTreeMap<Generation, BrokerGeneration>,
 ) -> Result<(), ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
@@ -1281,7 +1528,10 @@ where
                 "generation is not owned",
             ))
         },
-        |child| {
+        |entry| {
+            let child = entry.child.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "generation has no direct child")
+            })?;
             let target = match target {
                 BrokerSignalTarget::Process => SignalTarget::Process(child.process()),
                 BrokerSignalTarget::Group => SignalTarget::Group(child.group()),
@@ -1301,7 +1551,7 @@ where
 
 async fn forward_child_events<W>(
     writer: &mut W,
-    generations: &mut BTreeMap<Generation, SpawnedProcess>,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, Generation>,
     logging: &mut BrokerLogging,
 ) -> Result<(), ProcessBrokerError>
@@ -1315,7 +1565,7 @@ where
 }
 
 fn collect_child_events(
-    generations: &mut BTreeMap<Generation, SpawnedProcess>,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, Generation>,
     logging: &mut BrokerLogging,
 ) -> Result<Vec<BrokerEvent>, ProcessBrokerError> {
@@ -1332,12 +1582,27 @@ fn collect_child_events(
             ProcessBrokerErrorKind::UnownedChild(process),
         ))?;
         if event.is_terminal() {
-            if let Some(child) = generations.get(&generation) {
-                let _ = signal(SignalTarget::Group(child.group()), ProcessSignal::Kill);
-            }
             processes.remove(&process);
-            generations.remove(&generation);
-            logging.child_reaped(generation);
+            let remove_generation = if let Some(entry) = generations.get_mut(&generation) {
+                if entry.lifetime == LifetimeState::Foreground {
+                    if let Some(child) = entry.child {
+                        let _ = signal(SignalTarget::Group(child.group()), ProcessSignal::Kill);
+                    }
+                    true
+                } else {
+                    entry.child = None;
+                    matches!(
+                        entry.lifetime,
+                        LifetimeState::Closed | LifetimeState::Failed
+                    )
+                }
+            } else {
+                false
+            };
+            if remove_generation {
+                generations.remove(&generation);
+                logging.child_reaped(generation);
+            }
         }
         events.push(BrokerEvent::Child { generation, event });
     }
@@ -1347,7 +1612,7 @@ fn collect_child_events(
 async fn shutdown_owned<W>(
     child_signal: &mut ChildSignal,
     writer: &mut W,
-    generations: &mut BTreeMap<Generation, SpawnedProcess>,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, Generation>,
     logging: &mut BrokerLogging,
 ) -> Result<bool, ProcessBrokerError>
@@ -1383,7 +1648,7 @@ async fn reap_until<W>(
     deadline: Instant,
     child_signal: &mut ChildSignal,
     writer: &mut W,
-    generations: &mut BTreeMap<Generation, SpawnedProcess>,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, Generation>,
     logging: &mut BrokerLogging,
 ) -> Result<bool, ProcessBrokerError>
@@ -1408,30 +1673,189 @@ where
 }
 
 fn signal_every_group(
-    generations: &BTreeMap<Generation, SpawnedProcess>,
+    generations: &BTreeMap<Generation, BrokerGeneration>,
     requested: ProcessSignal,
 ) {
-    for child in generations.values() {
+    for child in generations.values().filter_map(|entry| entry.child) {
         let _ = signal(SignalTarget::Group(child.group()), requested);
     }
 }
 
 async fn cleanup_after_supervisor_loss(
     child_signal: &mut ChildSignal,
-    generations: &mut BTreeMap<Generation, SpawnedProcess>,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, Generation>,
     logging: &mut BrokerLogging,
+    lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
+    lifetime_cleanup: Option<BrokerLifetimePlan>,
 ) -> Result<(), ProcessBrokerError> {
     signal_every_group(generations, ProcessSignal::Kill);
-    while !processes.is_empty() {
-        if child_signal.recv().await.is_none() {
-            return Err(ProcessBrokerError(
-                ProcessBrokerErrorKind::SignalStreamClosed,
-            ));
-        }
-        let _ = collect_child_events(generations, processes, logging)?;
+    if !reap_without_events(
+        Instant::now() + SHUTDOWN_KILL_WAIT,
+        child_signal,
+        generations,
+        processes,
+        logging,
+    )
+    .await?
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "broker children survived supervisor-loss cleanup",
+        )
+        .into());
     }
-    Ok(())
+
+    let mut tracked = generations.iter().filter_map(|(generation, entry)| {
+        (entry.lifetime != LifetimeState::Foreground).then_some(*generation)
+    });
+    let generation = tracked.next();
+    if tracked.next().is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "broker owns more than one descriptor-tracked generation",
+        )
+        .into());
+    }
+    let complete = match (generation, lifetime_cleanup) {
+        (Some(generation), Some(cleanup)) => {
+            run_supervisor_loss_hook(
+                generation,
+                cleanup,
+                child_signal,
+                generations,
+                processes,
+                logging,
+                lifetime_events,
+            )
+            .await?
+        }
+        (None, _) => true,
+        (Some(_), None) => false,
+    };
+    if complete {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "descriptor cleanup did not establish lifetime closure",
+        )
+        .into())
+    }
+}
+
+async fn run_supervisor_loss_hook(
+    generation: Generation,
+    cleanup: BrokerLifetimePlan,
+    child_signal: &mut ChildSignal,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
+    processes: &mut BTreeMap<ProcessId, Generation>,
+    logging: &mut BrokerLogging,
+    lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
+) -> Result<bool, ProcessBrokerError> {
+    let BrokerLifetimePlan {
+        stop,
+        stop_timeout,
+        lifetime_timeout,
+    } = cleanup;
+    let hook = match spawn(stop, SHUTDOWN_GRACE) {
+        Ok(hook) => {
+            processes.insert(hook.process(), generation);
+            Some(hook)
+        }
+        Err(error) => {
+            if let Some(process) = error.cleanup_pending() {
+                processes.insert(process, generation);
+            }
+            None
+        }
+    };
+    let hook_finished = reap_without_events(
+        Instant::now() + stop_timeout,
+        child_signal,
+        generations,
+        processes,
+        logging,
+    )
+    .await?;
+    if let Some(hook) = hook
+        && !hook_finished
+    {
+        let _ = signal(SignalTarget::Group(hook.group()), ProcessSignal::Kill);
+        let reaped = reap_without_events(
+            Instant::now() + SHUTDOWN_KILL_WAIT,
+            child_signal,
+            generations,
+            processes,
+            logging,
+        )
+        .await?;
+        if !reaped {
+            return Ok(false);
+        }
+    }
+    let lifetime_closed = wait_for_cleanup_lifetime(
+        generation,
+        Instant::now() + lifetime_timeout,
+        generations,
+        lifetime_events,
+    )
+    .await?;
+    Ok(hook_finished && lifetime_closed)
+}
+
+async fn reap_without_events(
+    deadline: Instant,
+    child_signal: &mut ChildSignal,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
+    processes: &mut BTreeMap<ProcessId, Generation>,
+    logging: &mut BrokerLogging,
+) -> Result<bool, ProcessBrokerError> {
+    let _ = collect_child_events(generations, processes, logging)?;
+    while !processes.is_empty() {
+        match timeout_at(deadline, child_signal.recv()).await {
+            Ok(Some(())) => {
+                let _ = collect_child_events(generations, processes, logging)?;
+            }
+            Ok(None) => {
+                return Err(ProcessBrokerError(
+                    ProcessBrokerErrorKind::SignalStreamClosed,
+                ));
+            }
+            Err(_) => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+async fn wait_for_cleanup_lifetime(
+    generation: Generation,
+    deadline: Instant,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
+    lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
+) -> Result<bool, ProcessBrokerError> {
+    if !generations.contains_key(&generation) {
+        return Ok(true);
+    }
+    loop {
+        let observation = match timeout_at(deadline, lifetime_events.recv()).await {
+            Ok(Some(observation)) => observation,
+            Ok(None) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "broker lifetime event stream closed",
+                )
+                .into());
+            }
+            Err(_) => return Ok(false),
+        };
+        let observed_generation = observation.generation;
+        let closed = observation.result.is_ok();
+        let _ = record_lifetime_observation(&observation, generations);
+        if observed_generation == generation {
+            return Ok(closed && !generations.contains_key(&generation));
+        }
+    }
 }
 
 async fn write_request<W>(writer: &mut W, request: &BrokerRequest) -> Result<(), ProcessBrokerError>

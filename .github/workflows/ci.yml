@@ -17,39 +17,74 @@ env:
 jobs:
   quality:
     name: Format, lint, and check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.97.0
           components: clippy,rustfmt
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features
       - run: cargo check --workspace --all-targets --all-features --locked
 
-  test:
-    name: Test (${{ matrix.os }})
+  native-lifecycle:
+    name: Native lifecycle (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+          - name: macOS
+            os: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
       - run: cargo test --workspace --locked
+      - run: cargo bench -p immortal-core --bench lifecycle_contracts --locked
       - run: cargo run --quiet -p immortal -- --version
       - run: cargo run --quiet -p immortalctl -- --version
       - run: cargo run --quiet -p immortaldir -- --version
 
   freebsd-check:
     name: FreeBSD compile check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.97.0
           targets: x86_64-unknown-freebsd
       - run: cargo check --workspace --target x86_64-unknown-freebsd --locked
+
+  freebsd-native-lifecycle:
+    name: Native lifecycle (FreeBSD 14.3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test inside FreeBSD
+        uses: vmactions/freebsd-vm@a6de9343ef5747433d9c25784c90e84998b9d69a # v1.4.6
+        with:
+          release: "14.3"
+          usesh: true
+          sync: rsync
+          copyback: false
+          prepare: |
+            pkg install -y rustup-init
+            rustup-init --profile minimal --default-toolchain 1.97.0 -y
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            rustc --version --verbose
+            cargo test --workspace --locked
+            cargo bench -p immortal-core --bench lifecycle_contracts --locked
+            cargo run --quiet -p immortal -- --version
+            cargo run --quiet -p immortalctl -- --version
+            cargo run --quiet -p immortaldir -- --version

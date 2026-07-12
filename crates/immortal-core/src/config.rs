@@ -21,6 +21,8 @@ const DEFAULT_BACKOFF_JITTER_PERCENT: u8 = 20;
 const DEFAULT_BACKOFF_RESET_SECONDS: u64 = 60;
 const DEFAULT_READINESS_TIMEOUT_SECONDS: u64 = 30;
 const DEFAULT_CONDITION_BACKOFF_MAX_SECONDS: u64 = 30;
+const MAX_OPERATION_SECONDS: u64 = 86_400;
+const MAX_SCHEDULE_SECONDS: u64 = 31_536_000;
 
 /// Validated runtime service definition.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -55,6 +57,8 @@ pub struct ServiceConfig {
     pub pid_files: PidFiles,
     /// Explicit handling for self-daemonizing programs.
     pub process_mode: ProcessMode,
+    /// Required lifecycle contract for descriptor-tracked programs.
+    pub descriptor_tracking: Option<DescriptorTrackingConfig>,
 }
 
 impl ServiceConfig {
@@ -83,6 +87,7 @@ impl ServiceConfig {
             logging: LoggingConfig::default(),
             pid_files: PidFiles::default(),
             process_mode: ProcessMode::Foreground,
+            descriptor_tracking: None,
         };
         validate(&config)?;
         Ok(config)
@@ -228,6 +233,18 @@ pub struct CommandHook {
     pub command: Vec<String>,
     /// Maximum execution time.
     pub timeout_seconds: u64,
+}
+
+/// Lifecycle commands required when no adopted process ID is trusted.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptorTrackingConfig {
+    /// Command which asks the self-daemonized application to stop.
+    pub stop: CommandHook,
+    /// Command which asks the self-daemonized application to reload.
+    pub reload: CommandHook,
+    /// Maximum wait for lifetime-descriptor EOF after a successful stop hook.
+    pub lifetime_timeout_seconds: u64,
 }
 
 /// Backoff applied only to failed pre-start condition evaluations.
@@ -556,6 +573,7 @@ struct ConfigDocument {
     pid_files: PidFiles,
     #[serde(default)]
     process_mode: ProcessMode,
+    descriptor_tracking: Option<DescriptorTrackingConfig>,
 }
 
 fn default_true() -> bool {
@@ -582,6 +600,7 @@ fn parse_current(source: &str) -> Result<ServiceConfig, ConfigError> {
         logging: document.logging,
         pid_files: document.pid_files,
         process_mode: document.process_mode,
+        descriptor_tracking: document.descriptor_tracking,
     })
 }
 
@@ -619,6 +638,11 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
         }
     }
     validate_service_names(&config.requires, &mut errors);
+    if config.start_delay_seconds > MAX_SCHEDULE_SECONDS {
+        errors.push(format!(
+            "start_delay_seconds must not exceed {MAX_SCHEDULE_SECONDS}"
+        ));
+    }
     if config.restart.success_exit_codes.is_empty() {
         errors.push("restart.success_exit_codes must not be empty".to_owned());
     }
@@ -630,6 +654,10 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
     }
     if config.readiness.timeout_seconds == 0 {
         errors.push("readiness.timeout_seconds must be greater than zero".to_owned());
+    } else if config.readiness.timeout_seconds > MAX_OPERATION_SECONDS {
+        errors.push(format!(
+            "readiness.timeout_seconds must not exceed {MAX_OPERATION_SECONDS}"
+        ));
     }
     if let Some(hook) = &config.start_condition {
         validate_start_condition(hook, &mut errors);
@@ -668,11 +696,29 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
         &mut errors,
     );
 
-    if config.process_mode == ProcessMode::DescriptorTracking && config.post_exit.is_none() {
-        errors.push(
-            "descriptor-tracking process mode requires an explicit post_exit lifecycle hook"
+    match (config.process_mode, config.descriptor_tracking.as_ref()) {
+        (ProcessMode::DescriptorTracking, Some(tracking)) => {
+            validate_hook(&tracking.stop, "descriptor_tracking.stop", &mut errors);
+            validate_hook(&tracking.reload, "descriptor_tracking.reload", &mut errors);
+            if tracking.lifetime_timeout_seconds == 0 {
+                errors.push(
+                    "descriptor_tracking.lifetime_timeout_seconds must be greater than zero"
+                        .to_owned(),
+                );
+            } else if tracking.lifetime_timeout_seconds > MAX_OPERATION_SECONDS {
+                errors.push(format!(
+                    "descriptor_tracking.lifetime_timeout_seconds must not exceed {MAX_OPERATION_SECONDS}"
+                ));
+            }
+        }
+        (ProcessMode::DescriptorTracking, None) => errors.push(
+            "descriptor-tracking process mode requires descriptor_tracking stop and reload hooks"
                 .to_owned(),
-        );
+        ),
+        (ProcessMode::Foreground, Some(_)) => errors.push(
+            "descriptor_tracking is valid only with process_mode: descriptor-tracking".to_owned(),
+        ),
+        (ProcessMode::Foreground, None) => {}
     }
     if errors.is_empty() {
         Ok(())
@@ -688,6 +734,16 @@ fn validate_backoff(backoff: &BackoffConfig, path: &str, errors: &mut Vec<String
     if backoff.max_seconds < backoff.initial_seconds {
         errors.push(format!(
             "{path}.max_seconds must be at least initial_seconds"
+        ));
+    }
+    if backoff.max_seconds > MAX_SCHEDULE_SECONDS {
+        errors.push(format!(
+            "{path}.max_seconds must not exceed {MAX_SCHEDULE_SECONDS}"
+        ));
+    }
+    if backoff.reset_after_seconds > MAX_SCHEDULE_SECONDS {
+        errors.push(format!(
+            "{path}.reset_after_seconds must not exceed {MAX_SCHEDULE_SECONDS}"
         ));
     }
     if backoff.multiplier == 0 {
@@ -721,6 +777,10 @@ pub fn resolve_paths(config: &mut ServiceConfig, base: &Path) -> Result<(), Conf
     }
     if let Some(hook) = &mut config.post_exit {
         resolve_argv_executable(&mut hook.command, &base)?;
+    }
+    if let Some(tracking) = &mut config.descriptor_tracking {
+        resolve_argv_executable(&mut tracking.stop.command, &base)?;
+        resolve_argv_executable(&mut tracking.reload.command, &base)?;
     }
     resolve_optional_path(&mut config.logging.file_adapter, &base);
     resolve_output_paths(&mut config.logging.stdout, &base)?;
@@ -807,6 +867,10 @@ fn validate_hook(hook: &CommandHook, path: &str, errors: &mut Vec<String>) {
     validate_argv(&hook.command, &format!("{path}.command"), errors);
     if hook.timeout_seconds == 0 {
         errors.push(format!("{path}.timeout_seconds must be greater than zero"));
+    } else if hook.timeout_seconds > MAX_OPERATION_SECONDS {
+        errors.push(format!(
+            "{path}.timeout_seconds must not exceed {MAX_OPERATION_SECONDS}"
+        ));
     }
 }
 
@@ -814,6 +878,10 @@ fn validate_start_condition(condition: &StartConditionConfig, errors: &mut Vec<S
     validate_argv(&condition.command, "start_condition.command", errors);
     if condition.timeout_seconds == 0 {
         errors.push("start_condition.timeout_seconds must be greater than zero".to_owned());
+    } else if condition.timeout_seconds > MAX_OPERATION_SECONDS {
+        errors.push(format!(
+            "start_condition.timeout_seconds must not exceed {MAX_OPERATION_SECONDS}"
+        ));
     }
     let backoff = &condition.backoff;
     if backoff.initial_seconds == 0 {
@@ -823,6 +891,11 @@ fn validate_start_condition(condition: &StartConditionConfig, errors: &mut Vec<S
         errors.push(
             "start_condition.backoff.max_seconds must be at least initial_seconds".to_owned(),
         );
+    }
+    if backoff.max_seconds > MAX_SCHEDULE_SECONDS {
+        errors.push(format!(
+            "start_condition.backoff.max_seconds must not exceed {MAX_SCHEDULE_SECONDS}"
+        ));
     }
     if backoff.multiplier == 0 {
         errors.push("start_condition.backoff.multiplier must be at least one".to_owned());
@@ -915,11 +988,11 @@ fn validate_path(path: Option<&Path>, field: &str, errors: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, fs, io};
+    use std::{error::Error, fs, io, path::Path};
 
     use super::{
         ConfigError, EnvironmentMode, MAX_CONFIG_BYTES, ProcessMode, RestartPolicy, emit_config,
-        parse_bytes, parse_file, parse_str,
+        parse_bytes, parse_file, parse_str, resolve_paths,
     };
 
     #[test]
@@ -1193,20 +1266,64 @@ process_mode: descriptor-tracking
                 .iter()
                 .any(|error| error.contains("duplicate service"))
         );
-        assert!(errors.iter().any(|error| error.contains("lifecycle hook")));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("stop and reload hooks"))
+        );
         Ok(())
     }
 
     #[test]
-    fn descriptor_tracking_requires_a_lifecycle_hook() -> Result<(), Box<dyn Error>> {
+    fn descriptor_tracking_requires_bounded_stop_and_reload_hooks() -> Result<(), Box<dyn Error>> {
         let result =
             parse_str("version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\n");
         assert!(matches!(result, Err(ConfigError::Validation(_))));
 
         let config = parse_str(
-            "version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\npost_exit:\n  command: [/usr/local/bin/service-stop]\n  timeout_seconds: 30\n",
+            "version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\ndescriptor_tracking:\n  stop:\n    command: [/usr/local/bin/service-stop]\n    timeout_seconds: 30\n  reload:\n    command: [/usr/local/bin/service-reload]\n    timeout_seconds: 10\n  lifetime_timeout_seconds: 30\n",
         )?;
         assert_eq!(config.process_mode, ProcessMode::DescriptorTracking);
+        let tracking = config
+            .descriptor_tracking
+            .ok_or_else(|| io::Error::other("descriptor tracking configuration is absent"))?;
+        assert_eq!(tracking.stop.timeout_seconds, 30);
+        assert_eq!(tracking.reload.timeout_seconds, 10);
+        assert_eq!(tracking.lifetime_timeout_seconds, 30);
+        Ok(())
+    }
+
+    #[test]
+    fn descriptor_tracking_rejects_partial_misplaced_and_unknown_fields() {
+        for source in [
+            "version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\ndescriptor_tracking:\n  stop:\n    command: []\n    timeout_seconds: 0\n  reload:\n    command: []\n    timeout_seconds: 0\n  lifetime_timeout_seconds: 0\n",
+            "version: 2\ncommand: [/bin/true]\ndescriptor_tracking:\n  stop:\n    command: [/bin/true]\n    timeout_seconds: 1\n  reload:\n    command: [/bin/true]\n    timeout_seconds: 1\n  lifetime_timeout_seconds: 1\n",
+            "version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\ndescriptor_tracking:\n  stop:\n    command: [/bin/true]\n    timeout_seconds: 1\n  lifetime_timeout_seconds: 1\n",
+            "version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\ndescriptor_tracking:\n  stop:\n    command: [/bin/true]\n    timeout_seconds: 1\n  reload:\n    command: [/bin/true]\n    timeout_seconds: 1\n  lifetime_timeout_seconds: 1\n  future: true\n",
+            "version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\ndescriptor_tracking:\n  stop:\n    command: [/bin/true]\n    timeout_seconds: 86401\n  reload:\n    command: [/bin/true]\n    timeout_seconds: 1\n  lifetime_timeout_seconds: 86401\n",
+        ] {
+            assert!(parse_str(source).is_err());
+        }
+    }
+
+    #[test]
+    fn descriptor_tracking_hook_paths_resolve_from_definition_directory()
+    -> Result<(), Box<dyn Error>> {
+        let mut config = parse_str(
+            "version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\ndescriptor_tracking:\n  stop:\n    command: [hooks/stop]\n    timeout_seconds: 1\n  reload:\n    command: [hooks/reload]\n    timeout_seconds: 1\n  lifetime_timeout_seconds: 1\n",
+        )?;
+        resolve_paths(&mut config, Path::new("/srv/immortal"))?;
+        let tracking = config
+            .descriptor_tracking
+            .ok_or_else(|| io::Error::other("descriptor tracking configuration is absent"))?;
+        assert_eq!(
+            tracking.stop.command.first().map(String::as_str),
+            Some("/srv/immortal/hooks/stop")
+        );
+        assert_eq!(
+            tracking.reload.command.first().map(String::as_str),
+            Some("/srv/immortal/hooks/reload")
+        );
         Ok(())
     }
 }

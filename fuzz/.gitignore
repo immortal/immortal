@@ -1,0 +1,7 @@
+/artifacts/
+/target/
+
+/corpus/config/*
+!/corpus/config/version-2.yml
+/corpus/control/*
+!/corpus/control/.gitkeep

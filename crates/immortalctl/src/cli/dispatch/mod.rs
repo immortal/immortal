@@ -28,11 +28,31 @@ pub enum OutputFormat {
     Json,
 }
 
+/// Automatic runtime roots selected for discovery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeScope {
+    /// Search both platform system and effective-user roots.
+    All,
+    /// Search only the platform system root.
+    System,
+    /// Search only the effective user's root.
+    User,
+}
+
+/// Runtime-root selection after CLI precedence is applied.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeDiscovery {
+    /// Discover documented roots for the selected scope.
+    Automatic(RuntimeScope),
+    /// Discover exactly one operator-provided root.
+    Custom(PathBuf),
+}
+
 /// Fully typed control action.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Action {
-    /// Permission-validated runtime discovery root.
-    pub runtime_directory: PathBuf,
+    /// Typed automatic or exact runtime-root selection.
+    pub discovery: RuntimeDiscovery,
     /// Output representation.
     pub output: OutputFormat,
     /// Omit the table header.
@@ -70,10 +90,10 @@ impl Error for DispatchError {}
 /// Returns an error for multiple legacy signal flags, invalid signal names,
 /// or missing parser invariants.
 pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
-    let runtime_directory = matches
-        .get_one::<String>("runtime-dir")
-        .map(PathBuf::from)
-        .ok_or_else(|| DispatchError("missing runtime directory".to_owned()))?;
+    let discovery = matches.get_one::<String>("runtime-dir").map_or_else(
+        || automatic_discovery(matches),
+        |path| Ok(RuntimeDiscovery::Custom(PathBuf::from(path))),
+    )?;
     let output = output_format(matches)?;
     let no_header = matches.get_flag("no-header");
     let wait_timeout = matches
@@ -97,7 +117,7 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
             .get_one::<String>("legacy-target")
             .ok_or_else(|| DispatchError("legacy signal requires a service".to_owned()))?;
         return Ok(Action {
-            runtime_directory,
+            discovery,
             output,
             no_header,
             wait_timeout,
@@ -111,7 +131,7 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
 
     let Some((name, subcommand)) = matches.subcommand() else {
         return Ok(Action {
-            runtime_directory,
+            discovery,
             output,
             no_header,
             wait_timeout,
@@ -161,7 +181,7 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         Some(value) => return Err(DispatchError(format!("unknown signal scope `{value}`"))),
     };
     Ok(Action {
-        runtime_directory,
+        discovery,
         output,
         no_header,
         wait_timeout,
@@ -171,6 +191,20 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         scope,
         signal,
     })
+}
+
+fn automatic_discovery(matches: &ArgMatches) -> Result<RuntimeDiscovery, DispatchError> {
+    let scope = match matches
+        .get_one::<String>("runtime-scope")
+        .map(String::as_str)
+    {
+        Some("all") => RuntimeScope::All,
+        Some("system") => RuntimeScope::System,
+        Some("user") => RuntimeScope::User,
+        Some(value) => return Err(DispatchError(format!("unknown runtime scope `{value}`"))),
+        None => return Err(DispatchError("missing runtime scope".to_owned())),
+    };
+    Ok(RuntimeDiscovery::Automatic(scope))
 }
 
 fn output_format(matches: &ArgMatches) -> Result<OutputFormat, DispatchError> {
@@ -204,7 +238,7 @@ mod tests {
 
     use immortal_core::control::{Operation, Signal, SignalScope};
 
-    use super::{OutputFormat, Target, action};
+    use super::{OutputFormat, RuntimeDiscovery, RuntimeScope, Target, action};
     use crate::cli::commands;
 
     #[test]
@@ -217,8 +251,8 @@ mod tests {
         assert_eq!(action.wait_timeout, std::time::Duration::from_secs(30));
         assert!(!action.no_wait);
         assert_eq!(
-            action.runtime_directory,
-            std::path::PathBuf::from("/var/run/immortal")
+            action.discovery,
+            RuntimeDiscovery::Automatic(RuntimeScope::All)
         );
         Ok(())
     }
@@ -237,6 +271,23 @@ mod tests {
         assert_eq!(action.signal, Some(Signal::User2));
         assert_eq!(action.scope, SignalScope::Group);
         assert_eq!(action.target, Target::Service("api".to_owned()));
+        Ok(())
+    }
+
+    #[test]
+    fn selects_automatic_user_or_exact_custom_runtime_roots() -> Result<(), Box<dyn Error>> {
+        let user = commands::try_get_matches_from(["immortalctl", "--runtime-scope", "user"])?;
+        assert_eq!(
+            action(&user)?.discovery,
+            RuntimeDiscovery::Automatic(RuntimeScope::User)
+        );
+
+        let custom =
+            commands::try_get_matches_from(["immortalctl", "--runtime-dir", "/tmp/immortal"])?;
+        assert_eq!(
+            action(&custom)?.discovery,
+            RuntimeDiscovery::Custom(std::path::PathBuf::from("/tmp/immortal"))
+        );
         Ok(())
     }
 

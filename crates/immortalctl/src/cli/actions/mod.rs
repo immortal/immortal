@@ -4,6 +4,7 @@ use std::{
     error::Error,
     fmt::{self, Display, Formatter},
     io::{self, Write},
+    path::PathBuf,
 };
 
 use immortal_core::{
@@ -12,7 +13,10 @@ use immortal_core::{
         SignalScope, TransportError, read_response, write_request,
     },
     exit::ExitClass,
-    runtime::{RuntimeRootError, RuntimeService, discover},
+    runtime::{
+        MAX_RUNTIME_SERVICES, RuntimeRootError, RuntimeService, discover, discover_user,
+        system_runtime_root, user_runtime_root,
+    },
     status::{ServiceState, StatusSnapshot, desired_state_name},
     supervisor::Generation,
 };
@@ -22,7 +26,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-use crate::cli::dispatch::{Action, OutputFormat, Target};
+use crate::cli::dispatch::{Action, OutputFormat, RuntimeDiscovery, RuntimeScope, Target};
 
 const LIFECYCLE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 
@@ -31,8 +35,14 @@ const LIFECYCLE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_m
 pub enum ActionError {
     /// Runtime root is absent or unsafe.
     Runtime(RuntimeRootError),
+    /// The effective user's automatic runtime path cannot be resolved.
+    UserRuntime(io::Error),
     /// Requested service was not safely discovered.
     ServiceNotFound(String),
+    /// A service name exists in more than one selected runtime scope.
+    AmbiguousService(String),
+    /// Combined automatic discovery exceeded its global service bound.
+    ServiceLimit,
     /// Unix socket connection failed.
     Connect(io::Error),
     /// Connect deadline elapsed.
@@ -57,9 +67,15 @@ impl Display for ActionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Runtime(error) => Display::fmt(error, formatter),
+            Self::UserRuntime(error) => write!(formatter, "invalid user runtime root: {error}"),
             Self::ServiceNotFound(service) => {
                 write!(formatter, "service `{service}` was not safely discovered")
             }
+            Self::AmbiguousService(service) => write!(
+                formatter,
+                "service `{service}` exists in multiple scopes; select --runtime-scope system or --runtime-scope user"
+            ),
+            Self::ServiceLimit => formatter.write_str("runtime service discovery limit exceeded"),
             Self::Connect(error) => write!(formatter, "unable to connect to supervisor: {error}"),
             Self::ConnectTimeout => formatter.write_str("supervisor connect deadline exceeded"),
             Self::LifecycleTimeout => formatter.write_str("lifecycle completion deadline exceeded"),
@@ -85,10 +101,12 @@ impl Error for ActionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Runtime(error) => Some(error),
-            Self::Connect(error) | Self::Output(error) => Some(error),
+            Self::UserRuntime(error) | Self::Connect(error) | Self::Output(error) => Some(error),
             Self::Transport(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::ServiceNotFound(_)
+            | Self::AmbiguousService(_)
+            | Self::ServiceLimit
             | Self::ConnectTimeout
             | Self::LifecycleTimeout
             | Self::StatusUnavailable
@@ -115,8 +133,9 @@ impl ActionError {
     #[must_use]
     pub fn exit_class(&self) -> ExitClass {
         match self {
-            Self::Runtime(_) => ExitClass::Configuration,
+            Self::Runtime(_) | Self::UserRuntime(_) => ExitClass::Configuration,
             Self::ServiceNotFound(_) => ExitClass::NotFound,
+            Self::AmbiguousService(_) | Self::ServiceLimit => ExitClass::Data,
             Self::Connect(error) => match error.kind() {
                 io::ErrorKind::PermissionDenied => ExitClass::Permission,
                 io::ErrorKind::NotFound
@@ -138,8 +157,39 @@ impl ActionError {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum RuntimeOrigin {
+    System,
+    User,
+    Custom,
+}
+
+impl RuntimeOrigin {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::User => "user",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+struct ScopedService {
+    origin: RuntimeOrigin,
+    service: RuntimeService,
+}
+
+struct DiscoveryRoot {
+    origin: RuntimeOrigin,
+    path: PathBuf,
+    user_owned: bool,
+    optional: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct OutputRecord {
+    scope: RuntimeOrigin,
     service: String,
     result: String,
     supervisor_pid: Option<u32>,
@@ -166,35 +216,16 @@ struct OutputRecord {
 /// Returns an error for unsafe discovery, missing targets, connection or
 /// transport failure, rejected operations, or output failure.
 pub async fn execute(action: &Action) -> Result<(), ActionError> {
-    let discovery = discover(&action.runtime_directory)?;
     let mut diagnostics = io::stderr().lock();
-    for problem in discovery.problems {
-        writeln!(
-            diagnostics,
-            "{}: ignored runtime entry: {:?}",
-            problem.path.display(),
-            problem.kind
-        )
-        .map_err(ActionError::Output)?;
-    }
-
-    let targets: Vec<RuntimeService> = match &action.target {
-        Target::All => discovery.services.into_values().collect(),
-        Target::Service(name) => vec![
-            discovery
-                .services
-                .get(name)
-                .cloned()
-                .ok_or_else(|| ActionError::ServiceNotFound(name.clone()))?,
-        ],
-    };
+    let (services, discovery_failed) = discover_selected(action, &mut diagnostics)?;
+    let targets = select_targets(services, &action.target, discovery_failed)?;
     if targets.is_empty() && action.operation != Operation::Status {
         return Err(ActionError::ServiceNotFound("*".to_owned()));
     }
 
     let mut records = Vec::with_capacity(targets.len());
     let target_count = targets.len();
-    let mut failure_class = None;
+    let mut failure_class = discovery_failed.then_some(ExitClass::PartialFailure);
     for service in targets {
         match contact(&service, action).await {
             Ok((record, failure)) => {
@@ -206,7 +237,8 @@ pub async fn execute(action: &Action) -> Result<(), ActionError> {
             Err(error) => {
                 failure_class = Some(error.exit_class());
                 records.push(OutputRecord {
-                    service: service.name,
+                    scope: service.origin,
+                    service: service.service.name,
                     result: "transport-error".to_owned(),
                     supervisor_pid: None,
                     main_pid: None,
@@ -228,7 +260,7 @@ pub async fn execute(action: &Action) -> Result<(), ActionError> {
         }
     }
     write_output(&records, action.output, action.no_header)?;
-    if failure_class.is_some() && target_count > 1 {
+    if discovery_failed || (failure_class.is_some() && target_count > 1) {
         Err(ActionError::PartialFailure)
     } else if let Some(class) = failure_class {
         Err(ActionError::Remote(class))
@@ -237,15 +269,136 @@ pub async fn execute(action: &Action) -> Result<(), ActionError> {
     }
 }
 
+fn discover_selected(
+    action: &Action,
+    diagnostics: &mut impl Write,
+) -> Result<(Vec<ScopedService>, bool), ActionError> {
+    let roots = discovery_roots(&action.discovery)?;
+    discover_from_roots(roots, diagnostics)
+}
+
+fn discover_from_roots(
+    roots: Vec<DiscoveryRoot>,
+    diagnostics: &mut impl Write,
+) -> Result<(Vec<ScopedService>, bool), ActionError> {
+    let mut services = Vec::new();
+    let mut failed = false;
+    for root in roots {
+        let discovery = if root.user_owned {
+            discover_user(&root.path)
+        } else {
+            discover(&root.path)
+        };
+        let discovery = match discovery {
+            Ok(discovery) => discovery,
+            Err(error) if root.optional && runtime_root_missing(&error) => continue,
+            Err(error) if root.optional => {
+                writeln!(
+                    diagnostics,
+                    "{}: ignored {} runtime root: {error}",
+                    root.path.display(),
+                    root.origin.name()
+                )
+                .map_err(ActionError::Output)?;
+                failed = true;
+                continue;
+            }
+            Err(error) => return Err(ActionError::Runtime(error)),
+        };
+        for problem in discovery.problems {
+            writeln!(
+                diagnostics,
+                "{}: ignored {} runtime entry: {:?}",
+                problem.path.display(),
+                root.origin.name(),
+                problem.kind
+            )
+            .map_err(ActionError::Output)?;
+        }
+        let remaining = MAX_RUNTIME_SERVICES.saturating_sub(services.len());
+        if discovery.services.len() > remaining {
+            return Err(ActionError::ServiceLimit);
+        }
+        services.extend(
+            discovery
+                .services
+                .into_values()
+                .map(|service| ScopedService {
+                    origin: root.origin,
+                    service,
+                }),
+        );
+    }
+    Ok((services, failed))
+}
+
+fn discovery_roots(discovery: &RuntimeDiscovery) -> Result<Vec<DiscoveryRoot>, ActionError> {
+    match discovery {
+        RuntimeDiscovery::Custom(path) => Ok(vec![DiscoveryRoot {
+            origin: RuntimeOrigin::Custom,
+            path: path.clone(),
+            user_owned: false,
+            optional: false,
+        }]),
+        RuntimeDiscovery::Automatic(scope) => {
+            let mut roots = Vec::with_capacity(2);
+            if matches!(scope, RuntimeScope::All | RuntimeScope::System) {
+                roots.push(DiscoveryRoot {
+                    origin: RuntimeOrigin::System,
+                    path: system_runtime_root().to_owned(),
+                    user_owned: false,
+                    optional: true,
+                });
+            }
+            if matches!(scope, RuntimeScope::All | RuntimeScope::User) {
+                roots.push(DiscoveryRoot {
+                    origin: RuntimeOrigin::User,
+                    path: user_runtime_root().map_err(ActionError::UserRuntime)?,
+                    user_owned: true,
+                    optional: true,
+                });
+            }
+            Ok(roots)
+        }
+    }
+}
+
+fn runtime_root_missing(error: &RuntimeRootError) -> bool {
+    error
+        .source()
+        .and_then(|source| source.downcast_ref::<io::Error>())
+        .is_some_and(|error| error.kind() == io::ErrorKind::NotFound)
+}
+
+fn select_targets(
+    services: Vec<ScopedService>,
+    target: &Target,
+    discovery_failed: bool,
+) -> Result<Vec<ScopedService>, ActionError> {
+    let Target::Service(name) = target else {
+        return Ok(services);
+    };
+    let matches: Vec<ScopedService> = services
+        .into_iter()
+        .filter(|service| service.service.name == *name)
+        .collect();
+    match matches.len() {
+        0 if discovery_failed => Err(ActionError::PartialFailure),
+        0 => Err(ActionError::ServiceNotFound(name.clone())),
+        1 => Ok(matches),
+        _ => Err(ActionError::AmbiguousService(name.clone())),
+    }
+}
+
 async fn contact(
-    service: &RuntimeService,
+    service: &ScopedService,
     action: &Action,
 ) -> Result<(OutputRecord, Option<ExitClass>), ActionError> {
     let (expected_generation, initial_generation) = if action.operation == Operation::Status {
         (GenerationMatch::Any, None)
     } else {
         let status = exchange(
-            service,
+            &service.service,
             Operation::Status,
             GenerationMatch::Any,
             SignalScope::Main,
@@ -263,7 +416,7 @@ async fn contact(
         )
     };
     let mut response = exchange(
-        service,
+        &service.service,
         action.operation,
         expected_generation,
         action.scope,
@@ -284,7 +437,12 @@ async fn contact(
     {
         response = timeout(
             action.wait_timeout,
-            wait_for_completion(service, action.operation, initial_generation, response),
+            wait_for_completion(
+                &service.service,
+                action.operation,
+                initial_generation,
+                response,
+            ),
         )
         .await
         .map_err(|_| ActionError::LifecycleTimeout)??;
@@ -390,10 +548,11 @@ async fn exchange(
     read_response(&mut stream).await.map_err(ActionError::from)
 }
 
-fn record(service: &RuntimeService, response: Response) -> OutputRecord {
+fn record(service: &ScopedService, response: Response) -> OutputRecord {
     let status = response.status.as_ref();
     OutputRecord {
-        service: service.name.clone(),
+        scope: service.origin,
+        service: service.service.name.clone(),
         result: response.code.name().to_owned(),
         supervisor_pid: status.and_then(|value| value.supervisor_pid),
         main_pid: status.and_then(|value| value.main_pid),
@@ -452,7 +611,7 @@ fn render_output(
             if !no_header {
                 writeln!(
                     output,
-                    "SERVICE\tRESULT\tSUPERVISOR\tMAIN\tGENERATION\tDESIRED\tSTATE\tREADINESS\tUP\tDOWN\tSTARTS\tFAILURES\tLAST\tBACKOFF\tLOGGER\tCOMMAND\tMESSAGE"
+                    "SCOPE\tSERVICE\tRESULT\tSUPERVISOR\tMAIN\tGENERATION\tDESIRED\tSTATE\tREADINESS\tUP\tDOWN\tSTARTS\tFAILURES\tLAST\tBACKOFF\tLOGGER\tCOMMAND\tMESSAGE"
                 )
                 .map_err(ActionError::Output)?;
             }
@@ -466,7 +625,8 @@ fn render_output(
                 });
                 writeln!(
                     output,
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    record.scope.name(),
                     record.service,
                     record.result,
                     display_option(record.supervisor_pid),
@@ -519,6 +679,7 @@ mod tests {
         error::Error,
         fs,
         os::unix::fs::PermissionsExt,
+        os::unix::net::UnixListener as StdUnixListener,
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
         time::Duration,
@@ -531,8 +692,11 @@ mod tests {
     use immortal_core::status::{ServiceState, StatusSnapshot};
     use immortal_core::supervisor::{Generation, StateMachine};
 
-    use super::{ActionError, OutputRecord, contact, record, render_output};
-    use crate::cli::dispatch::{Action, OutputFormat, Target};
+    use super::{
+        ActionError, DiscoveryRoot, OutputRecord, RuntimeOrigin, ScopedService, contact,
+        discover_from_roots, record, render_output, select_targets,
+    };
+    use crate::cli::dispatch::{Action, OutputFormat, RuntimeDiscovery, Target};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -561,19 +725,105 @@ mod tests {
         }
     }
 
+    fn custom_service(
+        name: &str,
+        directory: &Path,
+        socket: PathBuf,
+        owner_uid: u32,
+    ) -> ScopedService {
+        ScopedService {
+            origin: RuntimeOrigin::Custom,
+            service: immortal_core::runtime::RuntimeService {
+                name: name.to_owned(),
+                directory: directory.to_owned(),
+                socket,
+                owner_uid,
+            },
+        }
+    }
+
+    fn bind_discovered_service(root: &Path, name: &str) -> Result<StdUnixListener, Box<dyn Error>> {
+        let directory = root.join(name);
+        fs::create_dir(&directory)?;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        let socket = directory.join("immortal.sock");
+        let listener = StdUnixListener::bind(&socket)?;
+        fs::set_permissions(socket, fs::Permissions::from_mode(0o600))?;
+        Ok(listener)
+    }
+
+    #[test]
+    fn automatic_roots_merge_scopes_and_reject_ambiguous_names() -> Result<(), Box<dyn Error>> {
+        let system = TestDirectory::new()?;
+        let user = TestDirectory::new()?;
+        let _system_listener = bind_discovered_service(system.path(), "api")?;
+        let _user_listener = bind_discovered_service(user.path(), "api")?;
+        let roots = vec![
+            DiscoveryRoot {
+                origin: RuntimeOrigin::System,
+                path: system.path().to_owned(),
+                user_owned: false,
+                optional: true,
+            },
+            DiscoveryRoot {
+                origin: RuntimeOrigin::User,
+                path: user.path().to_owned(),
+                user_owned: true,
+                optional: true,
+            },
+        ];
+        let mut diagnostics = Vec::new();
+        let (services, failed) = discover_from_roots(roots, &mut diagnostics)?;
+        assert!(!failed);
+        assert!(diagnostics.is_empty());
+        assert_eq!(services.len(), 2);
+        assert!(matches!(
+            select_targets(services, &Target::Service("api".to_owned()), false),
+            Err(ActionError::AmbiguousService(service)) if service == "api"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn automatic_roots_isolate_an_unsafe_peer_root() -> Result<(), Box<dyn Error>> {
+        let system = TestDirectory::new()?;
+        let user = TestDirectory::new()?;
+        let _listener = bind_discovered_service(user.path(), "worker")?;
+        fs::set_permissions(system.path(), fs::Permissions::from_mode(0o777))?;
+        let roots = vec![
+            DiscoveryRoot {
+                origin: RuntimeOrigin::System,
+                path: system.path().to_owned(),
+                user_owned: false,
+                optional: true,
+            },
+            DiscoveryRoot {
+                origin: RuntimeOrigin::User,
+                path: user.path().to_owned(),
+                user_owned: true,
+                optional: true,
+            },
+        ];
+        let mut diagnostics = Vec::new();
+        let (services, failed) = discover_from_roots(roots, &mut diagnostics)?;
+        assert!(failed);
+        assert_eq!(services.len(), 1);
+        assert_eq!(
+            services.first().map(|service| service.origin),
+            Some(RuntimeOrigin::User)
+        );
+        assert!(!diagnostics.is_empty());
+        Ok(())
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn contact_sends_typed_request_and_receives_status() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
         let socket = directory.path().join("immortal.sock");
         let listener = ControlListener::bind(&socket, 1)?;
-        let service = immortal_core::runtime::RuntimeService {
-            name: "api".to_owned(),
-            directory: directory.path().to_owned(),
-            socket,
-            owner_uid: listener.owner_uid(),
-        };
+        let service = custom_service("api", directory.path(), socket, listener.owner_uid());
         let action = Action {
-            runtime_directory: directory.path().to_owned(),
+            discovery: RuntimeDiscovery::Custom(directory.path().to_owned()),
             output: OutputFormat::Table,
             no_header: false,
             wait_timeout: Duration::from_secs(1),
@@ -609,6 +859,7 @@ mod tests {
         assert_eq!(
             record,
             OutputRecord {
+                scope: RuntimeOrigin::Custom,
                 service: "api".to_owned(),
                 result: "ok".to_owned(),
                 supervisor_pid: None,
@@ -634,14 +885,14 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn contact_reports_missing_socket() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
-        let service = immortal_core::runtime::RuntimeService {
-            name: "missing".to_owned(),
-            directory: directory.path().to_owned(),
-            socket: directory.path().join("missing.sock"),
-            owner_uid: 0,
-        };
+        let service = custom_service(
+            "missing",
+            directory.path(),
+            directory.path().join("missing.sock"),
+            0,
+        );
         let action = Action {
-            runtime_directory: directory.path().to_owned(),
+            discovery: RuntimeDiscovery::Custom(directory.path().to_owned()),
             output: OutputFormat::Table,
             no_header: false,
             wait_timeout: Duration::from_secs(1),
@@ -660,14 +911,9 @@ mod tests {
         let directory = TestDirectory::new()?;
         let socket = directory.path().join("immortal.sock");
         let listener = ControlListener::bind(&socket, 1)?;
-        let service = immortal_core::runtime::RuntimeService {
-            name: "api".to_owned(),
-            directory: directory.path().to_owned(),
-            socket,
-            owner_uid: listener.owner_uid(),
-        };
+        let service = custom_service("api", directory.path(), socket, listener.owner_uid());
         let action = Action {
-            runtime_directory: directory.path().to_owned(),
+            discovery: RuntimeDiscovery::Custom(directory.path().to_owned()),
             output: OutputFormat::Table,
             no_header: false,
             wait_timeout: Duration::from_secs(1),
@@ -729,14 +975,9 @@ mod tests {
         let directory = TestDirectory::new()?;
         let socket = directory.path().join("immortal.sock");
         let listener = ControlListener::bind(&socket, 1)?;
-        let service = immortal_core::runtime::RuntimeService {
-            name: "api".to_owned(),
-            directory: directory.path().to_owned(),
-            socket,
-            owner_uid: listener.owner_uid(),
-        };
+        let service = custom_service("api", directory.path(), socket, listener.owner_uid());
         let action = Action {
-            runtime_directory: directory.path().to_owned(),
+            discovery: RuntimeDiscovery::Custom(directory.path().to_owned()),
             output: OutputFormat::Table,
             no_header: false,
             wait_timeout: Duration::from_secs(1),
@@ -797,14 +1038,9 @@ mod tests {
         let directory = TestDirectory::new()?;
         let socket = directory.path().join("immortal.sock");
         let listener = ControlListener::bind(&socket, 1)?;
-        let service = immortal_core::runtime::RuntimeService {
-            name: "api".to_owned(),
-            directory: directory.path().to_owned(),
-            socket,
-            owner_uid: listener.owner_uid(),
-        };
+        let service = custom_service("api", directory.path(), socket, listener.owner_uid());
         let action = Action {
-            runtime_directory: directory.path().to_owned(),
+            discovery: RuntimeDiscovery::Custom(directory.path().to_owned()),
             output: OutputFormat::Table,
             no_header: false,
             wait_timeout: Duration::from_millis(1),
@@ -841,12 +1077,12 @@ mod tests {
     #[test]
     fn structured_status_renders_as_table_and_json() -> Result<(), Box<dyn Error>> {
         let directory = TestDirectory::new()?;
-        let service = immortal_core::runtime::RuntimeService {
-            name: "api".to_owned(),
-            directory: directory.path().to_owned(),
-            socket: directory.path().join("immortal.sock"),
-            owner_uid: 0,
-        };
+        let service = custom_service(
+            "api",
+            directory.path(),
+            directory.path().join("immortal.sock"),
+            0,
+        );
         let mut status = StatusSnapshot::from_machine(&StateMachine::default());
         status.supervisor_pid = Some(101);
         status.down_seconds = Some(7);
@@ -874,6 +1110,7 @@ mod tests {
             .and_then(|records| records.first())
             .ok_or_else(|| std::io::Error::other("status JSON record missing"))?;
         assert_eq!(first.get("supervisor_pid"), Some(&serde_json::json!(101)));
+        assert_eq!(first.get("scope"), Some(&serde_json::json!("custom")));
         assert_eq!(first.get("state"), Some(&serde_json::json!("down")));
         assert_eq!(
             first
@@ -886,7 +1123,7 @@ mod tests {
         let mut table = Vec::new();
         render_output(&mut table, &[output_record], OutputFormat::Table, false)?;
         let table = String::from_utf8(table)?;
-        assert!(table.starts_with("SERVICE\tRESULT\tSUPERVISOR"));
+        assert!(table.starts_with("SCOPE\tSERVICE\tRESULT\tSUPERVISOR"));
         assert!(table.contains("\"argument with spaces\""));
         assert!(!table.contains("healthy\nnow"));
         Ok(())

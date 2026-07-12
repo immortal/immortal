@@ -84,7 +84,8 @@ applies pre-resolved numeric credentials and publishes replacement-safe atomic
 supervisor/main PID files as observation only. Broker reads use one persistent
 task and bounded queue so cancellation cannot split a frame. Logger routes,
 pre-start conditions, and post-exit hooks use the same broker boundary;
-descriptor-tracking mode remains gated.
+descriptor-tracking uses an independently monitored lifetime capability and
+never promotes a PID-file value into process identity.
 
 Foreground supervisors can now opt into an exact absolute service runtime
 directory with `--control-dir ROOT/SERVICE`. Immortal acquires and retains a
@@ -193,12 +194,16 @@ behavioral compatibility. Intentional changes are documented and tested.
 |---|---|
 | Go CLI flags and signal aliases | Preserve as aliases and contract fixtures |
 | Unversioned Go `.yml` definitions | Reject; rewrite explicitly as `version: 2` |
-| Runtime paths and service names | Preserve where safe; validate ownership |
+| Runtime paths and service names | Use platform-native system roots plus `$HOME/.immortal`; validate ownership |
 | PID output files | Preserve as output-only metadata |
 | Go `pid.follow` configuration | Reject; use explicit descriptor tracking and lifecycle hooks |
 | HTTP-over-Unix-socket control | Replace with a bounded versioned protocol |
 | Go status JSON | Preserve equivalent information in `immortalctl --output json` |
 | Exact internal Go architecture | Do not preserve |
+
+`immortalctl` output consumers must account for the explicit discovery scope:
+the table begins with `SCOPE`, and JSON records include a `scope` field. This
+removes unsafe implicit precedence when system and user services share a name.
 
 Two historical requests are explicit contracts:
 
@@ -290,9 +295,28 @@ pid_files:
 process_mode: foreground  # foreground | descriptor-tracking
 ```
 
+Self-daemonizing software which cannot run in the foreground must instead use
+the explicit descriptor contract:
+
+```yaml
+version: 2
+command: [/usr/local/sbin/legacy-daemon]
+process_mode: descriptor-tracking
+descriptor_tracking:
+  stop:
+    command: [/usr/local/sbin/legacy-daemonctl, stop]
+    timeout_seconds: 30
+  reload:
+    command: [/usr/local/sbin/legacy-daemonctl, reload]
+    timeout_seconds: 30
+  lifetime_timeout_seconds: 30
+```
+
 All shown sections except `version` and `command` have defaults. Absent restart
 limits mean retry forever. A burst value requires both nonzero fields.
-`success_exit_codes` cannot be empty. `notify-fd` publishes
+`success_exit_codes` cannot be empty. Lifecycle, readiness, and condition
+deadlines are capped at 24 hours; scheduled delay/backoff values are capped at
+one year so monotonic deadline construction remains representable. `notify-fd` publishes
 `IMMORTAL_READY_FD=3`. The child must write the exact six-byte `READY\n` token
 before its configured deadline; fragmented writes are accepted, while invalid
 tokens, early EOF, and timeout fail that generation. The broker creates the
@@ -300,15 +324,40 @@ CLOEXEC descriptor channel before spawning, maps only the child endpoint, and
 monitors the supervisor endpoint asynchronously without creating worker threads.
 `start_condition` runs before a generation is allocated and has its own retry
 history, so a failing dependency check cannot consume service restart limits.
-`post_exit` runs after the service process group has been reaped and before the
+`post_exit` runs after the service generation has ended and before the
 selected restart, Down, Failed, or Exited transition is published. Its resolved
-service environment also contains `IMMORTAL_EXIT_KIND` (`exit` or `signal`),
+service environment also contains `IMMORTAL_EXIT_KIND` (`exit`, `signal`,
+`lifetime`, or `lifetime-failed`),
 `IMMORTAL_EXIT_STATUS`, `IMMORTAL_GENERATION`, `IMMORTAL_START_FAILED`, and
 `IMMORTAL_READINESS_FAILED`. Hook exec failure or a nonzero hook result does not
 replace the service result; timeout or supervisor shutdown kills and reaps the
 hook process group.
-Descriptor tracking requires explicit lifecycle hooks and deliberately does not
-adopt a PID.
+Descriptor tracking requires both bounded lifecycle hooks. The broker maps only
+the service endpoint to descriptor 4 and publishes `IMMORTAL_LIFETIME_FD=4`.
+The application must keep that descriptor open across its own fork and close it
+only when the self-daemonized generation has ended; writing data is a protocol
+failure. The direct launcher PID is cleared as soon as it is reaped, while the
+generation remains Ready until EOF. `stop`, `restart`, and `halt` execute the
+stop hook and then wait `lifetime_timeout_seconds` for EOF. HUP executes the
+reload hook. Other raw signals and supervisor detachment are rejected because
+there is no adopted PID to target. Hook failure or timeout restores the live
+generation instead of pretending it stopped. If the supervisor connection is
+lost, the pre-runtime broker owns one materialized fallback copy of the stop
+contract, executes it, and waits for lifetime closure before exiting.
+
+Foreground mode remains preferred because it preserves direct parentage and
+process-group control. Common upstream-supported forms include:
+
+- nginx: `nginx -g 'daemon off;'`; keep `master_process` enabled. See the
+  [nginx daemon directive](https://nginx.org/en/docs/ngx_core_module.html#daemon)
+  and [command-line switches](https://nginx.org/en/docs/switches.html).
+- OpenSSH: `sshd -D -e` keeps the server attached and sends diagnostics to
+  stderr. See the [OpenBSD sshd manual](https://man.openbsd.org/sshd.8).
+- Redis: configure `daemonize no`, as recommended for external supervisors in
+  the [Redis administration guide](https://redis.io/docs/latest/operate/oss_and_stack/management/admin/).
+
+Descriptor tracking is a compatibility boundary for software without a usable
+foreground mode, not the default supervision model.
 
 `start_condition` executes through the same single-threaded process broker with
 the service's resolved environment, working directory, and credentials. Exit
@@ -353,6 +402,14 @@ graph; use `Halt` until whole-graph detach is implemented.
 `logging.file_adapter` may select another external adapter path; otherwise
 Immortal uses `immortallog` beside its own executable.
 
+The resilience contracts execute a non-executable logger target, stream 16 MiB
+through a deliberately paused logger, and run a logger which consumes EOF but
+survives TERM. They prove that permission denial prevents the service start,
+kernel-pipe backpressure remains lossless, and drain expiry escalates through
+TERM to KILL before the broker is reaped. Logger stages which have already
+failed or entered backoff own no drainable child and normalize to Down so
+shutdown does not spend grace periods waiting for nonexistent work.
+
 Exactly one service source is accepted. With `--config`, direct command options
 are rejected instead of being silently merged; change the definition directly.
 `--check-config` validates and emits the same canonical schema without modifying
@@ -362,13 +419,29 @@ command begins are always child argv, even when they look like Immortal flags.
 
 ### Runtime and control boundary
 
-The system runtime root remains `/var/run/immortal` by default. Each service is
-discovered only at `ROOT/SERVICE/immortal.sock`. The root must be absolute,
-canonical, a real directory, and not group/world writable. Service directories
+The system runtime root is `/run/immortal` on Linux and `/var/run/immortal` on
+macOS and FreeBSD; the latter follows their native hierarchy while Linux uses
+the FHS runtime location for transient Unix sockets. The portable user root is
+`$HOME/.immortal`. `immortaldir` defaults to the platform system root.
+`immortalctl` automatically discovers both roots, while `--runtime-scope
+system|user` narrows automatic discovery and an explicit `--runtime-dir` or
+`IMMORTAL_SDIR` selects exactly one custom root.
+[FHS `/run`](https://specifications.freedesktop.org/fhs/latest/run.html)
+
+Each service is discovered only at `ROOT/SERVICE/immortal.sock`. The root must
+be absolute, canonical, a real directory, and not group/world writable. The
+automatic user root must also belong to the effective UID. Service directories
 must grant no group/other bits (normally `0700`); sockets must be mode `0600`;
 root, service directory, and socket ownership must agree. Hidden, unsafe,
-symlinked, wrongly owned, or
-wrongly typed entries are reported and ignored without mutation.
+symlinked, wrongly owned, or wrongly typed entries are reported and ignored
+without mutation.
+
+Automatic discovery has one global 4096-service bound. A missing automatic root
+is treated as empty; an unsafe automatic root is isolated, reported, and makes
+the overall result partial without hiding valid services from the other root.
+Status output includes `system`, `user`, or `custom` scope. Identical names from
+both automatic roots remain visible for all-status output, but a named mutation
+is rejected as ambiguous until `--runtime-scope` selects one root.
 
 The server authorizes only root or the socket owner using native Unix peer
 credentials on Linux, macOS, and FreeBSD. It never removes an entry merely
@@ -387,6 +460,11 @@ argument count, individual argument length, and total frame size are bounded.
 control-character-safe table. The foreground controlled executor populates the
 payload from live broker and lifecycle observations, including supervisor/main
 PID, argv, starts, failures, timing, backoff, and the last terminal result.
+After the authenticated socket is bound, status reports `Initializing` while
+required logger stages are starting or backing off; no service generation or
+main PID exists in that state. Successful logger initialization transitions
+exactly once into normal start processing. Bounded logger exhaustion instead
+publishes `Failed`, and an explicit start operation can retry initialization.
 The authenticated socket loop isolates each client, forwards requests through
 a bounded channel, and waits for the single-owner supervisor event loop to
 publish the completion response. Socket tasks never mutate lifecycle state.
@@ -503,7 +581,7 @@ failure tests, and required CI pass.
 - [x] Add typed stopped/continued collection to `fork` and consume it through `immortal-core`.
 - [ ] Add native Linux, macOS, and FreeBSD lifecycle jobs.
 - [x] Add deterministic arbitrary/truncation/byte-mutation decoder corpora.
-- [ ] Add continuous coverage-guided configuration and protocol fuzzing.
+- [x] Add continuous coverage-guided configuration and protocol fuzzing.
 - [x] Add release baselines for configuration and control codecs.
 - [ ] Add cross-platform lifecycle benchmarks and reviewed regression budgets.
 
@@ -548,7 +626,7 @@ failure tests, and required CI pass.
 
 - [x] Model and encode `Initializing`, `WaitingCondition`, `Starting`, `Running`,
   `Ready`, `Paused`, `Stopping`, `Backoff`, `Completed`, `Failed`, and `Exited`.
-- [ ] Publish `Initializing` while runtime resources are being acquired.
+- [x] Publish `Initializing` while runtime resources are being acquired.
 - [x] Keep desired state separate from observed state.
 - [x] Implement Up, Down, Once, Restart, Halt, and Exit transitions.
 - [x] Implement `always`, `on-failure`, and `never` restart policies.
@@ -568,23 +646,23 @@ failure tests, and required CI pass.
 - [x] Define and validate argv conditions with independent timeout/backoff.
 - [x] Execute pre-start conditions through the process broker.
 - [x] Run bounded post-exit hooks with exit/signal and generation context.
-- [ ] Implement descriptor-based fghack lifetime tracking.
-- [ ] Require stop/reload hooks for fghack and reject raw adopted-PID signals.
-- [ ] Document foreground invocations for common self-daemonizing software.
+- [x] Implement descriptor-based fghack lifetime tracking.
+- [x] Require stop/reload hooks for fghack and reject raw adopted-PID signals.
+- [x] Document foreground invocations for common self-daemonizing software.
 
 ### immortalctl
 
 #### Discovery, status, and output
 
-- [ ] Discover system and user supervisors from documented runtime roots.
+- [x] Discover system and user supervisors from documented runtime roots.
 - [x] Validate ownership and ignore malformed/unknown entries.
 - [x] Avoid broad stale-directory deletion.
 - [x] Show all services when no command is supplied.
 - [x] Support one service, `--all`, and legacy `*`.
 - [x] Provide stable table and JSON output without terminal escapes in JSON.
-- [x] Define, bound, transport, and render supervisor/main PID, generation,
-  desired/state, readiness, uptime/down time, starts, failures, last result,
-  backoff, logger health, and command.
+- [x] Define, bound, transport, and render discovery scope, supervisor/main PID,
+  generation, desired/state, readiness, uptime/down time, starts, failures,
+  last result, backoff, logger health, and command.
 - [x] Populate typed status fields from the supported fork-backed foreground runtime.
 - [x] Represent childless states without assuming a PID exists.
 - [x] Define nonzero exits for missing targets, partial failure, authorization,
@@ -618,7 +696,7 @@ failure tests, and required CI pass.
 - [x] `-t` / `signal term` -> main process.
 - [x] `-w` / `signal winch` -> main process.
 - [x] Reject multiple conflicting legacy signal flags.
-- [x] Reject absent, exited, and stale-generation targets (fghack remains gated).
+- [x] Reject absent, exited, stale-generation, and descriptor-unowned targets.
 - [x] Support explicit `--scope main|group`.
 - [x] Confirm STOP/TTIN/TTOU/CONT through child wait events.
 - [x] Preserve the signal exit reason for restart-policy decisions.
@@ -701,15 +779,39 @@ failure tests, and required CI pass.
 - [x] Inject disk-write/sync failure and broken downstream pipes.
 - [x] Stream huge and partial lines without unbounded line buffering.
 - [x] Test a real logger crash loop through exhaustion and manual recovery.
-- [ ] Test real permission failures, pipe backpressure, and shutdown drain
+- [x] Test real permission failures, pipe backpressure, and shutdown drain
   timeouts.
+
+## Coverage-guided fuzzing
+
+The `fuzz` directory is a separate Cargo workspace so nightly-only libFuzzer
+tooling never enters the release dependency graph. Its `config` target exercises
+the strict configuration byte parser, while `control` exercises both public
+request and response frame decoders. A valid version 2 definition seeds the
+configuration target; generated corpus entries and crash artifacts remain local
+and outside Git.
+
+Install `cargo-fuzz` and run bounded local checks inside DevPod:
+
+```sh
+scripts/dev-ssh cargo install cargo-fuzz --locked
+scripts/dev-ssh rustup toolchain install nightly --profile minimal
+scripts/dev-ssh cargo +nightly fuzz run config -- -max_total_time=60 -timeout=10 -rss_limit_mb=2048
+scripts/dev-ssh cargo +nightly fuzz run control -- -max_total_time=60 -timeout=10 -rss_limit_mb=2048
+```
+
+The dedicated GitHub Actions workflow runs both targets for one minute after
+relevant pushes and pull requests, and for ten minutes on its weekly schedule.
+Every run has per-input, memory, job, and overall campaign bounds so malformed
+input cannot consume CI indefinitely.
 
 ## Performance baselines
 
-Run the dependency-free release harness inside DevPod:
+Run the dependency-free release harnesses inside DevPod:
 
 ```sh
 scripts/dev-ssh cargo bench -p immortal-core --bench core_contracts
+scripts/dev-ssh cargo bench -p immortal-core --bench lifecycle_contracts
 ```
 
 The initial Linux x86_64 DevPod medians recorded on 2026-07-11 are
@@ -721,11 +823,63 @@ informational reference points:
 | Control request encode + decode | 39 ns/op |
 | Typed status encode + decode | 130 ns/op |
 
+The first local fork-backed run on the same DevPod class, recorded on
+2026-07-12, produced these additional reference points:
+
+| Contract | Median |
+|---|---:|
+| Broker spawn + normal exit + reap | 504,126 ns/op |
+| Broker spawn + `SIGTERM` + reap | 333,174 ns/op |
+
 These are not portable CI thresholds. Regression budgets will be set only after
 the fork-backed spawn/wait/signal path is measurable on Linux, macOS, and
-FreeBSD and normal host variance is known.
+FreeBSD and normal host variance is known. The native lifecycle jobs now record
+median fork-spawn-wait and fork-spawn-signal-wait latency on all three operating
+systems. The lifecycle harness includes command materialization, broker IPC,
+process creation, acknowledgement, and terminal reaping; it uses hard event and
+cleanup deadlines and retains the active process-group identity until reaping.
+The checklist remains pending until multiple remote runs establish reviewed
+per-platform budgets rather than thresholds inferred from one Linux machine.
+
+Budget acceptance follows a recorded process:
+
+1. Collect at least ten successful runs for each metric and platform across at
+   least three days, using the same pinned toolchain, runner image, and commit.
+2. Retain every valid result. Exclude a run only when a documented runner or
+   platform incident invalidated the complete job, never because its latency is
+   inconvenient.
+3. Record the median, maximum, and nearest-rank p95 of the per-run medians. Set
+   the initial ceiling no lower than 125% of the observed maximum so ordinary
+   shared-runner variance does not become a correctness gate.
+4. Store separate Linux, macOS, and FreeBSD ceilings; the QEMU-backed FreeBSD
+   result must never inherit a Linux or macOS threshold.
+5. Investigate one ceiling breach and confirm it with a clean rerun before
+   treating it as a regression. Loosen a ceiling only with linked measurements
+   explaining the environmental or architectural change.
+
+The accepted evidence and ceilings will replace this pending table:
+
+| Platform | Runner | Runs | Spawn/reap ceiling | Signal/reap ceiling |
+|---|---|---:|---:|---:|
+| Linux | Ubuntu 24.04 | pending | pending | pending |
+| macOS | macOS 15 | pending | pending | pending |
+| FreeBSD | FreeBSD 14.3 QEMU guest | pending | pending | pending |
 
 ## Build and validation
+
+The repository pins Rust 1.97.0, matching `rust-version`. GitHub Actions runs
+the complete workspace test suite on Ubuntu 24.04 and macOS 15. The existing
+FreeBSD cross-check remains a fast compile gate, while a separate
+[FreeBSD VM action](https://github.com/vmactions/freebsd-vm) pinned to v1.4.6
+runs the same lifecycle suite inside FreeBSD 14.3. The VM job has an explicit
+deadline, installs the pinned toolchain through FreeBSD's `rustup-init` package,
+and does not copy build artifacts back to the Linux host.
+
+The native FreeBSD checklist item remains pending until the new remote job has
+completed successfully at least once; workflow configuration alone is not
+runtime evidence. Linux and macOS use GitHub-hosted native VMs, while FreeBSD
+runs as a QEMU guest because GitHub-hosted and self-hosted runner support is
+limited to Linux, Windows, and macOS.
 
 Run project commands inside DevPod:
 

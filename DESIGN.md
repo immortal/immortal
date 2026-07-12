@@ -115,7 +115,11 @@ distinguishes exec failure from a successfully executed program before the
 generation becomes Running.
 
 Broker IPC is bounded, versioned, and private. EOF or supervisor death makes the
-broker stop and reap owned groups before exiting. Broker death places the
+broker stop and reap owned groups before exiting. For a descriptor-tracked
+generation whose direct launcher has already exited, the broker instead owns a
+pre-runtime materialized stop command: it executes that command with a hard
+deadline and requires lifetime-descriptor EOF before reporting clean shutdown.
+Broker death places the
 supervisor in a terminal failure state; it must never spawn an untracked
 replacement path. Daemon startup is reported to the invoking process only after
 the broker, service lock, runtime directory, and control socket are ready.
@@ -154,6 +158,25 @@ The post-exit command receives the resolved service execution context plus
 the main generation, including failed exec and readiness paths; they do not
 describe the hook's own outcome.
 
+Descriptor tracking is an explicit exception to direct-child supervision, not
+PID adoption. The broker creates a CLOEXEC socket pair, maps only the service
+endpoint to descriptor 4, and publishes `IMMORTAL_LIFETIME_FD=4`. Application
+forks may inherit that capability; the broker endpoint observes only EOF and
+rejects data. Reaping the original launcher clears the observed main PID but
+does not complete the logical generation. Completion requires both launcher
+reaping and lifetime closure, in either order. A clean launcher followed by EOF
+is published as `LifetimeClosed`; descriptor misuse is `LifetimeFailed`.
+
+The supervisor owns stop and reload policy while the broker continues to own
+all process creation and waiting. Stop, restart, halt, readiness failure, and OS
+shutdown run the configured stop command as an isolated broker task and wait a
+separate bounded interval for EOF. HUP runs the reload command; every other raw
+signal and live-service `Exit` is rejected once descriptor tracking is selected.
+A hook failure, timeout, or missing EOF restores the logical live state rather
+than claiming Down. The immutable stop plan is copied once at the pre-Tokio
+broker boundary so unexpected supervisor EOF can use the same bounded cleanup
+contract without trusting a PID file.
+
 Logging pipelines are materialized before the broker starts. The single-threaded
 broker owns stable CLOEXEC pipe masters and duplicates only the endpoints needed
 by each service or logger spawn. The Tokio supervisor owns logger restart policy
@@ -166,7 +189,10 @@ pre-start work and publishes `Failed`. Exhaustion after a service generation is
 live changes logger health without silently stopping that service. Explicit
 start operations reset failed logger stages. Final shutdown closes broker
 writer masters, permits bounded EOF drain, then signals logger groups from
-downstream to upstream before broker reaping.
+downstream to upstream before broker reaping. Failed or backing-off stages have
+no drainable child and normalize to Down at shutdown; live stages retain the
+EOF, TERM, and KILL sequence. Real permission denial, oversized lossless pipe
+backpressure, and TERM-resistant drain expiry are process contract-tested.
 
 ### Required `immortal/fork` contract
 
@@ -226,6 +252,12 @@ Remaining milestones are vertical and contract-tested:
 Packaging, release branches, and Go deprecation are deliberately outside the
 skeleton milestone.
 
+Native lifecycle evidence is separated from cross-compilation. GitHub-hosted
+Ubuntu and macOS jobs run all workspace contracts directly. A pinned FreeBSD VM
+action runs the same suite on a FreeBSD 14.3 kernel, while the Linux-hosted
+FreeBSD target check remains only a fast compile gate. A native job is not
+considered complete until its remote execution is green.
+
 Milestone 2 is implemented for foreground and checked daemon launches. The CLI
 builds or loads the strict service model and resolves account data before any
 fork. Daemon mode performs checked double-fork detachment before the core
@@ -240,9 +272,22 @@ stale-socket safety, peer-authenticated bounded serving, optimistic generation
 matching, all lifecycle operations, raw signal delivery, live-child detach, and
 complete status publication share the same serialized executor. Logger
 Starting, Ready, Backoff, and Failed health is published from the same owner;
-bounded exhaustion and explicit operator recovery are contract-tested.
+bounded exhaustion and explicit operator recovery are contract-tested. Once
+the authenticated socket is bound, the controlled state machine remains
+`Initializing` while required logger stages start or back off. It publishes no
+service generation during that interval, then transitions exactly once to
+normal start processing or to bounded logger failure.
 
-The readiness and lifecycle-hook portions of milestone 3 are implemented. For each
+`immortalctl` treats runtime discovery as a bounded multi-root trust boundary.
+Automatic mode scans the native system root and the effective user's
+`$HOME/.immortal`; exact `--runtime-dir` and `IMMORTAL_SDIR` inputs disable that
+aggregation. Root failures are isolated, user ownership is checked against the
+effective UID, and one global service bound covers both scans. Scope remains in
+status output, and duplicate names require an explicit system or user scope for
+mutation rather than relying on precedence.
+
+The readiness, lifecycle-hook, and descriptor-tracking portions of milestone 3
+are implemented. For each
 `notify-fd` generation the broker creates a CLOEXEC socket pair, maps the child
 endpoint to descriptor 3, publishes `IMMORTAL_READY_FD=3`, and monitors the
 other endpoint on its current-thread Tokio runtime. Exact-token success,
@@ -251,7 +296,10 @@ failure stops the group and feeds restart policy without treating a PID as
 identity. Pre-start conditions have independent bounded retry policy. Post-exit
 hooks run after reaping with typed exit, signal, generation, exec-failure, and
 readiness-failure context; hook failure, timeout, and shutdown cleanup are
-contract-tested. Broker-owned logger chains now cover external commands,
+contract-tested. Descriptor tracking covers inherited lifetime EOF, launcher
+PID clearing, strict stop/reload hooks, HUP mapping, raw-signal rejection,
+hook failure and timeout recovery, and broker cleanup after supervisor loss.
+Broker-owned logger chains now cover external commands,
 replaceable file adapters, stable pipes across logger failure, combined and
 separate streams, multi-stage passthrough, status, EOF drain, and bounded
 downstream-first shutdown.

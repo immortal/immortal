@@ -22,7 +22,7 @@ pub fn new() -> Command {
         .after_help(
             "Examples:
   immortaldir /etc/immortal
-  immortaldir --runtime-dir /var/run/immortal /srv/immortal
+  immortaldir /srv/immortal
   immortaldir --once --dry-run ./services",
         )
         .color(ColorChoice::Auto)
@@ -60,7 +60,7 @@ fn arg_runtime_dir() -> Arg {
         .value_name("DIR")
         .value_hint(ValueHint::DirPath)
         .env("IMMORTAL_SDIR")
-        .default_value("/var/run/immortal")
+        .default_value(immortal_core::runtime::system_runtime_root().as_os_str())
         .help("Store and discover supervisor state under DIR")
 }
 

@@ -1,0 +1,48 @@
+name: Rust Fuzzing
+
+on:
+  push:
+    branches:
+      - rust
+    paths:
+      - ".github/workflows/fuzz.yml"
+      - "crates/immortal-core/**"
+      - "fuzz/**"
+  pull_request:
+    paths:
+      - ".github/workflows/fuzz.yml"
+      - "crates/immortal-core/**"
+      - "fuzz/**"
+  schedule:
+    - cron: "17 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }} parser
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: fuzz-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - config
+          - control
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Run bounded coverage-guided fuzzing
+        run: >-
+          cargo fuzz run ${{ matrix.target }} --
+          -max_total_time=${{ github.event_name == 'schedule' && 600 || 60 }}
+          -timeout=10
+          -rss_limit_mb=2048

@@ -3,6 +3,7 @@
 use std::{
     error::Error,
     fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -219,6 +220,92 @@ fn main() -> Result<(), Box<dyn Error>> {
         ExitClass::Success,
         "graceful supervisor SIGINT",
     )?;
+    prove_logger_exec_permission_denial(binary)?;
+    prove_lossless_pipe_backpressure(binary)?;
+    prove_logger_drain_timeout_escalates(binary)?;
+    Ok(())
+}
+
+fn prove_logger_exec_permission_denial(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let logger = MarkerFile::new("logger-no-execute");
+    let service = MarkerFile::new("logger-permission-service");
+    fs::write(&logger.0, "#!/bin/sh\nexec /bin/cat\n")?;
+    fs::set_permissions(&logger.0, fs::Permissions::from_mode(0o600))?;
+    let config = ConfigFile::new(
+        "logger-permission",
+        &format!(
+            "version: 2\ncommand: [/bin/sh, -c, ': > \"$SERVICE_MARKER\"']\nenvironment:\n  SERVICE_MARKER: '{}'\nlogging:\n  combine_stderr: true\n  restart:\n    max_retries: 0\n  stdout:\n    logger: ['{}']\nrestart:\n  policy: never\n  exit_when_done: true\n",
+            service.path_str()?,
+            logger.path_str()?
+        ),
+    )?;
+    assert_status(
+        run(binary, ["--foreground", "--config", config.path_str()?])?,
+        ExitClass::TemporaryFailure,
+        "non-executable logger",
+    )?;
+    if service.0.exists() {
+        return Err("service started after logger execute permission denial".into());
+    }
+    Ok(())
+}
+
+fn prove_lossless_pipe_backpressure(binary: &Path) -> Result<(), Box<dyn Error>> {
+    const PAYLOAD_BYTES: u64 = 16 * 1024 * 1024;
+
+    let writing = MarkerFile::new("backpressure-writing");
+    let consuming = MarkerFile::new("backpressure-consuming");
+    let finished = MarkerFile::new("backpressure-finished");
+    let output = MarkerFile::new("backpressure-output");
+    let config = ConfigFile::new(
+        "logger-backpressure",
+        &format!(
+            "version: 2\ncommand: [/bin/sh, -c, ': > \"$WRITING\"; dd if=/dev/zero bs=1048576 count=16 2>/dev/null; : > \"$FINISHED\"']\nenvironment:\n  WRITING: '{}'\n  CONSUMING: '{}'\n  FINISHED: '{}'\n  OUTPUT: '{}'\nlogging:\n  combine_stderr: true\n  stdout:\n    logger: [/bin/sh, -c, 'while [ ! -e \"$WRITING\" ]; do sleep 0.01; done; sleep 1; : > \"$CONSUMING\"; cat > \"$OUTPUT\"']\nrestart:\n  policy: never\n  exit_when_done: true\n",
+            writing.path_str()?,
+            consuming.path_str()?,
+            finished.path_str()?,
+            output.path_str()?
+        ),
+    )?;
+    assert_status(
+        run(binary, ["--foreground", "--config", config.path_str()?]).map_err(|error| {
+            std::io::Error::other(format!("logger backpressure contract failed: {error}"))
+        })?,
+        ExitClass::Success,
+        "lossless logger backpressure",
+    )?;
+    let output_metadata = fs::metadata(&output.0)?;
+    let consuming_at = fs::metadata(&consuming.0)?.modified()?;
+    let finished_at = fs::metadata(&finished.0)?.modified()?;
+    if output_metadata.len() != PAYLOAD_BYTES || finished_at < consuming_at {
+        return Err(format!(
+            "backpressure contract failed: bytes={}, consuming={consuming_at:?}, finished={finished_at:?}",
+            output_metadata.len()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn prove_logger_drain_timeout_escalates(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let terminated = MarkerFile::new("logger-drain-terminated");
+    let config = ConfigFile::new(
+        "logger-drain-timeout",
+        &format!(
+            "version: 2\ncommand: [/bin/sh, -c, 'printf drain-timeout']\nenvironment:\n  TERM_MARKER: '{}'\nlogging:\n  combine_stderr: true\n  stdout:\n    logger: [/bin/sh, -c, 'trap \": > \\\"$TERM_MARKER\\\"\" TERM; cat >/dev/null; while :; do sleep 30; done']\nrestart:\n  policy: never\n  exit_when_done: true\n",
+            terminated.path_str()?
+        ),
+    )?;
+    let started = Instant::now();
+    let child = spawn_immortal(binary, ["--foreground", "--config", config.path_str()?])?;
+    assert_status(
+        ChildGuard::new(child).wait(Duration::from_secs(20))?,
+        ExitClass::Success,
+        "logger drain timeout escalation",
+    )?;
+    if !terminated.0.exists() || started.elapsed() < Duration::from_secs(6) {
+        return Err("logger was not drained, terminated, and escalated on schedule".into());
+    }
     Ok(())
 }
 

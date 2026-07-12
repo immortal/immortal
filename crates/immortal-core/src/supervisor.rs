@@ -65,6 +65,10 @@ pub enum ChildResult {
     Exited(u8),
     /// Child was terminated by a signal.
     Signaled(u8),
+    /// Every inherited lifetime descriptor closed without protocol misuse.
+    LifetimeClosed,
+    /// The lifetime descriptor was used as data rather than held as a capability.
+    LifetimeFailed,
 }
 
 impl ChildResult {
@@ -379,6 +383,32 @@ impl StateMachine {
             return Err(self.invalid("begin_stop"));
         }
         self.state = SupervisorState::Stopping(generation);
+        Ok(())
+    }
+
+    /// Abort a descriptor-hook stop which did not establish service shutdown.
+    ///
+    /// The logical generation remains owned even when its original launcher
+    /// has exited; callers restore whether the generation had reached ready.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the exact generation is currently stopping.
+    pub fn abort_stop(
+        &mut self,
+        generation: Generation,
+        ready: bool,
+        desired: DesiredState,
+    ) -> Result<(), TransitionError> {
+        if self.state != SupervisorState::Stopping(generation) {
+            return Err(self.invalid("abort_stop"));
+        }
+        self.desired = desired;
+        self.state = if ready {
+            SupervisorState::Ready(generation)
+        } else {
+            SupervisorState::Running(generation)
+        };
         Ok(())
     }
 
@@ -839,6 +869,27 @@ mod tests {
         assert!(machine.child_continued(Generation(2)).is_err());
         machine.child_continued(generation)?;
         assert_eq!(machine.state(), SupervisorState::Ready(generation));
+        Ok(())
+    }
+
+    #[test]
+    fn aborted_descriptor_stop_restores_live_state_and_intent() -> Result<(), Box<dyn Error>> {
+        let mut machine = StateMachine::default();
+        machine.begin_start()?;
+        let generation = machine.preconditions_ready()?;
+        machine.child_started(generation)?;
+        machine.child_ready(generation)?;
+        machine.set_desired(DesiredState::Halt);
+        machine.begin_stop(generation)?;
+
+        machine.abort_stop(generation, true, DesiredState::Up)?;
+        assert_eq!(machine.state(), SupervisorState::Ready(generation));
+        assert_eq!(machine.desired(), DesiredState::Up);
+        assert!(
+            machine
+                .abort_stop(generation, true, DesiredState::Up)
+                .is_err()
+        );
         Ok(())
     }
 
