@@ -569,13 +569,13 @@ mod tests {
     impl TestDirectory {
         fn new() -> Result<Self, Box<dyn Error>> {
             let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
+            let path = Path::new("/tmp").join(format!(
                 "immortal-runtime-{}-{sequence}",
                 std::process::id()
             ));
             fs::create_dir(&path)?;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
-            Ok(Self(path))
+            Ok(Self(fs::canonicalize(path)?))
         }
 
         fn path(&self) -> &Path {
