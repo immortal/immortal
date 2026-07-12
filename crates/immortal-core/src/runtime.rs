@@ -4,16 +4,208 @@ use std::{
     collections::BTreeMap,
     error::Error,
     fmt::{self, Display, Formatter},
-    fs::{self, Metadata},
+    fs::{self, DirBuilder, File, Metadata, OpenOptions, TryLockError},
     io,
-    os::unix::fs::{FileTypeExt, MetadataExt},
+    os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
 /// Control socket filename inside each service runtime directory.
 pub const CONTROL_SOCKET_NAME: &str = "immortal.sock";
+/// Advisory supervisor lock held for the complete runtime-directory lifetime.
+pub const SUPERVISOR_LOCK_NAME: &str = "supervisor.lock";
 /// Maximum safely discoverable services in one runtime root.
 pub const MAX_RUNTIME_SERVICES: usize = 4096;
+
+/// Exclusive ownership of one service runtime directory.
+#[derive(Debug)]
+pub struct RuntimeOwner {
+    directory: PathBuf,
+    socket: PathBuf,
+    _lock: File,
+}
+
+impl RuntimeOwner {
+    /// Acquire one safe service directory and its nonblocking advisory lock.
+    ///
+    /// The parent runtime root must already exist and satisfy discovery policy.
+    /// The service directory is created with mode `0700` when absent. A stale
+    /// socket is removed only after the lock is held and only when it is an
+    /// owner-matching mode-`0600` Unix socket.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsafe paths, ownership/mode mismatches, another
+    /// live lock holder, or stale entries which cannot be proven safe to remove.
+    pub fn acquire(directory: &Path) -> io::Result<Self> {
+        let (root, _name) = validate_service_path(directory)?;
+        let root_metadata = validate_root(root)?;
+        create_service_directory(directory)?;
+        let directory_metadata = validate_service_directory(directory, &root_metadata)?;
+        let lock = acquire_lock(directory, &directory_metadata)?;
+        let socket = directory.join(CONTROL_SOCKET_NAME);
+        remove_owned_stale_socket(&socket, &directory_metadata)?;
+        Ok(Self {
+            directory: directory.to_owned(),
+            socket,
+            _lock: lock,
+        })
+    }
+
+    /// Canonical service directory held by this owner.
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    /// Control socket path made safe for a new listener.
+    #[must_use]
+    pub fn socket(&self) -> &Path {
+        &self.socket
+    }
+}
+
+fn validate_service_path(directory: &Path) -> io::Result<(&Path, &str)> {
+    if !directory.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "service runtime directory must be absolute",
+        ));
+    }
+    let root = directory.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "service runtime directory has no parent root",
+        )
+    })?;
+    let name = directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| safe_service_name(name) && !name.starts_with('.'))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unsafe service name"))?;
+    Ok((root, name))
+}
+
+fn create_service_directory(directory: &Path) -> io::Result<()> {
+    let mut builder = DirBuilder::new();
+    builder.mode(0o700);
+    match builder.create(directory) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn validate_service_directory(directory: &Path, root: &Metadata) -> io::Result<Metadata> {
+    if fs::canonicalize(directory)? != directory {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "service runtime directory must be canonical and contain no symlink",
+        ));
+    }
+    let metadata = fs::symlink_metadata(directory)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "service runtime path must be a real directory",
+        ));
+    }
+    if metadata.mode() & 0o777 != 0o700 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "service runtime directory mode must be 0700",
+        ));
+    }
+    if metadata.uid() != root.uid() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "runtime root and service directory owners differ",
+        ));
+    }
+    Ok(metadata)
+}
+
+fn acquire_lock(directory: &Path, owner: &Metadata) -> io::Result<File> {
+    let path = directory.join(SUPERVISOR_LOCK_NAME);
+    validate_lock_path_before_open(&path, owner)?;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    let lock = options.open(&path)?;
+    lock.set_permissions(fs::Permissions::from_mode(0o600))?;
+    validate_lock_identity(&path, &lock, owner)?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "another supervisor owns the service runtime directory",
+            ));
+        }
+        Err(TryLockError::Error(error)) => return Err(error),
+    }
+    validate_lock_identity(&path, &lock, owner)?;
+    Ok(lock)
+}
+
+fn validate_lock_path_before_open(path: &Path, owner: &Metadata) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata)
+            if !metadata.file_type().is_symlink()
+                && metadata.is_file()
+                && metadata.uid() == owner.uid() =>
+        {
+            Ok(())
+        }
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unsafe existing supervisor lock file",
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn validate_lock_identity(path: &Path, lock: &File, owner: &Metadata) -> io::Result<()> {
+    let path_metadata = fs::symlink_metadata(path)?;
+    let file_metadata = lock.metadata()?;
+    if path_metadata.file_type().is_symlink()
+        || !path_metadata.is_file()
+        || path_metadata.uid() != owner.uid()
+        || path_metadata.mode() & 0o777 != 0o600
+        || path_metadata.dev() != file_metadata.dev()
+        || path_metadata.ino() != file_metadata.ino()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unsafe supervisor lock file",
+        ));
+    }
+    Ok(())
+}
+
+fn remove_owned_stale_socket(socket: &Path, owner: &Metadata) -> io::Result<()> {
+    let metadata = match fs::symlink_metadata(socket) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.file_type().is_socket()
+        || metadata.uid() != owner.uid()
+        || metadata.mode() & 0o777 != 0o600
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "refusing to remove an unsafe stale control endpoint",
+        ));
+    }
+    fs::remove_file(socket)
+}
 
 /// One permission-validated runtime service endpoint.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -241,15 +433,18 @@ fn problem(result: &mut DiscoveryResult, path: &Path, kind: DiscoveryProblemKind
 mod tests {
     use std::{
         error::Error,
-        fs,
+        fs, io,
         os::unix::fs::{PermissionsExt, symlink},
+        os::unix::net::UnixListener as StdUnixListener,
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
     };
 
     use tokio::net::UnixListener;
 
-    use super::{DiscoveryProblemKind, discover};
+    use super::{
+        CONTROL_SOCKET_NAME, DiscoveryProblemKind, RuntimeOwner, SUPERVISOR_LOCK_NAME, discover,
+    };
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -335,6 +530,58 @@ mod tests {
         let root = TestDirectory::new()?;
         fs::set_permissions(root.path(), fs::Permissions::from_mode(0o777))?;
         assert!(discover(root.path()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_owner_locks_before_removing_an_owned_stale_socket() -> Result<(), Box<dyn Error>> {
+        let root = TestDirectory::new()?;
+        let service = root.path().join("api");
+        let owner = RuntimeOwner::acquire(&service)?;
+        assert_eq!(owner.directory(), service);
+        assert_eq!(owner.socket(), service.join(CONTROL_SOCKET_NAME));
+        assert_eq!(
+            fs::symlink_metadata(&service)?.permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::symlink_metadata(service.join(SUPERVISOR_LOCK_NAME))?
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        let stale = StdUnixListener::bind(owner.socket())?;
+        fs::set_permissions(owner.socket(), fs::Permissions::from_mode(0o600))?;
+        drop(stale);
+        let locked_error = RuntimeOwner::acquire(&service)
+            .err()
+            .ok_or("a second runtime owner unexpectedly acquired the supervisor lock")?;
+        assert_eq!(locked_error.kind(), io::ErrorKind::AlreadyExists);
+        assert!(owner.socket().exists());
+
+        drop(owner);
+        let replacement = RuntimeOwner::acquire(&service)?;
+        assert!(!replacement.socket().exists());
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_owner_refuses_unsafe_lock_and_socket_entries() -> Result<(), Box<dyn Error>> {
+        let root = TestDirectory::new()?;
+        let service = root.path().join("worker");
+        fs::create_dir(&service)?;
+        fs::set_permissions(&service, fs::Permissions::from_mode(0o700))?;
+        let target = root.path().join("target");
+        fs::write(&target, b"do not follow")?;
+        symlink(&target, service.join(SUPERVISOR_LOCK_NAME))?;
+        assert!(RuntimeOwner::acquire(&service).is_err());
+        fs::remove_file(service.join(SUPERVISOR_LOCK_NAME))?;
+
+        fs::write(service.join(CONTROL_SOCKET_NAME), b"not a socket")?;
+        assert!(RuntimeOwner::acquire(&service).is_err());
+        assert!(service.join(CONTROL_SOCKET_NAME).is_file());
         Ok(())
     }
 }

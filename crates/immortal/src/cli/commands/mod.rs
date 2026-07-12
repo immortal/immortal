@@ -31,14 +31,14 @@ pub fn new() -> Command {
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .long_about(
             "Run a command detached from its controlling terminal, supervise it, and restart it \
-             when it exits. The Rust rewrite currently defines this interface but does not yet \
-             execute or supervise the command.",
+             when it exits. The Rust rewrite currently enables the contract-tested foreground \
+             path. Daemon mode and options whose lifecycle is not implemented fail explicitly.",
         )
         .override_usage("immortal [OPTIONS] <COMMAND> [ARGUMENTS]...")
         .after_help(
             "Examples:
-  immortal --log-file /tmp/sleep.log --wait 2 /bin/sh -c 'date && sleep 5'
-  immortal --config /usr/local/etc/immortal/run.yml
+  immortal --foreground --retries 0 /bin/true
+  immortal --foreground --config /usr/local/etc/immortal/run.yml
   immortal --config run.yml --check-config",
         )
         .color(ColorChoice::Auto)
@@ -211,7 +211,7 @@ fn arg_control_dir() -> Arg {
         .long("control-dir")
         .value_name("DIR")
         .value_hint(ValueHint::DirPath)
-        .help("Create the supervision directory in DIR")
+        .help("Own DIR as this service's runtime directory and serve its control socket")
         .conflicts_with("name")
 }
 

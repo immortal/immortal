@@ -295,6 +295,28 @@ impl StateMachine {
         Ok(())
     }
 
+    /// Record deliberate broker detachment of a live generation for `Exit`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the exact generation is live and operator intent
+    /// requests supervisor exit without stopping the child.
+    pub fn child_detached(&mut self, generation: Generation) -> Result<(), TransitionError> {
+        if self.desired != DesiredState::Exit
+            || !matches!(
+                self.state,
+                SupervisorState::Starting(current)
+                    | SupervisorState::Started(current)
+                    | SupervisorState::Ready(current)
+                    if current == generation
+            )
+        {
+            return Err(self.invalid("child_detached"));
+        }
+        self.state = SupervisorState::Exiting;
+        Ok(())
+    }
+
     /// Publish the decision made after reaping the current child.
     ///
     /// # Errors
@@ -351,6 +373,43 @@ impl StateMachine {
         } else {
             SupervisorState::Down
         };
+        Ok(())
+    }
+
+    /// Cancel pending condition/start-delay or restart-backoff work.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the lifecycle is waiting without a child.
+    pub fn cancel_pending(&mut self) -> Result<(), TransitionError> {
+        if !matches!(
+            self.state,
+            SupervisorState::Waiting | SupervisorState::Backoff { .. }
+        ) {
+            return Err(self.invalid("cancel_pending"));
+        }
+        self.state = if matches!(self.desired, DesiredState::Halt | DesiredState::Exit) {
+            SupervisorState::Exiting
+        } else {
+            SupervisorState::Down
+        };
+        Ok(())
+    }
+
+    /// Exit from a childless stable state after Halt or Exit intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a child may be alive or operator intent does not request exit.
+    pub fn exit_without_child(&mut self) -> Result<(), TransitionError> {
+        if !matches!(
+            self.state,
+            SupervisorState::Down | SupervisorState::Failed(_)
+        ) || !matches!(self.desired, DesiredState::Halt | DesiredState::Exit)
+        {
+            return Err(self.invalid("exit_without_child"));
+        }
+        self.state = SupervisorState::Exiting;
         Ok(())
     }
 
@@ -765,5 +824,50 @@ mod tests {
         conditions.passed();
         assert_eq!(conditions.failure_streak(), 0);
         assert_eq!(conditions.failed(&condition).base_delay_seconds, 1);
+    }
+
+    #[test]
+    fn childless_pending_states_cancel_deterministically() -> Result<(), Box<dyn Error>> {
+        let mut waiting = StateMachine::default();
+        waiting.begin_start()?;
+        waiting.set_desired(DesiredState::Halt);
+        waiting.cancel_pending()?;
+        assert_eq!(waiting.state(), SupervisorState::Exiting);
+
+        let mut backoff = StateMachine::default();
+        backoff.begin_start()?;
+        let generation = backoff.preconditions_ready()?;
+        backoff.child_started(generation)?;
+        backoff.child_ready(generation)?;
+        backoff.child_reaped(
+            generation,
+            RestartDecision::Restart {
+                base_delay_seconds: 1,
+                jitter_percent: 0,
+            },
+        )?;
+        backoff.set_desired(DesiredState::Halt);
+        backoff.cancel_pending()?;
+        assert_eq!(backoff.state(), SupervisorState::Exiting);
+
+        let mut down = StateMachine::default();
+        down.set_desired(DesiredState::Exit);
+        down.exit_without_child()?;
+        assert_eq!(down.state(), SupervisorState::Exiting);
+        Ok(())
+    }
+
+    #[test]
+    fn live_generation_detaches_only_for_explicit_exit() -> Result<(), Box<dyn Error>> {
+        let mut machine = StateMachine::default();
+        machine.begin_start()?;
+        let generation = machine.preconditions_ready()?;
+        machine.child_started(generation)?;
+        machine.child_ready(generation)?;
+        assert!(machine.child_detached(generation).is_err());
+        machine.set_desired(DesiredState::Exit);
+        machine.child_detached(generation)?;
+        assert_eq!(machine.state(), SupervisorState::Exiting);
+        Ok(())
     }
 }

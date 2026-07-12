@@ -8,15 +8,35 @@ use std::{
 
 use clap::ArgMatches;
 
+/// Typed direct-command inputs which are safe to apply before broker creation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectService {
+    pub child_pid: Option<PathBuf>,
+    pub command: Vec<String>,
+    pub control_directory: Option<PathBuf>,
+    pub foreground: bool,
+    pub retries: i32,
+    pub start_delay_seconds: u64,
+    pub supervisor_pid: Option<PathBuf>,
+    pub user: Option<String>,
+    pub working_directory: Option<PathBuf>,
+    pub unsupported_options: Vec<&'static str>,
+}
+
 /// Typed operation selected by the command line.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
     /// Validate a file and emit the normalized supported schema.
     CheckConfig(PathBuf),
     /// Supervise the service described by a configuration file.
-    SuperviseConfig(PathBuf),
+    SuperviseConfig {
+        control_directory: Option<PathBuf>,
+        path: PathBuf,
+        foreground: bool,
+        unsupported_options: Vec<&'static str>,
+    },
     /// Supervise a direct argv command.
-    SuperviseCommand(Vec<String>),
+    SuperviseCommand(DirectService),
 }
 
 /// A required invariant was absent from otherwise valid Clap matches.
@@ -42,7 +62,12 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         return if matches.get_flag("check-config") {
             Ok(Action::CheckConfig(path))
         } else {
-            Ok(Action::SuperviseConfig(path))
+            Ok(Action::SuperviseConfig {
+                control_directory: matches.get_one::<String>("control-dir").map(PathBuf::from),
+                path,
+                foreground: matches.get_flag("foreground"),
+                unsupported_options: Vec::new(),
+            })
         };
     }
 
@@ -51,14 +76,37 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         .ok_or(DispatchError("missing service command"))?
         .cloned()
         .collect();
-    Ok(Action::SuperviseCommand(command))
+    let unsupported_options = [
+        ("env-dir", "--env-dir"),
+        ("follow-pid", "--follow-pid"),
+        ("log-file", "--log-file"),
+        ("logger", "--logger"),
+        ("name", "--name"),
+    ]
+    .into_iter()
+    .filter_map(|(id, display)| matches.contains_id(id).then_some(display))
+    .collect();
+    Ok(Action::SuperviseCommand(DirectService {
+        child_pid: matches.get_one::<String>("child-pid").map(PathBuf::from),
+        command,
+        control_directory: matches.get_one::<String>("control-dir").map(PathBuf::from),
+        foreground: matches.get_flag("foreground"),
+        retries: matches.get_one::<i32>("retries").copied().unwrap_or(-1),
+        start_delay_seconds: matches.get_one::<u64>("wait").copied().unwrap_or(0),
+        supervisor_pid: matches
+            .get_one::<String>("supervisor-pid")
+            .map(PathBuf::from),
+        user: matches.get_one::<String>("user").cloned(),
+        working_directory: matches.get_one::<String>("working-dir").map(PathBuf::from),
+        unsupported_options,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use std::{error::Error, path::PathBuf};
 
-    use super::{Action, action};
+    use super::{Action, DirectService, action};
     use crate::cli::commands;
 
     #[test]
@@ -87,12 +135,98 @@ mod tests {
         ])?;
         assert_eq!(
             action(&matches)?,
-            Action::SuperviseCommand(vec![
-                "/bin/sh".to_owned(),
-                "-c".to_owned(),
-                "echo ready".to_owned(),
-                "--child-option".to_owned(),
-            ])
+            Action::SuperviseCommand(DirectService {
+                child_pid: None,
+                command: vec![
+                    "/bin/sh".to_owned(),
+                    "-c".to_owned(),
+                    "echo ready".to_owned(),
+                    "--child-option".to_owned(),
+                ],
+                control_directory: None,
+                foreground: false,
+                retries: -1,
+                start_delay_seconds: 0,
+                supervisor_pid: None,
+                user: None,
+                working_directory: None,
+                unsupported_options: Vec::new(),
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn captures_supported_and_gates_unimplemented_direct_options() -> Result<(), Box<dyn Error>> {
+        let matches = commands::new().try_get_matches_from([
+            "immortal",
+            "--foreground",
+            "--retries",
+            "3",
+            "--wait",
+            "2",
+            "--working-dir",
+            "/tmp",
+            "--child-pid",
+            "/tmp/child.pid",
+            "--supervisor-pid",
+            "/tmp/supervisor.pid",
+            "--user",
+            "service-account",
+            "--log-file",
+            "/tmp/run.log",
+            "/bin/true",
+        ])?;
+        assert_eq!(
+            action(&matches)?,
+            Action::SuperviseCommand(DirectService {
+                child_pid: Some(PathBuf::from("/tmp/child.pid")),
+                command: vec!["/bin/true".to_owned()],
+                control_directory: None,
+                foreground: true,
+                retries: 3,
+                start_delay_seconds: 2,
+                supervisor_pid: Some(PathBuf::from("/tmp/supervisor.pid")),
+                user: Some("service-account".to_owned()),
+                working_directory: Some(PathBuf::from("/tmp")),
+                unsupported_options: vec!["--log-file"],
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn carries_an_exact_control_directory_for_commands_and_configs() -> Result<(), Box<dyn Error>> {
+        let command = commands::new().try_get_matches_from([
+            "immortal",
+            "--control-dir",
+            "/run/immortal/api",
+            "/bin/true",
+        ])?;
+        let Action::SuperviseCommand(command) = action(&command)? else {
+            return Err("expected a direct command action".into());
+        };
+        assert_eq!(
+            command.control_directory,
+            Some(PathBuf::from("/run/immortal/api"))
+        );
+        assert!(command.unsupported_options.is_empty());
+
+        let config = commands::new().try_get_matches_from([
+            "immortal",
+            "--config",
+            "run.yml",
+            "--control-dir",
+            "/run/immortal/api",
+        ])?;
+        assert_eq!(
+            action(&config)?,
+            Action::SuperviseConfig {
+                control_directory: Some(PathBuf::from("/run/immortal/api")),
+                path: PathBuf::from("run.yml"),
+                foreground: false,
+                unsupported_options: Vec::new(),
+            }
         );
         Ok(())
     }

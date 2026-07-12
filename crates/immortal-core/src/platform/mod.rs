@@ -1,5 +1,9 @@
 //! Operating-system integration points supported by immortal.
 
+mod account;
+
+pub(crate) use account::resolve as resolve_account;
+
 #[cfg(target_os = "freebsd")]
 pub mod freebsd;
 #[cfg(target_os = "linux")]

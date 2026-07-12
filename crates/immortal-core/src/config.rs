@@ -57,6 +57,38 @@ pub struct ServiceConfig {
     pub process_mode: ProcessMode,
 }
 
+impl ServiceConfig {
+    /// Construct the strict runtime model for a direct CLI command.
+    ///
+    /// Configuration-file-only features remain at their documented defaults;
+    /// callers may then apply typed CLI overrides and call [`resolve_paths`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation error as a `version: 2` document.
+    pub fn for_command(command: Vec<String>) -> Result<Self, ConfigError> {
+        let config = Self {
+            enabled: true,
+            command,
+            working_directory: None,
+            environment: BTreeMap::new(),
+            environment_mode: EnvironmentMode::Inherit,
+            user: None,
+            start_delay_seconds: 0,
+            restart: RestartConfig::default(),
+            readiness: ReadinessConfig::default(),
+            requires: Vec::new(),
+            start_condition: None,
+            post_exit: None,
+            logging: LoggingConfig::default(),
+            pid_files: PidFiles::default(),
+            process_mode: ProcessMode::Foreground,
+        };
+        validate(&config)?;
+        Ok(config)
+    }
+}
+
 /// Policy controlling whether a completed service generation is restarted.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]

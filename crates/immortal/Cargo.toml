@@ -16,5 +16,19 @@ immortal-core.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[dev-dependencies]
+nix.workspace = true
+tokio.workspace = true
+
 [lints]
 workspace = true
+
+[[test]]
+name = "foreground_contract"
+path = "tests/foreground_contract.rs"
+harness = false
+
+[[test]]
+name = "controlled_contract"
+path = "tests/controlled_contract.rs"
+harness = false

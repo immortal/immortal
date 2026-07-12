@@ -55,26 +55,53 @@ and the design documentation for
 
 ### Canonical fork-library gate
 
-The current `fork` 0.8 API provides the required fork, daemon/session, PID, and
-terminated-child wait primitives. `immortal-core::process` now converts its
-safe re-exported wait inspection results into typed `Exited` and `Signalled`
-events and refuses to misreport a stopped status as termination. The lifecycle
-executor deliberately remains gated until the canonical `immortal/fork`
-library also provides safe wrappers for:
+Immortal currently pins the reviewed candidate from
+[`immortal/fork#16`](https://github.com/immortal/fork/issues/16) by commit so
+local, DevPod, and CI builds use the same process contract. That candidate adds
+checked process and process-group identifiers, full nonblocking child events,
+explicit signal targets, prepared direct execution, descriptor allow-lists,
+and checked daemon startup.
 
-- typed `Stopped` and `Continued` events alongside terminal waits, including
-  nonblocking `WUNTRACED`/`WCONTINUED` collection where the platform supports it;
-- typed signal delivery to one PID and to an owned process group;
-- process-group/session setup errors which preserve the underlying OS error;
-- checked daemon startup IPC and descriptor allow-list primitives.
+`immortal-core::process` is incrementally adopting those APIs. It now translates
+the fork crate's typed `Exited`, `Signalled`, `Stopped`, and `Continued` events
+without decoding raw wait statuses or exposing fork-library types to the rest
+of Immortal. Its blocking broker mechanism also materializes direct commands,
+creates a dedicated process group, reports exec failure before start, and uses
+typed process or group signal targets. A single-threaded native contract proves
+exit, exec failure, stop/continue, group termination, bounded waits, and cleanup.
+The private broker IPC is now bounded and versioned. The supervisor addresses
+only monotonic generations across it; raw PIDs remain broker-owned observations.
+A pre-Tokio broker contract proves readiness, spawn and failure responses,
+signal acknowledgement, complete child-event draining, residual descendant
+cleanup, bounded shutdown, and broker reaping. Foreground and checked daemon
+launches share the same executor. Daemon mode materializes configuration and
+account data first, detaches before Tokio, and reports success only after the
+broker and optional authenticated control socket are ready. The executor also
+applies pre-resolved numeric credentials and publishes replacement-safe atomic
+supervisor/main PID files as observation only. Broker reads use one persistent
+task and bounded queue so cancellation cannot split a frame. Logger routes,
+hooks, and descriptor-tracking mode remain gated until their executor paths are
+connected.
 
-These capabilities will be added and tested in `fork`, then consumed only
-through `immortal-core::process`. Immortal will not add direct `libc` calls or a
-second process library to work around the boundary. The required generic API is
-tracked in [`immortal/fork#16`](https://github.com/immortal/fork/issues/16).
-`fork` owns the safety-sensitive Unix mechanisms; Immortal continues to own the
-broker protocol, lifecycle generations, supervision policy, readiness, logging,
-control, status, and reconciliation.
+Foreground supervisors can now opt into an exact absolute service runtime
+directory with `--control-dir ROOT/SERVICE`. Immortal acquires and retains a
+mode-`0600` advisory lock before broker creation, removes only a proven owned
+stale socket after locking, creates a mode-`0600` authenticated control socket,
+and serializes broker events, timers, Unix shutdown signals, and control work
+through one lifecycle owner. Status, start, stop, once, restart, halt, raw
+signals, and deliberate live-child exit are operational. `exit` uses an
+explicit generation-bound broker detach; it never turns a PID file into process
+identity. A black-box contract covers exclusion of a duplicate supervisor,
+stale-generation and wrong-service rejection, status publication, USR1, the
+persistent Down state, manual starts, restart, halt, socket cleanup, and
+live-child detachment.
+
+Immortal will not add direct `libc` calls or a second process library to work
+around this boundary. `fork` owns the safety-sensitive Unix mechanisms;
+Immortal owns the broker protocol, lifecycle generations, supervision policy,
+readiness, logging, control, status, and reconciliation. After integration and
+native review, the candidate can be released and the commit pin replaced with
+the released crate version.
 
 Dependency planning is deterministic and portable. Enabled services are
 topologically sorted into start waves; services in one wave may start
@@ -212,10 +239,12 @@ process_mode: foreground  # foreground | descriptor-tracking
 
 All shown sections except `version` and `command` have defaults. Absent restart
 limits mean retry forever. A burst value requires both nonzero fields.
-`success_exit_codes` cannot be empty. `notify-fd` will publish
-`IMMORTAL_READY_FD` when its executor is implemented. The child must write the
-exact six-byte `READY\n` token before its configured deadline; fragmented writes
-are accepted, while invalid tokens, early EOF, and timeout fail that generation.
+`success_exit_codes` cannot be empty. `notify-fd` publishes
+`IMMORTAL_READY_FD=3`. The child must write the exact six-byte `READY\n` token
+before its configured deadline; fragmented writes are accepted, while invalid
+tokens, early EOF, and timeout fail that generation. The broker creates the
+CLOEXEC descriptor channel before spawning, maps only the child endpoint, and
+monitors the supervisor endpoint asynchronously without creating worker threads.
 Descriptor tracking requires explicit lifecycle hooks and deliberately does not
 adopt a PID.
 
@@ -269,7 +298,9 @@ and main PID, desired and observed state, readiness, uptime/down time, start and
 failure counters, last result, backoff, logger health, and exact argv. Command
 argument count, individual argument length, and total frame size are bounded.
 `immortalctl` alone converts this payload to stable JSON or a
-control-character-safe table.
+control-character-safe table. The foreground controlled executor populates the
+payload from live broker and lifecycle observations, including supervisor/main
+PID, argv, starts, failures, timing, backoff, and the last terminal result.
 The authenticated socket loop isolates each client, forwards requests through
 a bounded channel, and waits for the single-owner supervisor event loop to
 publish the completion response. Socket tasks never mutate lifecycle state.
@@ -332,7 +363,7 @@ failure tests, and required CI pass.
 - [x] Document focused-supervisor scope and reject PID 1 ambitions.
 - [x] Record research findings and compatibility decisions.
 - [x] Capture relevant released Go behavior as requirements research.
-- [ ] Add fork-backed process/path lifecycle contract fixtures.
+- [x] Add fork-backed process/path lifecycle contract fixtures.
 - [x] Add resource-bounded strict `version: 2` configuration parsing.
 - [x] Reject unversioned Go definitions and every unsupported version.
 - [x] Add normalized configuration resolution and canonical output.
@@ -340,7 +371,7 @@ failure tests, and required CI pass.
 - [x] Add safe runtime-directory ownership and permission policy.
 - [x] Add process-generation identifiers independent of PIDs.
 - [x] Wrap terminated-child waits as typed exited/signalled results.
-- [ ] Add typed stopped/continued collection to `fork`.
+- [x] Add typed stopped/continued collection to `fork` and consume it through `immortal-core`.
 - [ ] Add native Linux, macOS, and FreeBSD lifecycle jobs.
 - [x] Add deterministic arbitrary/truncation/byte-mutation decoder corpora.
 - [ ] Add continuous coverage-guided configuration and protocol fuzzing.
@@ -358,50 +389,52 @@ failure tests, and required CI pass.
 - [x] Emit the canonical supported schema without modifying the input file.
 - [x] Validate command, cwd, environment, PID outputs, logger, hooks, readiness,
   restart policy, and start conditions.
-- [ ] Resolve configured users against the target OS account database.
+- [x] Resolve configured users against the target OS account database.
 - [x] Resolve absolute paths before daemonization changes cwd.
 - [x] Make environment inheritance, clearing, and override order deterministic.
 - [x] Reject empty commands, invalid durations, duplicate keys, conflicting
   options, oversized files, and excessive YAML nesting/aliases.
-- [ ] Reject unknown users and enforce UID/GID transition policy.
+- [x] Reject unknown users and enforce UID/GID transition policy.
 
 #### Process lifecycle
 
-- [ ] Run and reap one foreground direct child.
-- [ ] Fork only through `immortal-core::process` and the `fork` crate.
-- [ ] Daemonize before creating Tokio or any other thread.
-- [ ] Implement double-fork/session detachment and safe stdio redirection.
+- [x] Run and reap foreground direct children through the supervisor state machine.
+- [x] Fork only through `immortal-core::process` and the `fork` crate.
+- [x] Start a dedicated single-threaded process broker before Tokio.
+- [x] Bound and version broker IPC without accepting raw PID targets.
+- [x] Daemonize before creating Tokio or any other thread.
+- [x] Implement double-fork/session detachment and safe stdio redirection.
 - [ ] Preserve inherited descriptors through an explicit allow-list.
-- [ ] Report daemon startup success or failure to the invoking process.
-- [ ] Hold the service lock descriptor for the supervisor lifetime.
-- [ ] Remove stale sockets only after acquiring the service lock.
-- [ ] Create every service generation in its own process group.
-- [ ] Distinguish exec failure from a successfully executed process.
-- [ ] Drain all child wait events after each coalesced `SIGCHLD`.
-- [ ] Clean remaining process-group members before generation reuse.
-- [ ] Write and invalidate configured parent/child PID files atomically.
-- [ ] Never use signal 0 or PID files to identify an owned service.
+- [x] Report daemon startup success or failure to the invoking process.
+- [x] Hold the service lock descriptor for the supervisor lifetime.
+- [x] Remove stale sockets only after acquiring the service lock.
+- [x] Create every service generation in its own process group.
+- [x] Distinguish exec failure from a successfully executed process.
+- [x] Drain all child wait events after each coalesced `SIGCHLD`.
+- [x] Clean remaining process-group members before generation reuse.
+- [x] Write and invalidate configured parent/child PID files atomically.
+- [x] Never use signal 0 or PID files to identify an owned service.
 
 #### State and restart policy
 
 - [ ] Implement `Initializing`, `WaitingCondition`, `Starting`, `Running`,
   `Ready`, `Paused`, `Stopping`, `Backoff`, `Completed`, `Failed`, and `Exited`.
 - [x] Keep desired state separate from observed state.
-- [ ] Implement Up, Down, Once, Restart, Halt, and Exit transitions.
+- [x] Implement Up, Down, Once, Restart, Halt, and Exit transitions.
 - [x] Implement `always`, `on-failure`, and `never` restart policies.
 - [x] Implement configurable successful exit codes and `exit_when_done`.
 - [x] Implement exponential backoff with a stable-runtime reset.
 - [x] Implement attempt, burst/window, and elapsed retry limits.
 - [x] Keep condition failure/backoff separate from service attempts.
-- [ ] Ensure manual start/restart resets Backoff and Failed.
-- [ ] Return valid status in every state, including before the first child.
-- [ ] Gracefully halt on supervisor `SIGTERM` and `SIGINT`.
+- [x] Ensure manual start/restart resets Backoff and Failed.
+- [x] Return valid status in every state, including before the first child.
+- [x] Gracefully halt on supervisor `SIGTERM` and `SIGINT`.
 
 #### Readiness, hooks, and self-daemonizing applications
 
-- [ ] Support immediate readiness after successful exec.
+- [x] Support immediate readiness after successful exec.
 - [x] Define and test the bounded `IMMORTAL_READY_FD` token and timeout reader.
-- [ ] Create, inherit, and monitor the readiness descriptor through `fork`.
+- [x] Create, inherit, and monitor the readiness descriptor through `fork`.
 - [x] Define and validate argv conditions with independent timeout/backoff.
 - [ ] Execute pre-start conditions through the process broker.
 - [ ] Run bounded post-exit hooks with exit/signal context.
@@ -422,43 +455,43 @@ failure tests, and required CI pass.
 - [x] Define, bound, transport, and render supervisor/main PID, generation,
   desired/state, readiness, uptime/down time, starts, failures, last result,
   backoff, logger health, and command.
-- [ ] Populate all typed status fields from the fork-backed runtime.
+- [x] Populate typed status fields from the supported fork-backed foreground runtime.
 - [x] Represent childless states without assuming a PID exists.
 - [x] Define nonzero exits for missing targets, partial failure, authorization,
   timeout, and protocol mismatch.
 
 #### Lifecycle commands
 
-- [ ] `status`: inspect without mutation.
-- [ ] `start` / `up`: set Up and reset configured failure.
-- [ ] `stop` / `down`: TERM+CONT the group, escalate, remain supervised Down.
-- [ ] `once`: start one generation and remain Down after it exits.
-- [ ] `restart`: stop/reap then start a new generation in the same supervisor.
-- [ ] `exit`: explicitly leave the service running and warn about orphaning.
-- [ ] `halt`: stop the group, drain logging, and exit the supervisor.
+- [x] `status`: inspect without mutation.
+- [x] `start` / `up`: set Up and reset configured failure.
+- [x] `stop` / `down`: TERM+CONT the group, escalate, remain supervised Down.
+- [x] `once`: start one generation and remain Down after it exits.
+- [x] `restart`: stop/reap then start a new generation in the same supervisor.
+- [x] `exit`: explicitly leave the service running and warn about orphaning.
+- [x] `halt`: stop the group, reap it, and exit the supervisor (logger draining remains pending).
 - [x] Wait deterministically for typed lifecycle completion with a hard timeout.
 - [x] Provide `--no-wait` for explicitly asynchronous control.
 
 #### Signal delivery
 
-- [ ] `-1` / `signal usr1` -> main process.
-- [ ] `-2` / `signal usr2` -> main process.
-- [ ] `-a` / `signal alrm` -> main process.
-- [ ] `-c` / `signal cont` -> main process.
-- [ ] `-h` / `signal hup` -> main process.
-- [ ] `-i` / `signal int` -> main process.
-- [ ] `-k` / `signal kill` -> service process group.
-- [ ] `-in` / `signal ttin` -> main process.
-- [ ] `-ou` / `signal ttou` -> main process.
-- [ ] `-q` / `signal quit` -> main process.
-- [ ] `-s` / `signal stop` -> main process.
-- [ ] `-t` / `signal term` -> main process.
-- [ ] `-w` / `signal winch` -> main process.
+- [x] `-1` / `signal usr1` -> main process.
+- [x] `-2` / `signal usr2` -> main process.
+- [x] `-a` / `signal alrm` -> main process.
+- [x] `-c` / `signal cont` -> main process.
+- [x] `-h` / `signal hup` -> main process.
+- [x] `-i` / `signal int` -> main process.
+- [x] `-k` / `signal kill` -> service process group.
+- [x] `-in` / `signal ttin` -> main process.
+- [x] `-ou` / `signal ttou` -> main process.
+- [x] `-q` / `signal quit` -> main process.
+- [x] `-s` / `signal stop` -> main process.
+- [x] `-t` / `signal term` -> main process.
+- [x] `-w` / `signal winch` -> main process.
 - [x] Reject multiple conflicting legacy signal flags.
-- [ ] Reject absent, exited, stale-generation, and fghack targets.
+- [x] Reject absent, exited, and stale-generation targets (fghack remains gated).
 - [x] Support explicit `--scope main|group`.
 - [ ] Confirm STOP/TTIN/TTOU/CONT through child wait events.
-- [ ] Preserve the signal exit reason for restart-policy decisions.
+- [x] Preserve the signal exit reason for restart-policy decisions.
 
 #### Control protocol
 
@@ -467,7 +500,7 @@ failure tests, and required CI pass.
 - [x] Restrict runtime-directory and socket modes.
 - [x] Bound frames, clients, reads, writes, and idle time.
 - [x] Forward authenticated requests to one lifecycle owner over a bounded channel.
-- [ ] Run the authenticated control-server loop inside `immortal`.
+- [x] Run the authenticated control-server loop inside controlled foreground `immortal`.
 - [x] Reject malformed, truncated, oversized, unknown-version, and unknown-op
   requests.
 - [x] Bind mutations to an expected service generation.

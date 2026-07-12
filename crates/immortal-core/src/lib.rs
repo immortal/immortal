@@ -6,8 +6,10 @@
 pub mod build_info;
 pub mod config;
 pub mod control;
+pub mod executor;
 pub mod exit;
 pub mod logging;
+mod pid_file;
 pub mod platform;
 pub mod process;
 pub mod readiness;

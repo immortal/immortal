@@ -119,6 +119,24 @@ supervisor in a terminal failure state; it must never spawn an untracked
 replacement path. Daemon startup is reported to the invoking process only after
 the broker, service lock, runtime directory, and control socket are ready.
 
+The implemented initial broker channel never accepts a PID from the supervisor.
+Spawn and signal requests carry the supervisor's monotonic generation, and the
+broker resolves that generation against its live child and process-group table.
+Frames preserve non-UTF-8 Unix argv, environment, and path bytes while enforcing
+hard bounds on the frame, individual fields, collection counts, and startup
+deadline. The broker reports readiness only after its current-thread runtime and
+`SIGCHLD` source are installed. Malformed frames, unknown child ownership, and
+unexpected EOF fail closed; supervisor EOF triggers group kill and reaping.
+The supervisor owns one persistent broker-reader task feeding a bounded queue;
+selecting between process events, control work, timers, and Unix signals can
+therefore cancel a queue receive without cancelling a partially read frame.
+The controlled foreground executor acquires exclusive runtime ownership before
+the broker fork and binds its authenticated socket only after the Tokio runtime
+exists. The supervisor event loop remains the sole lifecycle owner. Explicit
+`Exit` sends a generation-bound detach request to the broker; only a successful
+detach transitions the supervisor to `Exiting`, after which the empty broker is
+shut down and reaped while the service is deliberately reparented to the OS.
+
 ### Required `immortal/fork` contract
 
 The canonical sibling `fork` crate must provide safe, portable primitives for:
@@ -176,3 +194,27 @@ Remaining milestones are vertical and contract-tested:
 
 Packaging, release branches, and Go deprecation are deliberately outside the
 skeleton milestone.
+
+Milestone 2 is implemented for foreground and checked daemon launches. The CLI
+builds or loads the strict service model and resolves account data before any
+fork. Daemon mode performs checked double-fork detachment before the core
+executor creates its broker and current-thread Tokio runtime; the original
+invoker returns only after broker and optional control-listener readiness.
+Immediate readiness, restart/backoff decisions, bounded retry termination,
+successful exit, failed exec, atomic PID publication, and final broker reaping
+have black-box contracts.
+
+Milestone 4 is implemented for the controlled foreground path. Runtime locking,
+stale-socket safety, peer-authenticated bounded serving, optimistic generation
+matching, all lifecycle operations, raw signal delivery, live-child detach, and
+complete status publication share the same serialized executor. Logging health
+is correctly reported as not configured until milestone 3 connects logger
+chains; `immortaldir` operational reconciliation remains gated.
+
+The descriptor-readiness portion of milestone 3 is implemented. For each
+`notify-fd` generation the broker creates a CLOEXEC socket pair, maps the child
+endpoint to descriptor 3, publishes `IMMORTAL_READY_FD=3`, and monitors the
+other endpoint on its current-thread Tokio runtime. Exact-token success,
+invalid input, early close, and timeout are generation-bound broker events;
+failure stops the group and feeds restart policy without treating a PID as
+identity. Hooks and logger chains remain pending.

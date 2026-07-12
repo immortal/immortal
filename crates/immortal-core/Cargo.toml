@@ -12,12 +12,14 @@ publish.workspace = true
 
 [dependencies]
 notify.workspace = true
+nix.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
 tokio.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 fork.workspace = true
+libc.workspace = true
 
 [build-dependencies]
 built.workspace = true
@@ -27,4 +29,19 @@ workspace = true
 
 [[bench]]
 name = "core_contracts"
+harness = false
+
+[[test]]
+name = "process_contract"
+path = "tests/process_contract.rs"
+harness = false
+
+[[test]]
+name = "broker_contract"
+path = "tests/broker_contract.rs"
+harness = false
+
+[[test]]
+name = "executor_contract"
+path = "tests/executor_contract.rs"
 harness = false
