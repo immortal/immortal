@@ -1,0 +1,50 @@
+#!/bin/sh
+
+# PROVIDE: immortaldir
+# REQUIRE: FILESYSTEMS LOGIN
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=immortaldir
+rcvar=immortaldir_enable
+desc="Immortal service-definition reconciler"
+
+command=/usr/sbin/daemon
+procname=/usr/sbin/daemon
+start_cmd="${name}_start"
+start_precmd="${name}_prestart"
+
+load_rc_config "$name"
+
+: "${immortaldir_enable:=NO}"
+: "${immortaldir_definitions:=/usr/local/etc/immortal}"
+: "${immortaldir_manager:=/usr/local/sbin/immortaldir}"
+: "${immortaldir_runtime_dir:=/var/run/immortal}"
+: "${immortaldir_supervisor:=/usr/local/sbin/immortal}"
+: "${immortaldir_pidfile:=/var/run/immortaldir.pid}"
+: "${immortaldir_restart_delay:=1}"
+
+pidfile=$immortaldir_pidfile
+required_dirs=$immortaldir_definitions
+
+immortaldir_prestart()
+{
+	/usr/bin/install -d -m 0755 "$immortaldir_runtime_dir"
+}
+
+immortaldir_start()
+{
+	/usr/sbin/daemon \
+		-f \
+		-P "$pidfile" \
+		-R "$immortaldir_restart_delay" \
+		-S \
+		-T immortaldir \
+		"$immortaldir_manager" \
+		--runtime-dir "$immortaldir_runtime_dir" \
+		--supervisor-binary "$immortaldir_supervisor" \
+		"$immortaldir_definitions"
+}
+
+run_rc_command "$1"

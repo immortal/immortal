@@ -21,6 +21,9 @@ test:
 soak iterations="10":
     scripts/soak "{{ iterations }}"
 
+install-check:
+    sh -n scripts/soak contrib/freebsd/immortaldir
+
 audit:
     cargo audit
 
@@ -35,7 +38,7 @@ lint-policy:
             exit 1; \
         fi
 
-ci: lint-policy fmt-check clippy check test audit deny
+ci: lint-policy fmt-check clippy check test audit deny install-check
 
 build:
     cargo build --workspace --release --locked

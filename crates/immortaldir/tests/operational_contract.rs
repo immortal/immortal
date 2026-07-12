@@ -13,7 +13,7 @@ use immortal_core::{
     config::{parse_file, parse_str},
     control::{GenerationMatch, Operation, Request, SignalScope, exchange},
     executor::{DaemonRunOutcome, run_daemon},
-    process::{ChildEvent, start_process_broker, wait_for_event},
+    process::{ProcessId, ProcessSignal, SignalTarget, signal, start_process_broker},
     reconcile::{
         DefinitionSnapshots, LaunchConcurrency, LauncherError, SupervisorLaunch, SupervisorLauncher,
     },
@@ -62,7 +62,6 @@ fn prove_operational_lifecycle() -> Result<(), Box<dyn Error>> {
     };
     let limit_endpoint = start_process_broker()?;
     let endpoint = start_process_broker()?;
-    let broker = endpoint.process();
     let locked_owner = RuntimeOwner::acquire(&runtime.join("locked"))?;
     let broken_control = bind_broken_control(&runtime)?;
     let tokio = Builder::new_current_thread().enable_all().build()?;
@@ -76,8 +75,7 @@ fn prove_operational_lifecycle() -> Result<(), Box<dyn Error>> {
         runtime,
     ));
     drop(tokio);
-    let broker_result = require_broker_exit(broker, "watch");
-    result.and(broker_result)
+    result
 }
 
 async fn run_reconciliation_contract(
@@ -94,24 +92,30 @@ async fn run_reconciliation_contract(
     let broken_task = tokio::spawn(reject_control_clients(broken_control, attempt_sender));
     let task = tokio::spawn(async move { actions::execute(&action, Some(endpoint)).await });
     let result = exercise_reconciliation(definition, &runtime, &mut attempts, locked_owner).await;
-    task.abort();
-    let _cancelled = task.await;
+    let process = ProcessId::try_from(i32::try_from(std::process::id())?)?;
+    signal(SignalTarget::Process(process), ProcessSignal::Terminate)?;
+    let shutdown = wait_for_reconciler_shutdown(task).await;
     let cleanup = halt_services(&runtime).await;
     broken_task.abort();
     let _cancelled = broken_task.await;
-    match (result, cleanup) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(error), _) | (Ok(()), Err(error)) => Err(error),
+    match (result, shutdown, cleanup) {
+        (Ok(()), Ok(()), Ok(())) => Ok(()),
+        (Err(error), _, _) | (Ok(()), Err(error), _) | (Ok(()), Ok(()), Err(error)) => Err(error),
     }
 }
 
-fn require_broker_exit(
-    broker: immortal_core::process::ProcessId,
-    purpose: &str,
+async fn wait_for_reconciler_shutdown(
+    mut task: tokio::task::JoinHandle<Result<(), actions::ActionError>>,
 ) -> Result<(), Box<dyn Error>> {
-    match wait_for_event(broker)? {
-        ChildEvent::Exited { code: 0, .. } => Ok(()),
-        event => Err(format!("{purpose} launch broker exited unexpectedly: {event:?}").into()),
+    match timeout(DEADLINE, &mut task).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(error))) => Err(error.into()),
+        Ok(Err(error)) => Err(error.into()),
+        Err(error) => {
+            task.abort();
+            let _cancelled = task.await;
+            Err(error.into())
+        }
     }
 }
 

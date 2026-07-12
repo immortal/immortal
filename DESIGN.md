@@ -148,6 +148,11 @@ the timer is disabled when no child is owned.
 The supervisor owns one persistent broker-reader task feeding a bounded queue;
 selecting between process events, control work, timers, and Unix signals can
 therefore cancel a queue receive without cancelling a partially read frame.
+Long-running components share one owned TERM/INT intake boundary. The service
+supervisor converts those signals into an ordered service/logger shutdown;
+`immortaldir` observes them only between complete reconciliation operations and
+then shuts down and reaps its launcher broker without cancelling a partial
+mutation.
 The controlled foreground executor acquires exclusive runtime ownership before
 the broker fork and binds its authenticated socket only after the Tokio runtime
 exists. The supervisor event loop remains the sole lifecycle owner. Explicit

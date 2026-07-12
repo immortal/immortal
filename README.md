@@ -511,7 +511,10 @@ deletion. A failed service retains one typed pending mutation for a later scan
 without blocking independent services in the current scan. Operational
 stops and replacement preparation remain serialized for generation safety;
 independent checked starts run in bounded batches. Cross-restart deletion
-confirmations remain tracked work.
+confirmations remain tracked work. `SIGTERM` and `SIGINT` are handled only at a
+safe reconciliation boundary; `immortaldir` then shuts down and reaps its
+otherwise childless launcher broker without stopping the independent service
+supervisors it previously started.
 
 ### Boot and network ordering
 
@@ -739,6 +742,7 @@ failure tests, and required CI pass.
 - [x] Perform a 30-second safety reconciliation.
 - [x] Recover from dropped and coalesced filesystem notifications.
 - [x] Implement mutation-free `--once --dry-run` output.
+- [x] Shut down and reap the launcher broker on `SIGTERM` and `SIGINT`.
 - [x] Never remove unknown runtime files or directories.
 - [x] Detect stale supervisors via lock/control state rather than PID guessing.
 
@@ -878,6 +882,11 @@ The accepted evidence and ceilings will replace this pending table:
 | FreeBSD | FreeBSD 14.3 QEMU guest | pending | pending | pending |
 
 ## Build and validation
+
+Source installation, init-system examples, migration, and rollback are covered
+in [INSTALL.md](INSTALL.md). Maintainers must follow the evidence-based
+[release-candidate procedure](RELEASE.md); these documents do not imply current
+production readiness.
 
 The repository pins Rust 1.97.0, matching `rust-version`. GitHub Actions runs
 the complete workspace test suite on Ubuntu 24.04 and macOS 15. The existing

@@ -49,6 +49,8 @@ jobs:
         with:
           toolchain: 1.97.0
       - run: cargo test --workspace --locked
+      - if: matrix.artifact == 'macos'
+        run: plutil -lint contrib/launchd/run.immortal.immortaldir.plist
       - name: Record lifecycle benchmark
         env:
           REPORT_DIRECTORY: benchmark-results/${{ matrix.artifact }}
@@ -104,6 +106,7 @@ jobs:
           run: |
             export PATH="$HOME/.cargo/bin:$PATH"
             rustc --version --verbose
+            sh -n contrib/freebsd/immortaldir
             cargo test --workspace --locked
             mkdir -p benchmark-results/freebsd
             printf 'commit\t${{ github.sha }}\nrun_id\t${{ github.run_id }}\nrun_attempt\t${{ github.run_attempt }}\nrunner\tFreeBSD 14.3\n' > benchmark-results/freebsd/metadata.txt

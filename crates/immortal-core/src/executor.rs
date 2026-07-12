@@ -26,7 +26,6 @@ use std::{
 
 use tokio::{
     runtime::Builder,
-    signal::unix::{Signal as UnixSignal, SignalKind, signal as listen_for_signal},
     sync::{mpsc, watch},
     time::{Instant as TokioInstant, timeout},
 };
@@ -51,6 +50,7 @@ use crate::{
         start_process_broker_with_logging, wait_for_event,
     },
     runtime::RuntimeOwner,
+    shutdown::TerminationSignals,
     status::{LastResult, LoggerStatus, StatusSnapshot},
     supervisor::{
         ChildResult, ConditionTracker, DesiredState, FailureReason, Generation, RestartDecision,
@@ -493,7 +493,7 @@ fn run_prepared(
     let execution = runtime.block_on(async {
         let mut client = endpoint.connect()?;
         wait_for_ready(&mut client).await?;
-        let mut signals = SupervisorSignals::new()?;
+        let mut signals = TerminationSignals::new()?;
         let outcome = if let Some(setup) = control {
             drive_controlled_service(
                 &mut client,
@@ -578,7 +578,7 @@ async fn drive_controlled_service(
     commands: PreparedExecution,
     loggers: Vec<BrokerLoggerId>,
     config: &ServiceConfig,
-    signals: &mut SupervisorSignals,
+    signals: &mut TerminationSignals,
     setup: ControlSetup,
     startup: &mut StartupReporter,
 ) -> Result<SupervisionOutcome, ExecutorError> {
@@ -632,7 +632,7 @@ async fn drive_service(
     commands: PreparedExecution,
     loggers: Vec<BrokerLoggerId>,
     config: &ServiceConfig,
-    signals: &mut SupervisorSignals,
+    signals: &mut TerminationSignals,
     mut controls: Option<&mut mpsc::Receiver<ControlCommand>>,
     service_name: Option<&str>,
 ) -> Result<SupervisionOutcome, ExecutorError> {
@@ -1655,7 +1655,7 @@ fn logger_status(loggers: &[LoggerExecution]) -> LoggerStatus {
 
 async fn next_executor_event(
     client: &mut ProcessBrokerClient,
-    signals: &mut SupervisorSignals,
+    signals: &mut TerminationSignals,
     controls: &mut Option<&mut mpsc::Receiver<ControlCommand>>,
     deadline: Option<TokioInstant>,
 ) -> Result<ExecutorEvent, ExecutorError> {
@@ -3331,33 +3331,6 @@ fn jittered_backoff_seed(
     seed ^= seed >> 31;
     let offset = seed % width;
     Duration::from_secs(base_seconds.saturating_sub(spread).saturating_add(offset))
-}
-
-struct SupervisorSignals {
-    terminate: UnixSignal,
-    interrupt: UnixSignal,
-}
-
-impl SupervisorSignals {
-    fn new() -> io::Result<Self> {
-        Ok(Self {
-            terminate: listen_for_signal(SignalKind::terminate())?,
-            interrupt: listen_for_signal(SignalKind::interrupt())?,
-        })
-    }
-
-    async fn recv(&mut self) -> io::Result<()> {
-        let received = tokio::select! {
-            received = self.terminate.recv() => received,
-            received = self.interrupt.recv() => received,
-        };
-        received.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "supervisor termination signal stream closed",
-            )
-        })
-    }
 }
 
 #[cfg(test)]

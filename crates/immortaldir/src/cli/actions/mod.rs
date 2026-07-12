@@ -8,6 +8,8 @@
 //! into this single-owner loop, so no shared mutable lifecycle state is needed.
 //! Service-local failures remain typed and pending while unrelated work
 //! continues; loss of the runtime root or broker still fails the loop closed.
+//! TERM or INT is consumed only while the loop is idle, then the launcher
+//! broker is shut down and reaped without cancelling an in-flight mutation.
 
 use std::{
     collections::BTreeMap,
@@ -31,6 +33,7 @@ use immortal_core::{
         canonical_definitions_directory, dependency_plan, scan_directory,
     },
     runtime::{RuntimeRootError, RuntimeService, discover, supervisor_is_active},
+    shutdown::TerminationSignals,
     status::ServiceState,
     watch::{DEFAULT_DEBOUNCE, ReconcileTriggers, WatchError},
 };
@@ -297,8 +300,15 @@ pub async fn execute(
         DEFAULT_DEBOUNCE,
         Duration::from_secs(action.scan_interval_seconds),
     )?;
+    let mut signals = TerminationSignals::new()?;
     loop {
-        let trigger = triggers.next().await;
+        let trigger = tokio::select! {
+            result = signals.recv() => {
+                result?;
+                return launcher.shutdown().await.map_err(ActionError::from);
+            }
+            trigger = triggers.next() => trigger,
+        };
         for error in trigger.watcher_errors {
             writeln!(io::stderr().lock(), "watcher: {error}")?;
         }
@@ -334,8 +344,15 @@ async fn watch_dry_run(
         DEFAULT_DEBOUNCE,
         Duration::from_secs(action.scan_interval_seconds),
     )?;
+    let mut signals = TerminationSignals::new()?;
     loop {
-        let trigger = triggers.next().await;
+        let trigger = tokio::select! {
+            result = signals.recv() => {
+                result?;
+                return Ok(());
+            }
+            trigger = triggers.next() => trigger,
+        };
         for error in trigger.watcher_errors {
             writeln!(io::stderr().lock(), "watcher: {error}")?;
         }

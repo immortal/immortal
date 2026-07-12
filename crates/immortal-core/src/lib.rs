@@ -16,6 +16,7 @@ pub mod readiness;
 pub mod reconcile;
 #[cfg(unix)]
 pub mod runtime;
+pub mod shutdown;
 pub mod status;
 pub mod supervisor;
 pub mod watch;

@@ -1,0 +1,16 @@
+[Unit]
+Description=Immortal service-definition reconciler
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/install -d -m 0755 /run/immortal
+ExecStart=/usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
+Restart=on-failure
+RestartSec=1s
+TimeoutStopSec=30s
+# Supervisors intentionally outlive a manager restart; do not kill their cgroup.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
