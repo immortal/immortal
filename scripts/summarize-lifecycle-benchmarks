@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -lt 2 ]; then
+    echo "usage: scripts/summarize-lifecycle-benchmarks PLATFORM LIFECYCLE_FILE..." >&2
+    exit 64
+fi
+if [ "$#" -gt 101 ]; then
+    echo "at most 100 benchmark reports may be summarized" >&2
+    exit 64
+fi
+
+platform=$1
+shift
+
+for report in "$@"; do
+    if [ ! -s "$report" ]; then
+        echo "benchmark report is missing or empty: $report" >&2
+        exit 66
+    fi
+    bytes=$(wc -c < "$report")
+    if [ "$bytes" -gt 4096 ]; then
+        echo "benchmark report exceeds 4096 bytes: $report" >&2
+        exit 65
+    fi
+done
+
+awk -v platform="$platform" -f scripts/summarize-lifecycle-benchmarks.awk "$@"

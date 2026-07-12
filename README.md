@@ -853,7 +853,17 @@ Each native job uploads a 90-day `lifecycle-benchmark-*` artifact containing the
 two medians plus commit, workflow-run, runner, kernel, and pinned-toolchain
 metadata. Rerunning the same workflow attempt creates a distinct artifact, so
 reviewers can retain every valid sample without copying values from console
-logs.
+logs. After extracting artifacts for one platform, calculate the retained run
+count, median, maximum, nearest-rank p95, and conservative initial ceiling with:
+
+```sh
+scripts/summarize-lifecycle-benchmarks Linux artifacts/linux-*/lifecycle.txt
+```
+
+The summarizer rejects empty reports, unknown or duplicate metrics, malformed
+measurements, and missing metric pairs. Its suggested ceiling is the smallest
+integer not below 125% of the observed maximum; recording that suggestion as a
+budget still requires the review process below.
 The checklist remains pending until multiple remote runs establish reviewed
 per-platform budgets rather than thresholds inferred from one Linux machine.
 

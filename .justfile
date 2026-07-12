@@ -22,7 +22,8 @@ soak iterations="10":
     scripts/soak "{{ iterations }}"
 
 install-check:
-    sh -n scripts/soak contrib/freebsd/immortaldir
+    sh -n scripts/soak scripts/summarize-lifecycle-benchmarks contrib/freebsd/immortaldir
+    awk -f scripts/summarize-lifecycle-benchmarks.awk /dev/null > /dev/null
 
 audit:
     cargo audit
