@@ -832,6 +832,7 @@ impl RuntimeDirectory {
         ));
         fs::create_dir(&root)?;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o755))?;
+        let root = fs::canonicalize(root)?;
         let service = root.join(service_name);
         let socket = service.join("immortal.sock");
         let diagnostics = root.join("immortal.stderr");
