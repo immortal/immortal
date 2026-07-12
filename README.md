@@ -579,7 +579,7 @@ failure tests, and required CI pass.
 - [x] Add process-generation identifiers independent of PIDs.
 - [x] Wrap terminated-child waits as typed exited/signalled results.
 - [x] Add typed stopped/continued collection to `fork` and consume it through `immortal-core`.
-- [ ] Add native Linux, macOS, and FreeBSD lifecycle jobs.
+- [x] Add native Linux, macOS, and FreeBSD lifecycle jobs.
 - [x] Add deterministic arbitrary/truncation/byte-mutation decoder corpora.
 - [x] Add continuous coverage-guided configuration and protocol fuzzing.
 - [x] Add release baselines for configuration and control codecs.
@@ -876,11 +876,13 @@ runs the same lifecycle suite inside FreeBSD 14.3. The VM job has an explicit
 deadline, installs the pinned toolchain through FreeBSD's `rustup-init` package,
 and does not copy build artifacts back to the Linux host.
 
-The native FreeBSD checklist item remains pending until the new remote job has
-completed successfully at least once; workflow configuration alone is not
-runtime evidence. Linux and macOS use GitHub-hosted native VMs, while FreeBSD
-runs as a QEMU guest because GitHub-hosted and self-hosted runner support is
-limited to Linux, Windows, and macOS.
+The native lifecycle matrix first completed successfully on 2026-07-12 at
+commit `f27be55` in [Rust CI run 29208627595](https://github.com/immortal/immortal/actions/runs/29208627595).
+Linux and macOS use GitHub-hosted native VMs, while FreeBSD runs as a QEMU guest
+because GitHub-hosted and self-hosted runner support is limited to Linux,
+Windows, and macOS. Every native job runs the workspace tests, fork-backed
+lifecycle benchmark, and executable version smoke checks; the separate FreeBSD
+cross-check remains a fast compile gate.
 
 Run project commands inside DevPod:
 
