@@ -2331,11 +2331,9 @@ mod tests {
             Ok::<Response, Box<dyn Error>>(response)
         };
         let dispatch = async {
-            let command = tokio::select! {
-                command = commands.recv() => command.ok_or("control command missing")?,
-                result = &mut server => {
-                    return Err(format!("control server stopped before dispatch: {result:?}").into());
-                }
+            let Some(command) = commands.recv().await else {
+                let result = (&mut server).await;
+                return Err(format!("control server stopped before dispatch: {result:?}").into());
             };
             assert_eq!(command.request(), &request);
             assert!(command.peer().uid == 0 || command.peer().uid == owner_uid);
