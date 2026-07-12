@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+iterations=${1:-10}
+
+case "$iterations" in
+    [1-9]|[1-9][0-9]|100) ;;
+    *)
+        echo "usage: scripts/soak [ITERATIONS] (1-100)" >&2
+        exit 64
+        ;;
+esac
+
+iteration=1
+while [ "$iteration" -le "$iterations" ]; do
+    printf 'Immortal soak iteration %s/%s\n' "$iteration" "$iterations"
+    cargo test --workspace --locked
+    iteration=$((iteration + 1))
+done

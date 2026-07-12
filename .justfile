@@ -18,6 +18,9 @@ check:
 test:
     cargo test --workspace
 
+soak iterations="10":
+    scripts/soak "{{ iterations }}"
+
 audit:
     cargo audit
 

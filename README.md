@@ -62,7 +62,7 @@ checked process and process-group identifiers, full nonblocking child events,
 explicit signal targets, prepared direct execution, descriptor allow-lists,
 and checked daemon startup.
 
-`immortal-core::process` is incrementally adopting those APIs. It now translates
+`immortal-core::process` has adopted those APIs. It translates
 the fork crate's typed `Exited`, `Signalled`, `Stopped`, and `Continued` events
 without decoding raw wait statuses or exposing fork-library types to the rest
 of Immortal. Its blocking broker mechanism also materializes direct commands,
@@ -103,9 +103,14 @@ live-child detachment.
 Immortal will not add direct `libc` calls or a second process library to work
 around this boundary. `fork` owns the safety-sensitive Unix mechanisms;
 Immortal owns the broker protocol, lifecycle generations, supervision policy,
-readiness, logging, control, status, and reconciliation. After integration and
-native review, the candidate can be released and the commit pin replaced with
-the released crate version.
+readiness, logging, control, status, and reconciliation. The candidate has
+passed Immortal's native Linux, macOS, and FreeBSD lifecycle matrix, but issue
+#16 remains open and `fork` 0.9.0 is not yet a registry dependency. The commit
+pin remains mandatory until the maintainer merges and publishes the reviewed
+candidate. Migration then requires replacing the pin with the exact released
+version, regenerating `Cargo.lock`, verifying the registry package source, and
+rerunning the complete native, fuzzing, security, audit, and FreeBSD validation
+before an Immortal release candidate is tagged.
 
 Dependency planning is deterministic and portable. Enabled services are
 topologically sorted into start waves, and the next wave waits for its
@@ -583,6 +588,7 @@ failure tests, and required CI pass.
 - [x] Add deterministic arbitrary/truncation/byte-mutation decoder corpora.
 - [x] Add continuous coverage-guided configuration and protocol fuzzing.
 - [x] Add release baselines for configuration and control codecs.
+- [x] Add a bounded repeatable soak runner over the complete contract suite.
 - [ ] Add cross-platform lifecycle benchmarks and reviewed regression budgets.
 
 ### immortal
@@ -895,6 +901,14 @@ Run project commands inside DevPod:
 scripts/dev-up
 scripts/dev-ssh just ci
 scripts/dev-ssh cargo check --workspace --target x86_64-unknown-freebsd --locked
+```
+
+For repeated release-candidate exercise, run the complete contract suite between
+1 and 100 times. Every process contract retains its own hard deadline and
+cleanup guard, so a failing iteration terminates without advancing to the next:
+
+```sh
+scripts/dev-ssh just soak 10
 ```
 
 Process changes require native lifecycle tests on Linux, macOS, and FreeBSD.
