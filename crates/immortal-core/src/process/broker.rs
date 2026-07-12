@@ -3,7 +3,9 @@
 //! The broker exclusively owns direct children, process groups, descriptor
 //! endpoints, waits, and supervisor-loss cleanup. Descriptor generations retain
 //! logical ownership after their launcher exits; EOF and the pre-runtime stop
-//! plan are handled without adopting an application PID.
+//! plan are handled without adopting an application PID. `SIGCHLD` drives
+//! immediate reaping, while a low-frequency sweep closes platform notification
+//! gaps through the same ownership-checked wait path.
 
 use std::{
     collections::BTreeMap,
@@ -24,7 +26,7 @@ use tokio::{
     signal::unix::{Signal as ChildSignal, SignalKind, signal as listen_for_signal},
     sync::mpsc,
     task::JoinHandle,
-    time::{Instant, timeout_at},
+    time::{Instant, MissedTickBehavior, interval_at, timeout_at},
 };
 
 use crate::logging::OutputStream;
@@ -42,6 +44,7 @@ use super::{
 };
 
 const BROKER_EXIT_SOFTWARE: i32 = 70;
+const CHILD_REAP_INTERVAL: Duration = Duration::from_millis(250);
 const SUPERVISOR_EVENT_CAPACITY: usize = 32;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const SHUTDOWN_KILL_WAIT: Duration = Duration::from_secs(3);
@@ -952,6 +955,8 @@ async fn run_broker(
     let mut child_signal = listen_for_signal(SignalKind::child())?;
     let (readiness_sender, mut readiness_events) = mpsc::channel(READINESS_EVENT_CAPACITY);
     let (lifetime_sender, mut lifetime_events) = mpsc::channel(LIFETIME_EVENT_CAPACITY);
+    let mut child_reap = interval_at(Instant::now() + CHILD_REAP_INTERVAL, CHILD_REAP_INTERVAL);
+    child_reap.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut state = BrokerRuntimeState {
         generations: BTreeMap::new(),
         logging,
@@ -988,6 +993,14 @@ async fn run_broker(
                 if signal.is_none() {
                     return Err(ProcessBrokerError(ProcessBrokerErrorKind::SignalStreamClosed));
                 }
+                forward_child_events(
+                    &mut writer,
+                    &mut state.generations,
+                    &mut state.processes,
+                    &mut state.logging,
+                ).await?;
+            }
+            _ = child_reap.tick(), if !state.processes.is_empty() => {
                 forward_child_events(
                     &mut writer,
                     &mut state.generations,

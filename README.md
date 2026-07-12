@@ -618,6 +618,7 @@ failure tests, and required CI pass.
 - [x] Create every service generation in its own process group.
 - [x] Distinguish exec failure from a successfully executed process.
 - [x] Drain all child wait events after each coalesced `SIGCHLD`.
+- [x] Recover missed child notifications with an ownership-checked delayed reap sweep.
 - [x] Clean remaining process-group members before generation reuse.
 - [x] Write and invalidate configured parent/child PID files atomically.
 - [x] Never use signal 0 or PID files to identify an owned service.

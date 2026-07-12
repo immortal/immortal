@@ -141,6 +141,10 @@ hard bounds on the frame, individual fields, collection counts, and startup
 deadline. The broker reports readiness only after its current-thread runtime and
 `SIGCHLD` source are installed. Malformed frames, unknown child ownership, and
 unexpected EOF fail closed; supervisor EOF triggers group kill and reaping.
+Each coalesced `SIGCHLD` drains every available wait event. While the broker
+owns children, a delayed 250 ms safety sweep performs the same drain so a lost
+or platform-specific notification edge cannot leave an exited child unreaped;
+the timer is disabled when no child is owned.
 The supervisor owns one persistent broker-reader task feeding a bounded queue;
 selecting between process events, control work, timers, and Unix signals can
 therefore cancel a queue receive without cancelling a partially read frame.
