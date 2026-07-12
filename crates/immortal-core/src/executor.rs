@@ -447,92 +447,48 @@ async fn drive_service(
     mut controls: Option<&mut mpsc::Receiver<ControlCommand>>,
     service_name: Option<&str>,
 ) -> Result<SupervisionOutcome, ExecutorError> {
-    let epoch = Instant::now();
-    let mut machine = StateMachine::default();
-    let mut tracker = RestartTracker::default();
-    let mut first_start = true;
-    let mut status = RuntimeStatus::new(config);
-    let mut deadline = None;
-    let mut pending_stop = None;
-    let mut stop_kill_sent = false;
-    let mut pending_signals = VecDeque::new();
-    let mut pending_detach = None;
+    let mut execution = ExecutionContext::new(config);
 
     loop {
         if advance_childless_state(
-            &mut machine,
-            &mut first_start,
+            &mut execution.machine,
+            &mut execution.first_start,
             config.start_delay_seconds,
-            &mut deadline,
+            &mut execution.deadline,
         )? {
             continue;
         }
-        if supervision_finished(&machine, controls.is_some()) {
-            respond_abandoned_signals(&mut pending_signals);
-            return Ok(outcome(&machine, &tracker, &status));
+        if supervision_finished(&execution.machine, controls.is_some()) {
+            respond_abandoned_signals(&mut execution.pending_signals);
+            return Ok(outcome(
+                &execution.machine,
+                &execution.tracker,
+                &execution.status,
+            ));
         }
 
-        match next_executor_event(client, signals, &mut controls, deadline).await? {
+        match next_executor_event(client, signals, &mut controls, execution.deadline).await? {
             ExecutorEvent::Timer => {
-                handle_executor_timer(
-                    client,
-                    &command,
-                    &mut machine,
-                    &mut tracker,
-                    epoch,
-                    &mut status,
-                    &mut deadline,
-                    &mut stop_kill_sent,
-                    &mut pending_signals,
-                    &config.readiness,
-                )
-                .await?;
+                handle_executor_timer(client, &command, &mut execution, &config.readiness).await?;
             }
             ExecutorEvent::Shutdown => {
                 begin_supervisor_shutdown(
                     client,
-                    &mut machine,
-                    &mut pending_stop,
-                    &mut deadline,
-                    &mut stop_kill_sent,
-                    &mut pending_signals,
+                    &mut execution.machine,
+                    &mut execution.pending_stop,
+                    &mut execution.deadline,
+                    &mut execution.stop_kill_sent,
+                    &mut execution.pending_signals,
                 )
                 .await?;
             }
             ExecutorEvent::Control(command) => {
                 let name = service_name.ok_or(ExecutorError::ControlServerStopped)?;
-                apply_control_command(
-                    client,
-                    &mut machine,
-                    name,
-                    command,
-                    &mut pending_stop,
-                    &mut deadline,
-                    &mut stop_kill_sent,
-                    &mut pending_signals,
-                    &mut pending_detach,
-                    &tracker,
-                    &status,
-                )
-                .await?;
+                apply_control_command(client, name, command, &mut execution).await?;
             }
             ExecutorEvent::ControlClosed => return Err(ExecutorError::ControlServerStopped),
             ExecutorEvent::Broker(event) => {
-                handle_broker_event(
-                    client,
-                    event,
-                    config,
-                    &mut machine,
-                    &mut tracker,
-                    epoch,
-                    &mut status,
-                    &mut pending_stop,
-                    &mut deadline,
-                    &mut stop_kill_sent,
-                    &mut pending_signals,
-                    &mut pending_detach,
-                )
-                .await?;
+                handle_broker_event(client, event, config, &mut execution).await?;
             }
         }
     }
@@ -593,26 +549,51 @@ enum PendingSignal {
     },
 }
 
-#[allow(clippy::too_many_arguments)]
+struct ExecutionContext {
+    deadline: Option<TokioInstant>,
+    epoch: Instant,
+    first_start: bool,
+    machine: StateMachine,
+    pending_detach: Option<PendingDetach>,
+    pending_signals: VecDeque<PendingSignal>,
+    pending_stop: Option<StopCompletion>,
+    status: RuntimeStatus,
+    stop_kill_sent: bool,
+    tracker: RestartTracker,
+}
+
+impl ExecutionContext {
+    fn new(config: &ServiceConfig) -> Self {
+        Self {
+            deadline: None,
+            epoch: Instant::now(),
+            first_start: true,
+            machine: StateMachine::default(),
+            pending_detach: None,
+            pending_signals: VecDeque::new(),
+            pending_stop: None,
+            status: RuntimeStatus::new(config),
+            stop_kill_sent: false,
+            tracker: RestartTracker::default(),
+        }
+    }
+}
+
 async fn handle_executor_timer(
     client: &mut ProcessBrokerClient,
     command: &ProcessCommand,
-    machine: &mut StateMachine,
-    tracker: &mut RestartTracker,
-    epoch: Instant,
-    status: &mut RuntimeStatus,
-    deadline: &mut Option<TokioInstant>,
-    stop_kill_sent: &mut bool,
-    pending_signals: &mut VecDeque<PendingSignal>,
+    execution: &mut ExecutionContext,
     readiness: &ReadinessConfig,
 ) -> Result<(), ExecutorError> {
-    match machine.state() {
+    match execution.machine.state() {
         SupervisorState::Waiting => {
-            let generation = machine.preconditions_ready()?;
-            tracker.record_start(elapsed_seconds(epoch));
-            status.started_at = Some(Instant::now());
-            status.down_since = None;
-            status.readiness_failed = false;
+            let generation = execution.machine.preconditions_ready()?;
+            execution
+                .tracker
+                .record_start(elapsed_seconds(execution.epoch));
+            execution.status.started_at = Some(Instant::now());
+            execution.status.down_since = None;
+            execution.status.readiness_failed = false;
             if readiness.mode == ReadinessMode::Immediate {
                 client
                     .spawn(generation, command.clone(), CHILD_STARTUP_TIMEOUT)
@@ -627,19 +608,22 @@ async fn handle_executor_timer(
                     )
                     .await?;
             }
-            *deadline = Some(TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT);
+            execution.deadline =
+                Some(TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT);
         }
         SupervisorState::Backoff { generation, .. } => {
-            *deadline = None;
-            machine.backoff_elapsed(generation)?;
+            execution.deadline = None;
+            execution.machine.backoff_elapsed(generation)?;
         }
-        SupervisorState::Stopping(generation) if !*stop_kill_sent => {
+        SupervisorState::Stopping(generation) if !execution.stop_kill_sent => {
             client
                 .signal(generation, BrokerSignalScope::Group, ProcessSignal::Kill)
                 .await?;
-            pending_signals.push_back(PendingSignal::Lifecycle);
-            *stop_kill_sent = true;
-            *deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+            execution
+                .pending_signals
+                .push_back(PendingSignal::Lifecycle);
+            execution.stop_kill_sent = true;
+            execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
         }
         SupervisorState::Stopping(_) => {
             return Err(ExecutorError::BrokerTimedOut("service termination"));
@@ -827,24 +811,16 @@ async fn begin_supervisor_shutdown(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn apply_control_command(
     client: &mut ProcessBrokerClient,
-    machine: &mut StateMachine,
     service_name: &str,
     command: ControlCommand,
-    pending_stop: &mut Option<StopCompletion>,
-    deadline: &mut Option<TokioInstant>,
-    stop_kill_sent: &mut bool,
-    pending_signals: &mut VecDeque<PendingSignal>,
-    pending_detach: &mut Option<PendingDetach>,
-    tracker: &RestartTracker,
-    runtime_status: &RuntimeStatus,
+    execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
-    if pending_detach.is_some() && command.request().operation != Operation::Status {
+    if execution.pending_detach.is_some() && command.request().operation != Operation::Status {
         let response = Response {
             code: ResponseCode::Conflict,
-            generation: machine.state().generation(),
+            generation: execution.machine.state().generation(),
             message: "a live-child detach operation is already pending".to_owned(),
             status: None,
         };
@@ -852,55 +828,59 @@ async fn apply_control_command(
         return Ok(());
     }
 
-    let previous_desired = machine.desired();
+    let previous_desired = execution.machine.desired();
     let operation = command.request().operation;
-    let decision = decide_request(service_name, machine, command.request());
+    let decision = decide_request(service_name, &mut execution.machine, command.request());
     let mut response = decision.response;
     if operation == Operation::Status && response.code == ResponseCode::Ok {
-        response.status = Some(runtime_status.snapshot(machine, tracker, *deadline));
+        response.status = Some(execution.status.snapshot(
+            &execution.machine,
+            &execution.tracker,
+            execution.deadline,
+        ));
     }
     match decision.effect {
         ControlEffect::None | ControlEffect::BeginStart => {}
         ControlEffect::CancelPending { .. } => {
-            machine.cancel_pending()?;
-            *deadline = None;
+            execution.machine.cancel_pending()?;
+            execution.deadline = None;
         }
         ControlEffect::StopGroup { generation, after } => {
-            if matches!(machine.state(), SupervisorState::Stopping(_)) {
-                *pending_stop = Some(after);
+            if matches!(execution.machine.state(), SupervisorState::Stopping(_)) {
+                execution.pending_stop = Some(after);
             } else {
-                machine.begin_stop(generation)?;
+                execution.machine.begin_stop(generation)?;
                 begin_group_stop(
                     client,
                     generation,
-                    pending_stop,
+                    &mut execution.pending_stop,
                     after,
-                    deadline,
-                    stop_kill_sent,
-                    pending_signals,
+                    &mut execution.deadline,
+                    &mut execution.stop_kill_sent,
+                    &mut execution.pending_signals,
                 )
                 .await?;
             }
         }
         ControlEffect::ExitSupervisor { leave_child: false } => {
             if matches!(
-                machine.state(),
+                execution.machine.state(),
                 SupervisorState::Waiting | SupervisorState::Backoff { .. }
             ) {
-                machine.cancel_pending()?;
-                *deadline = None;
+                execution.machine.cancel_pending()?;
+                execution.deadline = None;
             }
         }
         ControlEffect::ExitSupervisor { leave_child: true } => {
-            let Some(generation) = machine.state().live_generation() else {
+            let Some(generation) = execution.machine.state().live_generation() else {
                 return Err(ExecutorError::Transition(TransitionError::Invalid {
-                    state: machine.state(),
+                    state: execution.machine.state(),
                     event: "begin_detach",
                 }));
             };
-            machine.set_desired(previous_desired);
+            execution.machine.set_desired(previous_desired);
             client.detach(generation).await?;
-            *pending_detach = Some(PendingDetach {
+            execution.pending_detach = Some(PendingDetach {
                 generation,
                 previous_desired,
                 command,
@@ -916,7 +896,7 @@ async fn apply_control_command(
             client
                 .signal(generation, broker_scope(scope), process_signal(signal))
                 .await?;
-            pending_signals.push_back(PendingSignal::Control {
+            execution.pending_signals.push_back(PendingSignal::Control {
                 command,
                 success: Box::new(response),
             });
@@ -967,34 +947,25 @@ async fn request_group_stop(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn handle_broker_event(
     client: &mut ProcessBrokerClient,
     event: ProcessBrokerEvent,
     config: &ServiceConfig,
-    machine: &mut StateMachine,
-    tracker: &mut RestartTracker,
-    epoch: Instant,
-    runtime_status: &mut RuntimeStatus,
-    pending_stop: &mut Option<StopCompletion>,
-    deadline: &mut Option<TokioInstant>,
-    stop_kill_sent: &mut bool,
-    pending_signals: &mut VecDeque<PendingSignal>,
-    pending_detach: &mut Option<PendingDetach>,
+    execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
     match event {
         ProcessBrokerEvent::Started {
             generation,
             process,
             ..
-        } if machine.state() == SupervisorState::Starting(generation) => {
-            machine.child_started(generation)?;
-            runtime_status.publish_main_pid(process)?;
+        } if execution.machine.state() == SupervisorState::Starting(generation) => {
+            execution.machine.child_started(generation)?;
+            execution.status.publish_main_pid(process)?;
             if config.readiness.mode == ReadinessMode::Immediate {
-                machine.child_ready(generation)?;
-                *deadline = None;
+                execution.machine.child_ready(generation)?;
+                execution.deadline = None;
             } else {
-                *deadline = Some(
+                execution.deadline = Some(
                     TokioInstant::now()
                         + Duration::from_secs(config.readiness.timeout_seconds)
                         + BROKER_EVENT_TIMEOUT,
@@ -1006,77 +977,66 @@ async fn handle_broker_event(
             generation,
             process,
             ..
-        } if machine.state() == SupervisorState::Stopping(generation) => {
-            runtime_status.publish_main_pid(process)?;
+        } if execution.machine.state() == SupervisorState::Stopping(generation) => {
+            execution.status.publish_main_pid(process)?;
             Ok(())
         }
         ProcessBrokerEvent::SpawnFailed { generation, .. }
-            if machine.state().live_generation() == Some(generation) =>
+            if execution.machine.state().live_generation() == Some(generation) =>
         {
             complete_generation(
                 client,
                 config,
-                machine,
-                tracker,
-                epoch,
                 generation,
                 ChildResult::Exited(SPAWN_FAILURE_EXIT),
                 true,
-                runtime_status,
-                pending_stop,
-                deadline,
-                stop_kill_sent,
+                execution,
             )
         }
         ProcessBrokerEvent::Child { generation, event }
-            if machine.state().live_generation() == Some(generation) =>
+            if execution.machine.state().live_generation() == Some(generation) =>
         {
             if let Some(result) = event.terminal_result() {
-                complete_generation(
-                    client,
-                    config,
-                    machine,
-                    tracker,
-                    epoch,
-                    generation,
-                    result,
-                    false,
-                    runtime_status,
-                    pending_stop,
-                    deadline,
-                    stop_kill_sent,
-                )?;
+                complete_generation(client, config, generation, result, false, execution)?;
             }
             Ok(())
         }
         ProcessBrokerEvent::SignalDelivered { generation } => {
-            finish_signal_request(pending_signals, generation, None)
+            finish_signal_request(&mut execution.pending_signals, generation, None)
         }
         ProcessBrokerEvent::SignalFailed {
             generation,
             os_error,
-        } => finish_signal_request(pending_signals, generation, os_error),
+        } => finish_signal_request(&mut execution.pending_signals, generation, os_error),
         ProcessBrokerEvent::GenerationReady { generation }
-            if machine.state() == SupervisorState::Started(generation) =>
+            if execution.machine.state() == SupervisorState::Started(generation) =>
         {
-            publish_readiness(machine, generation, deadline)
+            publish_readiness(&mut execution.machine, generation, &mut execution.deadline)
         }
         ProcessBrokerEvent::ReadinessFailed { generation, .. }
-            if machine.state() == SupervisorState::Started(generation) =>
+            if execution.machine.state() == SupervisorState::Started(generation) =>
         {
-            runtime_status.readiness_failed = true;
-            machine.begin_stop(generation)?;
-            request_group_stop(client, generation, pending_signals).await?;
-            *stop_kill_sent = false;
-            *deadline = Some(TokioInstant::now() + SERVICE_STOP_GRACE);
+            execution.status.readiness_failed = true;
+            execution.machine.begin_stop(generation)?;
+            request_group_stop(client, generation, &mut execution.pending_signals).await?;
+            execution.stop_kill_sent = false;
+            execution.deadline = Some(TokioInstant::now() + SERVICE_STOP_GRACE);
             Ok(())
         }
-        ProcessBrokerEvent::Detached { generation } => {
-            finish_detach(generation, true, machine, runtime_status, pending_detach)
-        }
-        ProcessBrokerEvent::DetachFailed { generation } => {
-            finish_detach(generation, false, machine, runtime_status, pending_detach)
-        }
+        ProcessBrokerEvent::Detached { generation } => finish_detach(
+            generation,
+            true,
+            &mut execution.machine,
+            &mut execution.status,
+            &mut execution.pending_detach,
+        ),
+        ProcessBrokerEvent::DetachFailed { generation } => finish_detach(
+            generation,
+            false,
+            &mut execution.machine,
+            &mut execution.status,
+            &mut execution.pending_detach,
+        ),
         event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
     }
 }
@@ -1125,43 +1085,40 @@ fn finish_detach(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn complete_generation(
     client: &ProcessBrokerClient,
     config: &ServiceConfig,
-    machine: &mut StateMachine,
-    tracker: &mut RestartTracker,
-    epoch: Instant,
     generation: Generation,
     result: ChildResult,
     start_failed: bool,
-    runtime_status: &mut RuntimeStatus,
-    pending_stop: &mut Option<StopCompletion>,
-    deadline: &mut Option<TokioInstant>,
-    stop_kill_sent: &mut bool,
+    execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
-    runtime_status.last_result = Some(result);
-    runtime_status.last_readiness_failed = runtime_status.readiness_failed;
-    runtime_status.last_start_failed = start_failed;
-    runtime_status.clear_main_pid();
-    runtime_status.down_since = Some(Instant::now());
-    let runtime_seconds = runtime_status.started_at.take().map_or(0, elapsed_seconds);
-    let operator_stopped = pending_stop.is_some();
-    let policy_result = if runtime_status.readiness_failed {
+    execution.status.last_result = Some(result);
+    execution.status.last_readiness_failed = execution.status.readiness_failed;
+    execution.status.last_start_failed = start_failed;
+    execution.status.clear_main_pid();
+    execution.status.down_since = Some(Instant::now());
+    let runtime_seconds = execution
+        .status
+        .started_at
+        .take()
+        .map_or(0, elapsed_seconds);
+    let operator_stopped = execution.pending_stop.is_some();
+    let policy_result = if execution.status.readiness_failed {
         ChildResult::Exited(1)
     } else {
         result
     };
     if !operator_stopped && (start_failed || !policy_result.is_success(&config.restart)) {
-        runtime_status.failures = runtime_status.failures.saturating_add(1);
+        execution.status.failures = execution.status.failures.saturating_add(1);
     }
-    let decision = pending_stop.take().map_or_else(
+    let decision = execution.pending_stop.take().map_or_else(
         || {
-            tracker.decide(
+            execution.tracker.decide(
                 policy_result,
                 runtime_seconds,
-                elapsed_seconds(epoch),
-                machine.desired(),
+                elapsed_seconds(execution.epoch),
+                execution.machine.desired(),
                 &config.restart,
             )
         },
@@ -1170,13 +1127,13 @@ fn complete_generation(
             StopCompletion::Halt => RestartDecision::ExitSupervisor,
         },
     );
-    if machine.desired() == DesiredState::Once {
-        machine.set_desired(DesiredState::Down);
+    if execution.machine.desired() == DesiredState::Once {
+        execution.machine.set_desired(DesiredState::Down);
     }
-    machine.child_reaped(generation, decision)?;
-    runtime_status.readiness_failed = false;
-    *stop_kill_sent = false;
-    *deadline = match decision {
+    execution.machine.child_reaped(generation, decision)?;
+    execution.status.readiness_failed = false;
+    execution.stop_kill_sent = false;
+    execution.deadline = match decision {
         RestartDecision::Restart {
             base_delay_seconds,
             jitter_percent,

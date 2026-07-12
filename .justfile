@@ -24,7 +24,15 @@ audit:
 deny:
     cargo deny check
 
-ci: fmt-check clippy check test audit deny
+lint-policy:
+    @matches="$(rg -n '#!?\[(allow|expect)\(' crates --glob '*.rs' --glob '!**/tests/**' || true)"; \
+        if [[ -n "$matches" ]]; then \
+            printf '%s\n' "$matches"; \
+            echo "production lint exceptions are forbidden; refactor the code or keep a narrow exception in crates/*/tests/" >&2; \
+            exit 1; \
+        fi
+
+ci: lint-policy fmt-check clippy check test audit deny
 
 build:
     cargo build --workspace --release --locked

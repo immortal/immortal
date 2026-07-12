@@ -122,6 +122,41 @@ See [DESIGN.md](DESIGN.md) for module ownership and implementation rules.
   bounded-memory streaming, rotation, retention, timestamps, and optional raw
   byte pass-through. External logger commands remain the preferred interface.
 
+```mermaid
+flowchart TB
+    init["Operating-system init<br/>rc, init, or systemd"]
+
+    subgraph binaries["Immortal workspace binaries"]
+        dir["immortaldir<br/>definition discovery and reconciliation"]
+        daemon["immortal<br/>one service supervisor"]
+        ctl["immortalctl<br/>status, lifecycle, and signals"]
+        log["immortallog<br/>replaceable file adapter"]
+    end
+
+    core["immortal-core<br/>configuration · supervision · process broker<br/>control protocol · readiness · logging model<br/>reconciliation · PID files · platform behavior"]
+    fork["fork crate<br/>fork/exec · daemonization · process groups<br/>signals · descriptors · child waiting"]
+    kernel["Unix kernel<br/>Linux · macOS · FreeBSD"]
+    service["Managed service and logger processes"]
+
+    daemon -->|Cargo dependency| core
+    ctl -->|Cargo dependency| core
+    dir -->|Cargo dependency| core
+    log -->|Cargo dependency| core
+    core -->|only direct fork consumer| fork
+    fork -->|reviewed Unix operations| kernel
+
+    init -.->|starts| dir
+    dir -.->|planned start and reconciliation| daemon
+    ctl -.->|authenticated Unix control socket| daemon
+    daemon -.->|broker owns, signals, and reaps| service
+    service -.->|planned stdout/stderr route| log
+```
+
+Solid arrows are Rust/Cargo dependencies. Dashed arrows are runtime
+relationships; labels containing `planned` identify paths that remain tracked
+in the implementation checklist below. CLI crates never call `fork` directly:
+all process behavior crosses the `immortal-core::process` boundary.
+
 Each CLI follows the one-way flow:
 
 ```text
@@ -606,3 +641,29 @@ Process changes require native lifecycle tests on Linux, macOS, and FreeBSD.
 Every process test must have a hard timeout and clean up every child and process
 group on both success and failure. Dependency changes must pass `cargo audit`
 and `cargo deny check` before their checklist item is complete.
+
+## Contributing
+
+Contributions of all kinds are welcome, including carefully supervised
+AI-assisted work. The contributor remains responsible for understanding and
+reviewing every submitted line. Generated volume is not evidence of progress:
+keep changes focused, remove unrelated noise, and include the tests and
+documentation needed to justify the behavior.
+
+Before submitting a change:
+
+1. Read the [Agent and Contributor Contract](AGENTS.md) completely. It applies
+   equally to human and AI contributors.
+2. Read the relevant architecture and safety boundaries in
+   [DESIGN.md](DESIGN.md).
+3. Confirm the current implementation and tests before choosing an unchecked
+   roadmap item; the checklist describes direction, not permission to assume
+   missing behavior.
+4. Run the complete DevPod validation described above, including the FreeBSD
+   target check.
+5. Keep public CLI, configuration, and control-protocol changes deliberate and
+   document their rationale and upgrade impact.
+
+When using an AI coding agent, explicitly direct it to read `AGENTS.md`,
+`README.md`, and `DESIGN.md` before editing. Review its diff, test claims, error
+paths, and process-cleanup behavior yourself before submitting the work.

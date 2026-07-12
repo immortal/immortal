@@ -632,9 +632,11 @@ async fn run_broker(stream: UnixStream) -> Result<(), ProcessBrokerError> {
                             startup_timeout,
                             readiness_timeout,
                             &mut writer,
-                            &mut generations,
-                            &mut processes,
-                            &readiness_sender,
+                            BrokerSpawnState {
+                                generations: &mut generations,
+                                processes: &mut processes,
+                                readiness_sender: &readiness_sender,
+                            },
                         ).await?;
                     }
                     BrokerRequest::Signal { generation, target, signal: requested } => {
@@ -700,6 +702,12 @@ struct ReadinessObservation {
     result: Result<(), ReadinessError>,
 }
 
+struct BrokerSpawnState<'a> {
+    generations: &'a mut BTreeMap<Generation, SpawnedProcess>,
+    processes: &'a mut BTreeMap<ProcessId, Generation>,
+    readiness_sender: &'a mpsc::Sender<ReadinessObservation>,
+}
+
 fn readiness_failure(error: &ReadinessError) -> BrokerReadinessFailure {
     match error {
         ReadinessError::Timeout => BrokerReadinessFailure::Timeout,
@@ -731,21 +739,18 @@ where
     write_event(writer, &BrokerEvent::Detached { generation }).await
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn handle_spawn<W>(
     generation: Generation,
     command: ProcessCommand,
     startup_timeout: Duration,
     readiness_timeout: Option<Duration>,
     writer: &mut W,
-    generations: &mut BTreeMap<Generation, SpawnedProcess>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
-    readiness_sender: &mpsc::Sender<ReadinessObservation>,
+    state: BrokerSpawnState<'_>,
 ) -> Result<(), ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
 {
-    if generations.contains_key(&generation) {
+    if state.generations.contains_key(&generation) {
         return write_event(
             writer,
             &BrokerEvent::SpawnFailed {
@@ -793,7 +798,7 @@ where
     match spawn_result {
         Ok(child) => {
             if let Some((mut broker_stream, timeout)) = readiness_waiter {
-                let sender = readiness_sender.clone();
+                let sender = state.readiness_sender.clone();
                 tokio::spawn(async move {
                     let result = wait_for_readiness(&mut broker_stream, timeout).await;
                     let _ = sender
@@ -801,8 +806,8 @@ where
                         .await;
                 });
             }
-            processes.insert(child.process(), generation);
-            generations.insert(generation, child);
+            state.processes.insert(child.process(), generation);
+            state.generations.insert(generation, child);
             write_event(
                 writer,
                 &BrokerEvent::Started {
@@ -815,7 +820,7 @@ where
         }
         Err(error) => {
             if let Some(process) = error.cleanup_pending() {
-                processes.insert(process, generation);
+                state.processes.insert(process, generation);
             }
             write_event(
                 writer,

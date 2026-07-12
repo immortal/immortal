@@ -3,7 +3,6 @@
 use std::sync::OnceLock;
 
 mod generated {
-    #![allow(clippy::doc_markdown)]
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
