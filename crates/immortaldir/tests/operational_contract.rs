@@ -554,13 +554,13 @@ struct TestRoot(PathBuf);
 
 impl TestRoot {
     fn new() -> Result<Self, Box<dyn Error>> {
-        let path = std::env::temp_dir().join(format!(
+        let path = Path::new("/tmp").join(format!(
             "immortaldir-operational-contract-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path)?;
-        Ok(Self(path))
+        Ok(Self(fs::canonicalize(path)?))
     }
 
     fn path(&self) -> &Path {
