@@ -17,6 +17,7 @@ use immortal_core::{
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const TRUE_PROGRAM: &str = "/usr/bin/true";
 
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
@@ -81,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     assert_status(
-        run(binary, ["--foreground", "--retries", "0", "/bin/true"])?,
+        run(binary, ["--foreground", "--retries", "0", TRUE_PROGRAM])?,
         ExitClass::TemporaryFailure,
         "retry limit",
     )?;
@@ -138,7 +139,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "--foreground",
                 "--log-file",
                 "/tmp/immortal-unimplemented.log",
-                "/bin/true",
+                TRUE_PROGRAM,
             ],
         )?,
         ExitClass::Unavailable,

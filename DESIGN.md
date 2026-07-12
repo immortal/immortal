@@ -114,6 +114,15 @@ descriptor, credential, group, and `execve` operations. An exec-status channel
 distinguishes exec failure from a successfully executed program before the
 generation becomes Running.
 
+Account resolution follows the native directory authority before daemonization
+or broker creation. Linux and FreeBSD use the safe `nix` account and group-list
+interfaces. Apple deliberately excludes `getgrouplist`; on macOS the platform
+boundary therefore executes absolute `/usr/bin/id -G -- NAME` without a shell
+so Open Directory remains authoritative. Its output is size-bounded, must be
+UTF-8 numeric group identifiers, is deduplicated, and must include at least one
+reported group; command failure or malformed output aborts configuration
+materialization. Only the resulting numeric identity crosses broker IPC.
+
 Broker IPC is bounded, versioned, and private. EOF or supervisor death makes the
 broker stop and reap owned groups before exiting. For a descriptor-tracked
 generation whose direct launcher has already exited, the broker instead owns a

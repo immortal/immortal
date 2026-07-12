@@ -42,7 +42,8 @@ jobs:
           tool: cargo-fuzz
       - name: Run bounded coverage-guided fuzzing
         run: >-
-          cargo +nightly fuzz run ${{ matrix.target }} --
+          cargo +nightly fuzz run ${{ matrix.target }}
+          --target x86_64-unknown-linux-gnu --
           -max_total_time=${{ github.event_name == 'schedule' && 600 || 60 }}
           -timeout=10
           -rss_limit_mb=2048

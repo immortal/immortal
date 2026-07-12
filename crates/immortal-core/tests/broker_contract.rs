@@ -288,7 +288,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let task = BrokerTaskId::new(1).ok_or("invalid auxiliary task ID")?;
         client
-            .spawn_task(task, ProcessCommand::new("/bin/true"), STARTUP_TIMEOUT)
+            .spawn_task(task, ProcessCommand::new("/usr/bin/true"), STARTUP_TIMEOUT)
             .await?;
         match client.next_event().await? {
             ProcessBrokerEvent::TaskStarted { task: started, .. } if started == task => {}

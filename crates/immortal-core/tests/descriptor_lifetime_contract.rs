@@ -12,6 +12,8 @@ use immortal_core::{
     supervisor::{ChildResult, SupervisorState},
 };
 
+const TRUE_PROGRAM: &str = "/usr/bin/true";
+
 fn main() -> Result<(), Box<dyn Error>> {
     let mut config = ServiceConfig::for_command(vec![
         "/bin/sh".to_owned(),
@@ -20,8 +22,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     ])?;
     config.process_mode = ProcessMode::DescriptorTracking;
     config.descriptor_tracking = Some(DescriptorTrackingConfig {
-        stop: hook("/bin/true"),
-        reload: hook("/bin/true"),
+        stop: hook(TRUE_PROGRAM),
+        reload: hook(TRUE_PROGRAM),
         lifetime_timeout_seconds: 1,
     });
     config.restart.policy = RestartPolicy::Never;

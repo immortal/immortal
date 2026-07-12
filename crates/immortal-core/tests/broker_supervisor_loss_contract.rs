@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn reject_zero_cleanup_deadline() -> Result<(), Box<dyn Error>> {
     if BrokerLifetimePlan::new(
-        ProcessCommand::new("/bin/true"),
+        ProcessCommand::new("/usr/bin/true"),
         Duration::ZERO,
         EVENT_TIMEOUT,
     )
