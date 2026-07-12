@@ -88,21 +88,32 @@ pub enum FailureReason {
     ReadinessTimeout,
     /// Supervisor could not create or execute a child.
     SpawnFailed,
+    /// A required logger stage exhausted its independent retry policy.
+    LoggerRetryLimit,
 }
 
 /// Externally observable supervisor lifecycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SupervisorState {
+    /// Runtime resources are being initialized before supervision begins.
+    Initializing,
     /// No child exists and no immediate start is scheduled.
     Down,
     /// Preconditions are being evaluated.
-    Waiting,
+    WaitingCondition,
     /// A generation is being created and executed.
     Starting(Generation),
     /// A child exists but has not yet become ready.
-    Started(Generation),
+    Running(Generation),
     /// The generation is ready and running.
     Ready(Generation),
+    /// The generation is stopped by a job-control signal.
+    Paused {
+        /// Exact generation which remains owned.
+        generation: Generation,
+        /// Whether readiness had completed before the stop.
+        ready: bool,
+    },
     /// Lifecycle shutdown is in progress.
     Stopping(Generation),
     /// A restart is scheduled after the given base delay.
@@ -112,10 +123,12 @@ pub enum SupervisorState {
         /// Delay before attempting the next generation.
         delay_seconds: u64,
     },
+    /// The service ended and bounded post-exit work is running.
+    Completed(Generation),
     /// Automatic starts are disabled until an operator requests `Up`.
     Failed(FailureReason),
     /// Supervisor should finish after cleanup and status publication.
-    Exiting,
+    Exited,
 }
 
 impl SupervisorState {
@@ -124,11 +137,17 @@ impl SupervisorState {
     pub const fn generation(self) -> Option<Generation> {
         match self {
             Self::Starting(generation)
-            | Self::Started(generation)
+            | Self::Running(generation)
             | Self::Ready(generation)
             | Self::Stopping(generation)
+            | Self::Paused { generation, .. }
+            | Self::Completed(generation)
             | Self::Backoff { generation, .. } => Some(generation),
-            Self::Down | Self::Waiting | Self::Failed(_) | Self::Exiting => None,
+            Self::Initializing
+            | Self::Down
+            | Self::WaitingCondition
+            | Self::Failed(_)
+            | Self::Exited => None,
         }
     }
 
@@ -137,12 +156,17 @@ impl SupervisorState {
     pub const fn live_generation(self) -> Option<Generation> {
         match self {
             Self::Starting(generation)
-            | Self::Started(generation)
+            | Self::Running(generation)
             | Self::Ready(generation)
-            | Self::Stopping(generation) => Some(generation),
-            Self::Down | Self::Waiting | Self::Backoff { .. } | Self::Failed(_) | Self::Exiting => {
-                None
-            }
+            | Self::Stopping(generation)
+            | Self::Paused { generation, .. } => Some(generation),
+            Self::Initializing
+            | Self::Down
+            | Self::WaitingCondition
+            | Self::Backoff { .. }
+            | Self::Completed(_)
+            | Self::Failed(_)
+            | Self::Exited => None,
         }
     }
 }
@@ -193,6 +217,29 @@ impl Default for StateMachine {
 }
 
 impl StateMachine {
+    /// Construct a lifecycle before runtime initialization completes.
+    #[must_use]
+    pub const fn initializing(desired: DesiredState) -> Self {
+        Self {
+            desired,
+            state: SupervisorState::Initializing,
+            next_generation: Generation::FIRST,
+        }
+    }
+
+    /// Publish successful runtime initialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the lifecycle is initializing.
+    pub fn initialized(&mut self) -> Result<(), TransitionError> {
+        if self.state != SupervisorState::Initializing {
+            return Err(self.invalid("initialized"));
+        }
+        self.state = SupervisorState::Down;
+        Ok(())
+    }
+
     /// Construct a lifecycle with explicit initial operator intent.
     #[must_use]
     pub const fn new(desired: DesiredState) -> Self {
@@ -231,7 +278,7 @@ impl StateMachine {
         {
             return Err(self.invalid("begin_start"));
         }
-        self.state = SupervisorState::Waiting;
+        self.state = SupervisorState::WaitingCondition;
         Ok(())
     }
 
@@ -241,7 +288,7 @@ impl StateMachine {
     ///
     /// Returns an error unless the lifecycle is waiting, or generation identity is exhausted.
     pub fn preconditions_ready(&mut self) -> Result<Generation, TransitionError> {
-        if self.state != SupervisorState::Waiting {
+        if self.state != SupervisorState::WaitingCondition {
             return Err(self.invalid("preconditions_ready"));
         }
         let generation = self.next_generation;
@@ -259,7 +306,7 @@ impl StateMachine {
         if self.state != SupervisorState::Starting(generation) {
             return Err(self.invalid("child_started"));
         }
-        self.state = SupervisorState::Started(generation);
+        self.state = SupervisorState::Running(generation);
         Ok(())
     }
 
@@ -269,10 +316,49 @@ impl StateMachine {
     ///
     /// Returns an error for a stale generation or invalid current state.
     pub fn child_ready(&mut self, generation: Generation) -> Result<(), TransitionError> {
-        if self.state != SupervisorState::Started(generation) {
+        if self.state != SupervisorState::Running(generation) {
             return Err(self.invalid("child_ready"));
         }
         self.state = SupervisorState::Ready(generation);
+        Ok(())
+    }
+
+    /// Record a job-control stop while retaining exact generation ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the current running or ready generation matches.
+    pub fn child_paused(&mut self, generation: Generation) -> Result<(), TransitionError> {
+        let ready = match self.state {
+            SupervisorState::Running(current) if current == generation => false,
+            SupervisorState::Ready(current) if current == generation => true,
+            _ => return Err(self.invalid("child_paused")),
+        };
+        self.state = SupervisorState::Paused { generation, ready };
+        Ok(())
+    }
+
+    /// Record continuation of an exactly owned paused generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the paused generation matches.
+    pub fn child_continued(&mut self, generation: Generation) -> Result<(), TransitionError> {
+        let SupervisorState::Paused {
+            generation: current,
+            ready,
+        } = self.state
+        else {
+            return Err(self.invalid("child_continued"));
+        };
+        if current != generation {
+            return Err(self.invalid("child_continued"));
+        }
+        self.state = if ready {
+            SupervisorState::Ready(generation)
+        } else {
+            SupervisorState::Running(generation)
+        };
         Ok(())
     }
 
@@ -285,8 +371,9 @@ impl StateMachine {
         if !matches!(
             self.state,
             SupervisorState::Starting(current)
-                | SupervisorState::Started(current)
+                | SupervisorState::Running(current)
                 | SupervisorState::Ready(current)
+                | SupervisorState::Paused { generation: current, .. }
                 if current == generation
         ) {
             return Err(self.invalid("begin_stop"));
@@ -306,14 +393,15 @@ impl StateMachine {
             || !matches!(
                 self.state,
                 SupervisorState::Starting(current)
-                    | SupervisorState::Started(current)
+                    | SupervisorState::Running(current)
                     | SupervisorState::Ready(current)
+                    | SupervisorState::Paused { generation: current, .. }
                     if current == generation
             )
         {
             return Err(self.invalid("child_detached"));
         }
-        self.state = SupervisorState::Exiting;
+        self.state = SupervisorState::Exited;
         Ok(())
     }
 
@@ -330,24 +418,45 @@ impl StateMachine {
         if !matches!(
             self.state,
             SupervisorState::Starting(current)
-                | SupervisorState::Started(current)
+                | SupervisorState::Running(current)
                 | SupervisorState::Ready(current)
                 | SupervisorState::Stopping(current)
+                | SupervisorState::Paused { generation: current, .. }
                 if current == generation
         ) {
             return Err(self.invalid("child_reaped"));
         }
-        self.state = match decision {
-            RestartDecision::Restart {
-                base_delay_seconds, ..
-            } => SupervisorState::Backoff {
-                generation,
-                delay_seconds: base_delay_seconds,
-            },
-            RestartDecision::StayDown => SupervisorState::Down,
-            RestartDecision::ExitSupervisor => SupervisorState::Exiting,
-            RestartDecision::Fail(reason) => SupervisorState::Failed(reason),
-        };
+        self.state = completion_state(generation, decision);
+        Ok(())
+    }
+
+    /// Retain a terminal generation while bounded post-exit work runs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a stale generation or a state with no reapable child.
+    pub fn child_completed(&mut self, generation: Generation) -> Result<(), TransitionError> {
+        if self.state.live_generation() != Some(generation) {
+            return Err(self.invalid("child_completed"));
+        }
+        self.state = SupervisorState::Completed(generation);
+        Ok(())
+    }
+
+    /// Finish post-exit work and publish the already selected restart decision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the exact completed generation is current.
+    pub fn completion_finished(
+        &mut self,
+        generation: Generation,
+        decision: RestartDecision,
+    ) -> Result<(), TransitionError> {
+        if self.state != SupervisorState::Completed(generation) {
+            return Err(self.invalid("completion_finished"));
+        }
+        self.state = completion_state(generation, decision);
         Ok(())
     }
 
@@ -369,7 +478,7 @@ impl StateMachine {
         self.state = if matches!(self.desired, DesiredState::Up | DesiredState::Once) {
             SupervisorState::Down
         } else if matches!(self.desired, DesiredState::Halt | DesiredState::Exit) {
-            SupervisorState::Exiting
+            SupervisorState::Exited
         } else {
             SupervisorState::Down
         };
@@ -384,12 +493,12 @@ impl StateMachine {
     pub fn cancel_pending(&mut self) -> Result<(), TransitionError> {
         if !matches!(
             self.state,
-            SupervisorState::Waiting | SupervisorState::Backoff { .. }
+            SupervisorState::WaitingCondition | SupervisorState::Backoff { .. }
         ) {
             return Err(self.invalid("cancel_pending"));
         }
         self.state = if matches!(self.desired, DesiredState::Halt | DesiredState::Exit) {
-            SupervisorState::Exiting
+            SupervisorState::Exited
         } else {
             SupervisorState::Down
         };
@@ -409,7 +518,7 @@ impl StateMachine {
         {
             return Err(self.invalid("exit_without_child"));
         }
-        self.state = SupervisorState::Exiting;
+        self.state = SupervisorState::Exited;
         Ok(())
     }
 
@@ -424,6 +533,19 @@ impl StateMachine {
         }
         self.desired = DesiredState::Up;
         self.state = SupervisorState::Down;
+        Ok(())
+    }
+
+    /// Enter a configured failure before any service generation exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the supervisor is childless and stable.
+    pub fn fail_without_child(&mut self, reason: FailureReason) -> Result<(), TransitionError> {
+        if self.state != SupervisorState::Down {
+            return Err(self.invalid("fail_without_child"));
+        }
+        self.state = SupervisorState::Failed(reason);
         Ok(())
     }
 
@@ -451,6 +573,20 @@ pub enum RestartDecision {
     ExitSupervisor,
     /// Enter a configured failure state until reset by an operator.
     Fail(FailureReason),
+}
+
+const fn completion_state(generation: Generation, decision: RestartDecision) -> SupervisorState {
+    match decision {
+        RestartDecision::Restart {
+            base_delay_seconds, ..
+        } => SupervisorState::Backoff {
+            generation,
+            delay_seconds: base_delay_seconds,
+        },
+        RestartDecision::StayDown => SupervisorState::Down,
+        RestartDecision::ExitSupervisor => SupervisorState::Exited,
+        RestartDecision::Fail(reason) => SupervisorState::Failed(reason),
+    }
 }
 
 /// Independent retry outcome for a failed pre-start condition.
@@ -638,6 +774,101 @@ mod tests {
         machine.begin_stop(generation)?;
         machine.child_reaped(generation, RestartDecision::StayDown)?;
         assert_eq!(machine.state(), SupervisorState::Down);
+        Ok(())
+    }
+
+    #[test]
+    fn initialization_completes_exactly_once() -> Result<(), Box<dyn Error>> {
+        let mut machine = StateMachine::initializing(DesiredState::Down);
+        assert_eq!(machine.state(), SupervisorState::Initializing);
+        assert_eq!(machine.desired(), DesiredState::Down);
+
+        machine.initialized()?;
+        assert_eq!(machine.state(), SupervisorState::Down);
+        assert!(machine.initialized().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn childless_failure_requires_down_and_can_be_reset() -> Result<(), Box<dyn Error>> {
+        let mut machine = StateMachine::default();
+        machine.fail_without_child(FailureReason::LoggerRetryLimit)?;
+        assert_eq!(
+            machine.state(),
+            SupervisorState::Failed(FailureReason::LoggerRetryLimit)
+        );
+        assert!(
+            machine
+                .fail_without_child(FailureReason::LoggerRetryLimit)
+                .is_err()
+        );
+
+        machine.reset_failure()?;
+        assert_eq!(machine.state(), SupervisorState::Down);
+        assert_eq!(machine.desired(), DesiredState::Up);
+        Ok(())
+    }
+
+    #[test]
+    fn pause_and_continue_preserve_readiness() -> Result<(), Box<dyn Error>> {
+        let mut machine = StateMachine::default();
+        machine.begin_start()?;
+        let generation = machine.preconditions_ready()?;
+        machine.child_started(generation)?;
+
+        machine.child_paused(generation)?;
+        assert_eq!(
+            machine.state(),
+            SupervisorState::Paused {
+                generation,
+                ready: false,
+            }
+        );
+        machine.child_continued(generation)?;
+        assert_eq!(machine.state(), SupervisorState::Running(generation));
+
+        machine.child_ready(generation)?;
+        machine.child_paused(generation)?;
+        assert_eq!(
+            machine.state(),
+            SupervisorState::Paused {
+                generation,
+                ready: true,
+            }
+        );
+        assert!(machine.child_continued(Generation(2)).is_err());
+        machine.child_continued(generation)?;
+        assert_eq!(machine.state(), SupervisorState::Ready(generation));
+        Ok(())
+    }
+
+    #[test]
+    fn completed_generation_retains_identity_until_hook_finishes() -> Result<(), Box<dyn Error>> {
+        let mut machine = StateMachine::default();
+        machine.begin_start()?;
+        let generation = machine.preconditions_ready()?;
+        machine.child_started(generation)?;
+
+        machine.child_completed(generation)?;
+        assert_eq!(machine.state(), SupervisorState::Completed(generation));
+        assert_eq!(machine.state().generation(), Some(generation));
+        assert_eq!(machine.state().live_generation(), None);
+        assert!(machine.child_completed(Generation(2)).is_err());
+
+        machine.completion_finished(
+            generation,
+            RestartDecision::Restart {
+                base_delay_seconds: 3,
+                jitter_percent: 0,
+            },
+        )?;
+        assert_eq!(
+            machine.state(),
+            SupervisorState::Backoff {
+                generation,
+                delay_seconds: 3,
+            }
+        );
         Ok(())
     }
 
@@ -832,7 +1063,7 @@ mod tests {
         waiting.begin_start()?;
         waiting.set_desired(DesiredState::Halt);
         waiting.cancel_pending()?;
-        assert_eq!(waiting.state(), SupervisorState::Exiting);
+        assert_eq!(waiting.state(), SupervisorState::Exited);
 
         let mut backoff = StateMachine::default();
         backoff.begin_start()?;
@@ -848,12 +1079,12 @@ mod tests {
         )?;
         backoff.set_desired(DesiredState::Halt);
         backoff.cancel_pending()?;
-        assert_eq!(backoff.state(), SupervisorState::Exiting);
+        assert_eq!(backoff.state(), SupervisorState::Exited);
 
         let mut down = StateMachine::default();
         down.set_desired(DesiredState::Exit);
         down.exit_without_child()?;
-        assert_eq!(down.state(), SupervisorState::Exiting);
+        assert_eq!(down.state(), SupervisorState::Exited);
         Ok(())
     }
 
@@ -867,7 +1098,7 @@ mod tests {
         assert!(machine.child_detached(generation).is_err());
         machine.set_desired(DesiredState::Exit);
         machine.child_detached(generation)?;
-        assert_eq!(machine.state(), SupervisorState::Exiting);
+        assert_eq!(machine.state(), SupervisorState::Exited);
         Ok(())
     }
 }

@@ -296,12 +296,26 @@ pub struct OutputConfig {
     pub logger: Option<Vec<String>>,
 }
 
+/// Retry policy shared by independently supervised logger stages.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LoggerRestartConfig {
+    /// Restarts permitted after the initial logger start; absent means unbounded.
+    pub max_retries: Option<u32>,
+    /// Delay and stable-runtime reset policy for consecutive logger failures.
+    pub backoff: BackoffConfig,
+}
+
 /// Output configuration for both child streams.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LoggingConfig {
+    /// Optional external file-adapter executable; defaults to sibling `immortallog`.
+    pub file_adapter: Option<PathBuf>,
     /// Route stderr through the stdout pipeline instead of creating a second pipe.
     pub combine_stderr: bool,
+    /// Independent logger-stage restart and exhaustion policy.
+    pub restart: LoggerRestartConfig,
     /// Standard-output route.
     pub stdout: OutputConfig,
     /// Standard-error route.
@@ -412,7 +426,17 @@ pub fn parse_file(path: &Path) -> Result<ServiceConfig, ConfigError> {
     let mut bytes = Vec::with_capacity(usize::try_from(declared_size).unwrap_or(0));
     file.take((MAX_CONFIG_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
-    let mut config = parse_bytes(&bytes)?;
+    parse_bytes_at(&bytes, path)
+}
+
+/// Parse one in-memory definition using the source path for stable resolution.
+///
+/// # Errors
+///
+/// Returns the same parse, validation, resolution, and filesystem errors as
+/// [`parse_file`], without reopening a path already read by a safe scanner.
+pub(crate) fn parse_bytes_at(bytes: &[u8], path: &Path) -> Result<ServiceConfig, ConfigError> {
+    let mut config = parse_bytes(bytes)?;
     let absolute_source = if path.is_absolute() {
         path.to_owned()
     } else {
@@ -598,19 +622,7 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
     if config.restart.success_exit_codes.is_empty() {
         errors.push("restart.success_exit_codes must not be empty".to_owned());
     }
-    let backoff = &config.restart.backoff;
-    if backoff.initial_seconds == 0 {
-        errors.push("restart.backoff.initial_seconds must be greater than zero".to_owned());
-    }
-    if backoff.max_seconds < backoff.initial_seconds {
-        errors.push("restart.backoff.max_seconds must be at least initial_seconds".to_owned());
-    }
-    if backoff.multiplier < 1 {
-        errors.push("restart.backoff.multiplier must be at least one".to_owned());
-    }
-    if backoff.jitter_percent > 100 {
-        errors.push("restart.backoff.jitter_percent must not exceed 100".to_owned());
-    }
+    validate_backoff(&config.restart.backoff, "restart.backoff", &mut errors);
     if let Some(burst) = &config.restart.limits.burst
         && (burst.starts == 0 || burst.window_seconds == 0)
     {
@@ -627,6 +639,16 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
     }
     validate_output(&config.logging.stdout, "logging.stdout", &mut errors);
     validate_output(&config.logging.stderr, "logging.stderr", &mut errors);
+    validate_backoff(
+        &config.logging.restart.backoff,
+        "logging.restart.backoff",
+        &mut errors,
+    );
+    validate_path(
+        config.logging.file_adapter.as_deref(),
+        "logging.file_adapter",
+        &mut errors,
+    );
     if config.logging.combine_stderr && output_is_configured(&config.logging.stderr) {
         errors.push("logging.combine_stderr conflicts with an explicit stderr route".to_owned());
     }
@@ -659,6 +681,23 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
     }
 }
 
+fn validate_backoff(backoff: &BackoffConfig, path: &str, errors: &mut Vec<String>) {
+    if backoff.initial_seconds == 0 {
+        errors.push(format!("{path}.initial_seconds must be greater than zero"));
+    }
+    if backoff.max_seconds < backoff.initial_seconds {
+        errors.push(format!(
+            "{path}.max_seconds must be at least initial_seconds"
+        ));
+    }
+    if backoff.multiplier == 0 {
+        errors.push(format!("{path}.multiplier must be at least one"));
+    }
+    if backoff.jitter_percent > 100 {
+        errors.push(format!("{path}.jitter_percent must not exceed 100"));
+    }
+}
+
 /// Resolve every path whose meaning would otherwise change after daemonization.
 ///
 /// Service executable paths containing `/` are relative to the resolved working
@@ -683,6 +722,7 @@ pub fn resolve_paths(config: &mut ServiceConfig, base: &Path) -> Result<(), Conf
     if let Some(hook) = &mut config.post_exit {
         resolve_argv_executable(&mut hook.command, &base)?;
     }
+    resolve_optional_path(&mut config.logging.file_adapter, &base);
     resolve_output_paths(&mut config.logging.stdout, &base)?;
     resolve_output_paths(&mut config.logging.stderr, &base)?;
     resolve_optional_path(&mut config.pid_files.supervisor, &base);
@@ -912,6 +952,10 @@ mod tests {
             config.logging.stdout.file.file,
             Some(base.join("logs/api.log"))
         );
+        assert_eq!(
+            config.logging.file_adapter,
+            Some(base.join("bin/immortallog"))
+        );
         assert_eq!(config.pid_files.main, Some(base.join("run/main.pid")));
         assert_eq!(
             config
@@ -1022,6 +1066,50 @@ start_condition:
 ",
         );
         assert!(matches!(invalid, Err(ConfigError::Validation(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn logger_restart_policy_parses_defaults_bounds_and_unknown_fields()
+    -> Result<(), Box<dyn Error>> {
+        let config = parse_str(
+            r"
+version: 2
+command: [service]
+logging:
+  restart:
+    max_retries: 4
+    backoff:
+      initial_seconds: 2
+      max_seconds: 8
+      multiplier: 3
+      jitter_percent: 5
+      reset_after_seconds: 20
+",
+        )?;
+        assert_eq!(config.logging.restart.max_retries, Some(4));
+        assert_eq!(config.logging.restart.backoff.initial_seconds, 2);
+        assert_eq!(config.logging.restart.backoff.max_seconds, 8);
+        assert_eq!(config.logging.restart.backoff.multiplier, 3);
+        assert_eq!(config.logging.restart.backoff.jitter_percent, 5);
+        assert_eq!(config.logging.restart.backoff.reset_after_seconds, 20);
+
+        let defaults = parse_str("version: 2\ncommand: [service]\n")?;
+        assert_eq!(defaults.logging.restart.max_retries, None);
+        assert_eq!(
+            defaults.logging.restart.backoff,
+            super::BackoffConfig::default()
+        );
+        assert!(matches!(
+            parse_str(
+                "version: 2\ncommand: [service]\nlogging:\n  restart:\n    backoff:\n      initial_seconds: 0\n"
+            ),
+            Err(ConfigError::Validation(_))
+        ));
+        assert!(matches!(
+            parse_str("version: 2\ncommand: [service]\nlogging:\n  restart:\n    future: true\n"),
+            Err(ConfigError::Parse(_))
+        ));
         Ok(())
     }
 

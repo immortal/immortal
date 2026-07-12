@@ -8,6 +8,7 @@ start_condition:
   command: [./checks/network-ready]
   timeout_seconds: 5
 logging:
+  file_adapter: ./bin/immortallog
   stdout:
     file:
       file: logs/api.log

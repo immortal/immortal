@@ -1,25 +1,105 @@
 //! Bounded discovery and desired-state reconciliation for `immortaldir`.
+//!
+//! A scan reads stable, size-limited definition snapshots and isolates invalid
+//! candidates. The desired-state tracker converts complete scans into semantic
+//! actions with confirmed deletion, while [`DefinitionSnapshots`] atomically
+//! publishes normalized launch/applied state below an owner-only runtime root.
+//! [`SupervisorLauncher`] moves one pre-Tokio broker client through bounded
+//! checked daemon-launch batches; it owns mechanism only, leaving lifecycle
+//! policy to the calling reconciliation loop.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt::{self, Display, Formatter},
-    fs::{self, File, Metadata},
-    io::{self, Read},
+    fs::{self, DirBuilder, File, Metadata, OpenOptions},
+    io::{self, Read, Write},
     num::NonZeroUsize,
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
-    time::SystemTime,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, SystemTime},
 };
 
+use tokio::time::timeout;
+
 use crate::{
-    config::{ConfigError, MAX_CONFIG_BYTES, ServiceConfig, parse_bytes},
+    config::{
+        ConfigError, MAX_CONFIG_BYTES, ServiceConfig, emit_config, parse_bytes_at, parse_file,
+    },
     platform::file_identity,
+    process::{
+        BrokerTaskId, ChildEvent, ProcessBrokerEndpoint, ProcessBrokerEvent, ProcessCommand,
+        wait_for_event,
+    },
 };
 
 /// Default maximum number of candidate definitions accepted in one directory.
 pub const DEFAULT_MAX_DEFINITIONS: usize = 4096;
 /// Consecutive authoritative scans required before a missing definition is removed.
 pub const DEFAULT_DELETION_CONFIRMATIONS: usize = 2;
+/// Default maximum checked supervisor launches submitted at once.
+pub const DEFAULT_MAX_CONCURRENT_LAUNCHES: usize = 8;
+/// Hard upper bound for one checked supervisor-launch batch.
+pub const MAX_CONCURRENT_LAUNCHES: usize = 64;
+const SNAPSHOT_DIRECTORY: &str = ".definitions";
+const SUPERVISOR_START_TIMEOUT: Duration = Duration::from_secs(15);
+static NEXT_SNAPSHOT: AtomicU64 = AtomicU64::new(0);
+
+/// Validated upper bound for one concurrent supervisor-launch batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LaunchConcurrency(NonZeroUsize);
+
+impl LaunchConcurrency {
+    /// Validate a nonzero launch limit within [`MAX_CONCURRENT_LAUNCHES`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `value` is zero or exceeds the hard resource bound.
+    pub const fn new(value: usize) -> Result<Self, LaunchConcurrencyError> {
+        match NonZeroUsize::new(value) {
+            Some(value) if value.get() <= MAX_CONCURRENT_LAUNCHES => Ok(Self(value)),
+            Some(value) => Err(LaunchConcurrencyError::TooLarge(value)),
+            None => Err(LaunchConcurrencyError::Zero),
+        }
+    }
+
+    /// Return the validated batch limit.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0.get()
+    }
+}
+
+impl Default for LaunchConcurrency {
+    fn default() -> Self {
+        Self(NonZeroUsize::new(DEFAULT_MAX_CONCURRENT_LAUNCHES).unwrap_or(NonZeroUsize::MIN))
+    }
+}
+
+/// Invalid concurrent supervisor-launch limit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LaunchConcurrencyError {
+    /// A concurrency limit must permit at least one launch.
+    Zero,
+    /// The requested limit exceeds the hard resource bound.
+    TooLarge(NonZeroUsize),
+}
+
+impl Display for LaunchConcurrencyError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Zero => formatter.write_str("launch concurrency must be nonzero"),
+            Self::TooLarge(value) => write!(
+                formatter,
+                "launch concurrency {} exceeds maximum {MAX_CONCURRENT_LAUNCHES}",
+                value.get()
+            ),
+        }
+    }
+}
+
+impl Error for LaunchConcurrencyError {}
 
 /// Resource limits for one authoritative directory scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,6 +184,546 @@ impl Error for ScanError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(&self.0)
     }
+}
+
+/// Secure store for immutable normalized definitions passed to new supervisors.
+#[derive(Debug)]
+pub struct DefinitionSnapshots {
+    directory: PathBuf,
+    owner_uid: u32,
+}
+
+impl DefinitionSnapshots {
+    /// Open or create the owner-only hidden snapshot directory below a runtime root.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the runtime root is unsafe or the snapshot directory
+    /// is a symlink, has a different owner, or is not mode `0700`.
+    pub fn open(runtime_root: &Path) -> io::Result<Self> {
+        crate::runtime::discover(runtime_root).map_err(io::Error::other)?;
+        let root = fs::symlink_metadata(runtime_root)?;
+        let directory = runtime_root.join(SNAPSHOT_DIRECTORY);
+        let mut builder = DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+        let metadata = fs::symlink_metadata(&directory)?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_dir()
+            || metadata.uid() != root.uid()
+            || metadata.mode() & 0o777 != 0o700
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "unsafe reconciliation snapshot directory",
+            ));
+        }
+        Ok(Self {
+            directory,
+            owner_uid: metadata.uid(),
+        })
+    }
+
+    /// Atomically publish one normalized definition and return its stable path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsafe name, serialization, exclusive creation,
+    /// write, sync, rename, or parent-directory sync failure.
+    pub fn publish(&self, name: &str, config: &ServiceConfig) -> io::Result<PathBuf> {
+        self.publish_named(name, "launch", config)
+    }
+
+    /// Persist the last desired state successfully applied by reconciliation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation, serialization, and atomic-write failures as
+    /// [`Self::publish`].
+    pub fn record_applied(&self, name: &str, config: &ServiceConfig) -> io::Result<()> {
+        let _path = self.publish_named(name, "applied", config)?;
+        Ok(())
+    }
+
+    /// Load the last applied desired state without following replacement links.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsafe name, unsafe entry type/ownership/mode, or
+    /// configuration parse and validation failure.
+    pub fn load_applied(&self, name: &str) -> io::Result<Option<ServiceConfig>> {
+        let path = self.named_path(name, "applied")?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.uid() != self.owner_uid
+            || metadata.mode() & 0o777 != 0o600
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "unsafe applied-state snapshot",
+            ));
+        }
+        parse_file(&path).map(Some).map_err(io::Error::other)
+    }
+
+    /// Remove applied state after a definition is stably deleted and halted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsafe name or filesystem removal failure.
+    pub fn remove_applied(&self, name: &str) -> io::Result<()> {
+        let path = self.named_path(name, "applied")?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.uid() != self.owner_uid
+            || metadata.mode() & 0o777 != 0o600
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "unsafe applied-state snapshot",
+            ));
+        }
+        fs::remove_file(path)
+    }
+
+    fn publish_named(&self, name: &str, kind: &str, config: &ServiceConfig) -> io::Result<PathBuf> {
+        let contents = emit_config(config).map_err(io::Error::other)?;
+        let destination = self.named_path(name, kind)?;
+        let sequence = NEXT_SNAPSHOT.fetch_add(1, Ordering::Relaxed);
+        let temporary =
+            self.directory
+                .join(format!(".{name}.{}.{}.tmp", std::process::id(), sequence));
+        let mut options = OpenOptions::new();
+        options
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+        let result = (|| -> io::Result<()> {
+            let mut file = options.open(&temporary)?;
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+            fs::rename(&temporary, &destination)?;
+            File::open(&self.directory)?.sync_all()
+        })();
+        if result.is_err() {
+            let _ignored = fs::remove_file(&temporary);
+        }
+        result?;
+        Ok(destination)
+    }
+
+    fn named_path(&self, name: &str, kind: &str) -> io::Result<PathBuf> {
+        if !safe_definition_name(name) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unsafe snapshot service name",
+            ));
+        }
+        Ok(self.directory.join(format!("{name}.{kind}.yml")))
+    }
+}
+
+fn safe_definition_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
+/// Failure while launching a checked supervisor through the pre-Tokio broker.
+#[derive(Debug)]
+pub enum LauncherError {
+    /// Launcher command configuration was invalid.
+    Config(ConfigError),
+    /// Broker transport or process preparation failed.
+    Broker(crate::process::ProcessBrokerError),
+    /// Supervisor launcher could not be prepared or the broker could not be reaped.
+    OperatingSystem(io::Error),
+    /// Launcher did not complete within its hard deadline.
+    Timeout,
+    /// A caller submitted more launches than its validated batch limit.
+    BatchLimit { actual: usize, limit: usize },
+    /// Broker returned an event unrelated to the current launch task.
+    UnexpectedEvent(ProcessBrokerEvent),
+    /// The checked `immortal` launcher exited unsuccessfully.
+    LauncherExited(ChildEvent),
+}
+
+impl Display for LauncherError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Config(error) => Display::fmt(error, formatter),
+            Self::Broker(error) => Display::fmt(error, formatter),
+            Self::OperatingSystem(error) => Display::fmt(error, formatter),
+            Self::Timeout => formatter.write_str("supervisor launcher deadline exceeded"),
+            Self::BatchLimit { actual, limit } => {
+                write!(
+                    formatter,
+                    "launch batch size {actual} exceeds limit {limit}"
+                )
+            }
+            Self::UnexpectedEvent(event) => {
+                write!(formatter, "unexpected supervisor launcher event: {event:?}")
+            }
+            Self::LauncherExited(event) => {
+                write!(
+                    formatter,
+                    "supervisor launcher exited unsuccessfully: {event:?}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for LauncherError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Config(error) => Some(error),
+            Self::Broker(error) => Some(error),
+            Self::OperatingSystem(error) => Some(error),
+            Self::Timeout
+            | Self::BatchLimit { .. }
+            | Self::UnexpectedEvent(_)
+            | Self::LauncherExited(_) => None,
+        }
+    }
+}
+
+impl From<ConfigError> for LauncherError {
+    fn from(error: ConfigError) -> Self {
+        Self::Config(error)
+    }
+}
+
+impl From<crate::process::ProcessBrokerError> for LauncherError {
+    fn from(error: crate::process::ProcessBrokerError) -> Self {
+        Self::Broker(error)
+    }
+}
+
+impl From<io::Error> for LauncherError {
+    fn from(error: io::Error) -> Self {
+        Self::OperatingSystem(error)
+    }
+}
+
+/// Checked-daemon launcher backed by one broker created before Tokio.
+pub struct SupervisorLauncher {
+    client: crate::process::ProcessBrokerClient,
+    next_task: u64,
+}
+
+/// Owned paths for one checked supervisor launch.
+#[derive(Debug, Eq, PartialEq)]
+pub struct SupervisorLaunch {
+    snapshot: PathBuf,
+    runtime_directory: PathBuf,
+}
+
+impl SupervisorLaunch {
+    /// Construct one launch from a normalized snapshot and exact runtime path.
+    #[must_use]
+    pub fn new(snapshot: PathBuf, runtime_directory: PathBuf) -> Self {
+        Self {
+            snapshot,
+            runtime_directory,
+        }
+    }
+}
+
+/// Isolated result for one submitted launcher task.
+#[derive(Debug)]
+pub enum LauncherTaskError {
+    /// The broker could not execute the launcher command.
+    Spawn,
+    /// The launcher invoked `immortal` but it exited unsuccessfully.
+    Exited(ChildEvent),
+}
+
+impl Display for LauncherTaskError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Spawn => formatter.write_str("broker could not execute the immortal launcher"),
+            Self::Exited(event) => write!(formatter, "supervisor launcher failed: {event:?}"),
+        }
+    }
+}
+
+impl Error for LauncherTaskError {}
+
+impl From<LauncherTaskError> for LauncherError {
+    fn from(error: LauncherTaskError) -> Self {
+        match error {
+            LauncherTaskError::Spawn => {
+                Self::OperatingSystem(io::Error::other("broker could not execute launcher"))
+            }
+            LauncherTaskError::Exited(event) => Self::LauncherExited(event),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct LaunchTaskState {
+    started: bool,
+    outcome: Option<Result<(), LauncherTaskError>>,
+}
+
+impl SupervisorLauncher {
+    /// Connect an endpoint and require the broker's bounded readiness event.
+    ///
+    /// # Errors
+    ///
+    /// Returns a broker, timeout, or unexpected-event failure.
+    pub async fn connect(endpoint: ProcessBrokerEndpoint) -> Result<Self, LauncherError> {
+        let mut client = endpoint.connect()?;
+        match timeout(SUPERVISOR_START_TIMEOUT, client.next_event()).await {
+            Ok(Ok(ProcessBrokerEvent::Ready)) => Ok(Self {
+                client,
+                next_task: 1,
+            }),
+            Ok(Ok(event)) => Err(LauncherError::UnexpectedEvent(event)),
+            Ok(Err(error)) => Err(error.into()),
+            Err(_) => Err(LauncherError::Timeout),
+        }
+    }
+
+    /// Launch one checked daemon and wait for its invoking process to report success.
+    ///
+    /// # Errors
+    ///
+    /// Returns preparation, broker, timeout, exec, or nonzero launcher-exit failure.
+    pub async fn launch(
+        &mut self,
+        binary: &Path,
+        snapshot: &Path,
+        runtime_directory: &Path,
+    ) -> Result<(), LauncherError> {
+        let command = prepare_launcher_command(binary, snapshot, runtime_directory)?;
+        let task = self.allocate_task()?;
+        self.client
+            .spawn_task(task, command, SUPERVISOR_START_TIMEOUT)
+            .await?;
+        timeout(SUPERVISOR_START_TIMEOUT, self.wait_for_launcher(task))
+            .await
+            .map_err(|_| LauncherError::Timeout)?
+    }
+
+    /// Submit one bounded batch and return task outcomes in input order.
+    ///
+    /// Commands and task IDs are fully prepared before the first broker write.
+    /// A task-local spawn/nonzero-exit failure does not discard other outcomes;
+    /// broker, protocol, or deadline failure aborts the complete batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an oversized batch, invalid command preparation,
+    /// task-space exhaustion, broker transport/protocol failure, or the shared
+    /// batch deadline. An empty batch succeeds with an empty result.
+    pub async fn launch_batch(
+        &mut self,
+        binary: &Path,
+        launches: Vec<SupervisorLaunch>,
+        concurrency: LaunchConcurrency,
+    ) -> Result<Vec<Result<(), LauncherTaskError>>, LauncherError> {
+        if launches.len() > concurrency.get() {
+            return Err(LauncherError::BatchLimit {
+                actual: launches.len(),
+                limit: concurrency.get(),
+            });
+        }
+        let mut prepared = Vec::with_capacity(launches.len());
+        let mut order = Vec::with_capacity(launches.len());
+        let mut states = BTreeMap::new();
+        for launch in launches {
+            let task = self.allocate_task()?;
+            let command =
+                prepare_launcher_command(binary, &launch.snapshot, &launch.runtime_directory)?;
+            order.push(task);
+            states.insert(task, LaunchTaskState::default());
+            prepared.push((task, command));
+        }
+        for (task, command) in prepared {
+            self.client
+                .spawn_task(task, command, SUPERVISOR_START_TIMEOUT)
+                .await?;
+        }
+        if states.is_empty() {
+            return Ok(Vec::new());
+        }
+        timeout(
+            SUPERVISOR_START_TIMEOUT,
+            self.wait_for_launch_batch(&mut states),
+        )
+        .await
+        .map_err(|_| LauncherError::Timeout)??;
+        order
+            .into_iter()
+            .map(|task| {
+                states
+                    .remove(&task)
+                    .and_then(|state| state.outcome)
+                    .ok_or_else(|| {
+                        LauncherError::OperatingSystem(io::Error::other(
+                            "completed launch task has no outcome",
+                        ))
+                    })
+            })
+            .collect()
+    }
+
+    fn allocate_task(&mut self) -> Result<BrokerTaskId, LauncherError> {
+        let task = BrokerTaskId::new(self.next_task)
+            .ok_or_else(|| io::Error::other("supervisor launcher task space exhausted"))?;
+        self.next_task = self
+            .next_task
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("supervisor launcher task counter overflow"))?;
+        Ok(task)
+    }
+
+    async fn wait_for_launcher(&mut self, task: BrokerTaskId) -> Result<(), LauncherError> {
+        loop {
+            match self.client.next_event().await? {
+                ProcessBrokerEvent::TaskStarted { task: current, .. } if current == task => {}
+                ProcessBrokerEvent::TaskChild {
+                    task: current,
+                    event: ChildEvent::Exited { code: 0, .. },
+                } if current == task => return Ok(()),
+                ProcessBrokerEvent::TaskChild {
+                    task: current,
+                    event,
+                } if current == task && event.is_terminal() => {
+                    return Err(LauncherError::LauncherExited(event));
+                }
+                ProcessBrokerEvent::TaskSpawnFailed { task: current, .. } if current == task => {
+                    return Err(LauncherError::OperatingSystem(io::Error::other(
+                        "broker could not execute the immortal launcher",
+                    )));
+                }
+                event => return Err(LauncherError::UnexpectedEvent(event)),
+            }
+        }
+    }
+
+    async fn wait_for_launch_batch(
+        &mut self,
+        states: &mut BTreeMap<BrokerTaskId, LaunchTaskState>,
+    ) -> Result<(), LauncherError> {
+        let mut remaining = states.len();
+        while remaining != 0 {
+            let event = self.client.next_event().await?;
+            match &event {
+                ProcessBrokerEvent::TaskStarted { task, .. } => {
+                    let Some(state) = states.get_mut(task) else {
+                        return Err(LauncherError::UnexpectedEvent(event));
+                    };
+                    if state.started || state.outcome.is_some() {
+                        return Err(LauncherError::OperatingSystem(io::Error::other(
+                            "duplicate or late launcher start event",
+                        )));
+                    }
+                    state.started = true;
+                }
+                ProcessBrokerEvent::TaskChild {
+                    task,
+                    event: child_event,
+                } if child_event.is_terminal() => {
+                    let Some(state) = states.get_mut(task) else {
+                        return Err(LauncherError::UnexpectedEvent(event));
+                    };
+                    if !state.started || state.outcome.is_some() {
+                        return Err(LauncherError::OperatingSystem(io::Error::other(
+                            "launcher terminal event violated task ordering",
+                        )));
+                    }
+                    state.outcome = Some(match child_event {
+                        ChildEvent::Exited { code: 0, .. } => Ok(()),
+                        terminal => Err(LauncherTaskError::Exited(*terminal)),
+                    });
+                    remaining = remaining
+                        .checked_sub(1)
+                        .ok_or_else(|| io::Error::other("launcher completion counter underflow"))?;
+                }
+                ProcessBrokerEvent::TaskSpawnFailed { task, .. } => {
+                    let Some(state) = states.get_mut(task) else {
+                        return Err(LauncherError::UnexpectedEvent(event));
+                    };
+                    if state.started || state.outcome.is_some() {
+                        return Err(LauncherError::OperatingSystem(io::Error::other(
+                            "launcher spawn failure violated task ordering",
+                        )));
+                    }
+                    state.outcome = Some(Err(LauncherTaskError::Spawn));
+                    remaining = remaining
+                        .checked_sub(1)
+                        .ok_or_else(|| io::Error::other("launcher completion counter underflow"))?;
+                }
+                _ => return Err(LauncherError::UnexpectedEvent(event)),
+            }
+        }
+        Ok(())
+    }
+
+    /// Stop and reap the otherwise childless launch broker.
+    ///
+    /// # Errors
+    ///
+    /// Returns a broker, timeout, unexpected-event, or broker-exit failure.
+    pub async fn shutdown(mut self) -> Result<(), LauncherError> {
+        let process = self.client.process();
+        self.client.shutdown().await?;
+        match timeout(SUPERVISOR_START_TIMEOUT, self.client.next_event()).await {
+            Ok(Ok(ProcessBrokerEvent::ShutdownComplete)) => {}
+            Ok(Ok(event)) => return Err(LauncherError::UnexpectedEvent(event)),
+            Ok(Err(error)) => return Err(error.into()),
+            Err(_) => return Err(LauncherError::Timeout),
+        }
+        drop(self.client);
+        let event = wait_for_event(process)?;
+        if matches!(event, ChildEvent::Exited { code: 0, .. }) {
+            Ok(())
+        } else {
+            Err(LauncherError::LauncherExited(event))
+        }
+    }
+}
+
+fn prepare_launcher_command(
+    binary: &Path,
+    snapshot: &Path,
+    runtime_directory: &Path,
+) -> Result<ProcessCommand, LauncherError> {
+    let binary_text = binary.to_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "immortal binary path is not UTF-8",
+        )
+    })?;
+    let config = ServiceConfig::for_command(vec![binary_text.to_owned()])?;
+    let mut command = ProcessCommand::from_service(&config, std::env::vars_os())?;
+    command
+        .argument("--config")
+        .argument(snapshot.as_os_str())
+        .argument("--control-dir")
+        .argument(runtime_directory.as_os_str());
+    Ok(command)
 }
 
 /// Scan top-level, non-hidden, regular `*.yml` definitions with bounded reads.
@@ -254,7 +874,7 @@ fn read_definition(path: &Path) -> Result<ServiceConfig, ScanProblemKind> {
     {
         return Err(ScanProblemKind::ChangedDuringRead);
     }
-    parse_bytes(&bytes).map_err(ScanProblemKind::Config)
+    parse_bytes_at(&bytes, path).map_err(ScanProblemKind::Config)
 }
 
 fn metadata_changed(before: &Metadata, after: &Metadata) -> bool {
@@ -535,18 +1155,30 @@ mod tests {
         error::Error,
         fs, io,
         num::NonZeroUsize,
+        os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
     };
 
     use super::{
-        DependencyError, DesiredStateTracker, ReconcileAction, ScanLimits, ScanProblem,
-        ScanProblemKind, ScanResult, canonical_definitions_directory, compare, dependency_plan,
-        metadata_changed, retain_last_known_good, scan_directory,
+        DefinitionSnapshots, DependencyError, DesiredStateTracker, LaunchConcurrency,
+        MAX_CONCURRENT_LAUNCHES, ReconcileAction, ScanLimits, ScanProblem, ScanProblemKind,
+        ScanResult, canonical_definitions_directory, compare, dependency_plan, metadata_changed,
+        retain_last_known_good, scan_directory,
     };
     use crate::config::MAX_CONFIG_BYTES;
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn launch_concurrency_rejects_zero_and_values_above_the_hard_bound() {
+        assert!(LaunchConcurrency::new(0).is_err());
+        assert_eq!(
+            LaunchConcurrency::new(MAX_CONCURRENT_LAUNCHES).map(LaunchConcurrency::get),
+            Ok(MAX_CONCURRENT_LAUNCHES)
+        );
+        assert!(LaunchConcurrency::new(MAX_CONCURRENT_LAUNCHES + 1).is_err());
+    }
 
     struct TestDirectory(PathBuf);
 
@@ -606,6 +1238,32 @@ mod tests {
         let canonical = canonical_definitions_directory(directory.path())?;
         assert!(canonical.is_absolute());
         assert_eq!(canonical, fs::canonicalize(directory.path())?);
+        Ok(())
+    }
+
+    #[test]
+    fn normalized_snapshot_is_owner_only_and_atomically_replaceable() -> Result<(), Box<dyn Error>>
+    {
+        let runtime = TestDirectory::new()?;
+        fs::set_permissions(runtime.path(), fs::Permissions::from_mode(0o700))?;
+        let snapshots = DefinitionSnapshots::open(runtime.path())?;
+        let first = crate::config::parse_str("version: 2\ncommand: [/bin/true]\n")?;
+        let path = snapshots.publish("api", &first)?;
+        assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
+        assert_eq!(crate::config::parse_file(&path)?, first);
+
+        let second = crate::config::parse_str("version: 2\ncommand: [/bin/false]\n")?;
+        assert_eq!(snapshots.publish("api", &second)?, path);
+        assert_eq!(crate::config::parse_file(&path)?, second);
+        snapshots.record_applied("api", &first)?;
+        assert_eq!(snapshots.load_applied("api")?, Some(first));
+        snapshots.remove_applied("api")?;
+        assert_eq!(snapshots.load_applied("api")?, None);
+        assert!(
+            fs::read_dir(runtime.path().join(".definitions"))?.all(|entry| {
+                entry.is_ok_and(|entry| entry.path().extension().is_none_or(|value| value != "tmp"))
+            })
+        );
         Ok(())
     }
 

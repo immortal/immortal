@@ -25,11 +25,19 @@ pub fn start() -> ExitCode {
     let result = dispatch::action(&matches)
         .map_err(|error| (ExitClass::Software, error.to_string()))
         .and_then(|action| {
+            let endpoint = if action.dry_run {
+                None
+            } else {
+                Some(
+                    immortal_core::process::start_process_broker()
+                        .map_err(|error| (ExitClass::OsError, error.to_string()))?,
+                )
+            };
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|error| (ExitClass::Software, error.to_string()))?
-                .block_on(actions::execute(&action))
+                .block_on(actions::execute(&action, endpoint))
                 .map_err(|error| (error.exit_class(), error.to_string()))
         });
     match result {

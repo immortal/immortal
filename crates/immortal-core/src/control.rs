@@ -802,14 +802,17 @@ fn status_decision(machine: &StateMachine, generation: Option<Generation>) -> Co
 fn start_effect(state: SupervisorState) -> ControlEffect {
     match state {
         SupervisorState::Down | SupervisorState::Failed(_) => ControlEffect::BeginStart,
-        SupervisorState::Waiting | SupervisorState::Backoff { .. } => {
+        SupervisorState::WaitingCondition | SupervisorState::Backoff { .. } => {
             ControlEffect::CancelPending { start: true }
         }
         SupervisorState::Starting(_)
-        | SupervisorState::Started(_)
+        | SupervisorState::Running(_)
         | SupervisorState::Ready(_)
+        | SupervisorState::Paused { .. }
         | SupervisorState::Stopping(_)
-        | SupervisorState::Exiting => ControlEffect::None,
+        | SupervisorState::Completed(_)
+        | SupervisorState::Initializing
+        | SupervisorState::Exited => ControlEffect::None,
     }
 }
 
@@ -818,7 +821,7 @@ fn stop_effect(state: SupervisorState, after: StopCompletion) -> ControlEffect {
         || {
             if matches!(
                 state,
-                SupervisorState::Waiting | SupervisorState::Backoff { .. }
+                SupervisorState::WaitingCondition | SupervisorState::Backoff { .. }
             ) {
                 ControlEffect::CancelPending { start: false }
             } else {
@@ -861,15 +864,18 @@ const fn desired_name(desired: DesiredState) -> &'static str {
 
 const fn state_name(state: SupervisorState) -> &'static str {
     match state {
+        SupervisorState::Initializing => "initializing",
         SupervisorState::Down => "down",
-        SupervisorState::Waiting => "waiting",
+        SupervisorState::WaitingCondition => "waiting-condition",
         SupervisorState::Starting(_) => "starting",
-        SupervisorState::Started(_) => "started",
+        SupervisorState::Running(_) => "running",
         SupervisorState::Ready(_) => "ready",
+        SupervisorState::Paused { .. } => "paused",
         SupervisorState::Stopping(_) => "stopping",
         SupervisorState::Backoff { .. } => "backoff",
+        SupervisorState::Completed(_) => "completed",
         SupervisorState::Failed(_) => "failed",
-        SupervisorState::Exiting => "exiting",
+        SupervisorState::Exited => "exited",
     }
 }
 
@@ -1215,6 +1221,21 @@ where
 {
     let frame = response.encode()?;
     write_frame_with_timeout(writer, &frame, CONTROL_IO_TIMEOUT).await
+}
+
+/// Connect to one local supervisor and exchange exactly one bounded request.
+///
+/// # Errors
+///
+/// Returns a timeout, Unix-socket I/O, request encoding, or response protocol
+/// failure. Peer authorization remains enforced by the supervisor.
+#[cfg(unix)]
+pub async fn exchange(path: &Path, request: &Request) -> Result<Response, TransportError> {
+    let mut stream = timeout(CONTROL_IO_TIMEOUT, UnixStream::connect(path))
+        .await
+        .map_err(|_| TransportError::Timeout)??;
+    write_request(&mut stream, request).await?;
+    read_response(&mut stream).await
 }
 
 async fn read_frame_with_timeout<R>(

@@ -31,8 +31,9 @@ pub fn new() -> Command {
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .long_about(
             "Run a command detached from its controlling terminal, supervise it, and restart it \
-             when it exits. The Rust rewrite currently enables the contract-tested foreground \
-             path. Daemon mode and options whose lifecycle is not implemented fail explicitly.",
+             when it exits. Foreground, checked daemon startup, and authenticated control are \
+             backed by process contracts. Options whose lifecycle is not implemented fail \
+             explicitly.",
         )
         .override_usage("immortal [OPTIONS] <COMMAND> [ARGUMENTS]...")
         .after_help(

@@ -19,3 +19,8 @@ tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "operational_contract"
+path = "tests/operational_contract.rs"
+harness = false

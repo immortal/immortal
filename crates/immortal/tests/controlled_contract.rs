@@ -17,7 +17,7 @@ use immortal_core::{
     },
     exit::ExitClass,
     process::{ProcessGroupId, ProcessSignal, SignalTarget, signal as deliver_signal},
-    status::ServiceState,
+    status::{LoggerStatus, ServiceState},
     supervisor::Generation,
 };
 use tokio::{net::UnixStream, runtime::Builder};
@@ -28,7 +28,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 fn main() -> Result<(), Box<dyn Error>> {
     let binary = Path::new(env!("CARGO_BIN_EXE_immortal"));
     prove_controlled_lifecycle(binary)?;
-    prove_explicit_exit_leaves_the_child(binary)
+    prove_explicit_exit_leaves_the_child(binary)?;
+    prove_logger_retry_exhaustion_and_recovery(binary)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -38,7 +39,7 @@ fn prove_controlled_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
     let config = ConfigFile::new(
         "controlled",
         &format!(
-            "version: 2\ncommand: [/bin/sh, -c, 'trap \"printf usr1\\n >> \\\"$MARKER\\\"\" USR1; trap \"exit 0\" TERM; printf start\\n >> \"$MARKER\"; while :; do sleep 1; done']\nenvironment:\n  MARKER: '{}'\n",
+            "version: 2\ncommand: [/bin/sh, -c, 'trap \"printf usr1\\n >> \\\"$MARKER\\\"\" USR1; trap \"exit 0\" TERM; printf start\\n >> \"$MARKER\"; while :; do sleep 1; done']\nenvironment:\n  MARKER: '{}'\nlogging:\n  stdout:\n    logger: [/bin/cat]\n",
             path_str(&marker)?
         ),
     )?;
@@ -58,6 +59,7 @@ fn prove_controlled_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
         || snapshot.main_pid.is_none()
         || snapshot.starts != 1
         || snapshot.failures != 0
+        || snapshot.logger != LoggerStatus::Ready
         || snapshot.command.first().map(String::as_str) != Some("/bin/sh")
     {
         return Err(format!("incomplete initial runtime status: {snapshot:?}").into());
@@ -116,6 +118,7 @@ fn prove_controlled_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
     if down.main_pid.is_some()
         || down.starts != 1
         || down.failures != 0
+        || down.logger != LoggerStatus::Ready
         || down.last_result.is_none()
         || down.down_seconds.is_none()
     {
@@ -195,6 +198,22 @@ fn prove_controlled_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
     }
     wait_for_occurrences(&marker, "start", 4, COMMAND_TIMEOUT)?;
 
+    let unsafe_exit = lifecycle_request(
+        runtime.socket(),
+        runtime.service_name(),
+        Operation::Exit,
+        third,
+    )?;
+    if unsafe_exit.code != ResponseCode::Invalid {
+        return Err("logged service exit did not reject incomplete graph detachment".into());
+    }
+    wait_for_state(
+        runtime.socket(),
+        ServiceState::Ready,
+        Some(third),
+        COMMAND_TIMEOUT,
+    )?;
+
     let halt = lifecycle_request(
         runtime.socket(),
         runtime.service_name(),
@@ -248,6 +267,85 @@ fn prove_explicit_exit_leaves_the_child(binary: &Path) -> Result<(), Box<dyn Err
     deliver_signal(SignalTarget::Group(group), ProcessSignal::Continue)?;
     cleanup.kill();
     Ok(())
+}
+
+fn prove_logger_retry_exhaustion_and_recovery(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let runtime = RuntimeDirectory::new_named("logger-recovery")?;
+    let logger = runtime.root().join("logger");
+    let attempts = runtime.root().join("logger-attempts");
+    let allow = runtime.root().join("logger-allowed");
+    let service_marker = runtime.root().join("service-started");
+    fs::write(
+        &logger,
+        format!(
+            "#!/bin/sh\nprintf x >> '{}'\n[ -e '{}' ] || exit 23\nexec /bin/cat\n",
+            path_str(&attempts)?,
+            path_str(&allow)?
+        ),
+    )?;
+    fs::set_permissions(&logger, fs::Permissions::from_mode(0o755))?;
+    let config = ConfigFile::new(
+        "logger-recovery",
+        &format!(
+            "version: 2\ncommand: [/bin/sh, -c, ': > \"$SERVICE_MARKER\"; exec /bin/sleep 30']\nstart_delay_seconds: 5\nenvironment:\n  SERVICE_MARKER: '{}'\nlogging:\n  combine_stderr: true\n  restart:\n    max_retries: 1\n    backoff:\n      initial_seconds: 1\n      max_seconds: 1\n      multiplier: 1\n      jitter_percent: 0\n      reset_after_seconds: 60\n  stdout:\n    logger: ['{}']\n",
+            path_str(&service_marker)?,
+            path_str(&logger)?
+        ),
+    )?;
+    let supervisor = ChildGuard::new(spawn_immortal(binary, &config, runtime.service())?);
+    runtime.wait_for_socket(COMMAND_TIMEOUT)?;
+    wait_for_state(
+        runtime.socket(),
+        ServiceState::Failed,
+        None,
+        COMMAND_TIMEOUT,
+    )?;
+
+    let failed = status(runtime.socket())?;
+    let snapshot = failed.status.as_ref().ok_or("failed status is absent")?;
+    if snapshot.logger != LoggerStatus::Failed
+        || snapshot.starts != 0
+        || service_marker.exists()
+        || fs::read_to_string(&attempts)? != "xx"
+    {
+        return Err(format!("invalid exhausted logger status: {snapshot:?}").into());
+    }
+
+    fs::write(&allow, [])?;
+    let start = request(
+        runtime.socket(),
+        &Request {
+            operation: Operation::Start,
+            service: runtime.service_name().to_owned(),
+            expected_generation: GenerationMatch::NoChild,
+            scope: SignalScope::Main,
+            signal: None,
+        },
+    )?;
+    require_ok(&start, "logger recovery start")?;
+    let generation = wait_for_state(runtime.socket(), ServiceState::Ready, None, COMMAND_TIMEOUT)?;
+    wait_for_file(&service_marker, COMMAND_TIMEOUT)?;
+    let recovered = status(runtime.socket())?;
+    if recovered
+        .status
+        .as_ref()
+        .is_none_or(|status| status.logger != LoggerStatus::Ready || status.starts != 1)
+    {
+        return Err("manual start did not recover the logger pipeline".into());
+    }
+
+    let halt = lifecycle_request(
+        runtime.socket(),
+        runtime.service_name(),
+        Operation::Halt,
+        generation,
+    )?;
+    require_ok(&halt, "logger recovery halt")?;
+    assert_status(
+        supervisor.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "recovered logger supervisor halt",
+    )
 }
 
 fn spawn_immortal(

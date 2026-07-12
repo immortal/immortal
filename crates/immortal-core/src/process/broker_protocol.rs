@@ -13,17 +13,19 @@ use std::{
 use crate::supervisor::Generation;
 
 use super::{
-    ChildEvent, ProcessCommand, ProcessCredentials, ProcessGroupId, ProcessId, ProcessSignal,
-    SpawnFailure, SpawnStage, SupplementaryGroups,
+    BrokerLoggerId, ChildEvent, ProcessCommand, ProcessCredentials, ProcessGroupId, ProcessId,
+    ProcessSignal, SpawnFailure, SpawnStage, SupplementaryGroups,
 };
 
 const MAGIC: [u8; 4] = *b"IMBR";
 pub(super) const HEADER_BYTES: usize = 10;
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 const REQUEST_SPAWN: u8 = 1;
 const REQUEST_SIGNAL: u8 = 2;
 const REQUEST_SHUTDOWN: u8 = 3;
 const REQUEST_DETACH: u8 = 4;
+const REQUEST_SPAWN_LOGGER: u8 = 5;
+const REQUEST_CLOSE_LOGGER_INPUTS: u8 = 6;
 const EVENT_STARTED: u8 = 1;
 const EVENT_SPAWN_FAILED: u8 = 2;
 const EVENT_CHILD: u8 = 3;
@@ -36,6 +38,7 @@ const EVENT_DETACHED: u8 = 9;
 const EVENT_DETACH_FAILED: u8 = 10;
 const EVENT_GENERATION_READY: u8 = 11;
 const EVENT_READINESS_FAILED: u8 = 12;
+const EVENT_LOGGER_INPUTS_CLOSED: u8 = 13;
 const CHILD_EXITED: u8 = 1;
 const CHILD_SIGNALED: u8 = 2;
 const CHILD_STOPPED: u8 = 3;
@@ -80,6 +83,12 @@ pub(super) enum BrokerRequest {
     Detach {
         generation: Generation,
     },
+    SpawnLogger {
+        generation: Generation,
+        logger: BrokerLoggerId,
+        startup_timeout: Duration,
+    },
+    CloseLoggerInputs,
     Shutdown,
 }
 
@@ -116,6 +125,18 @@ impl BrokerRequest {
                 encode_generation(*generation, &mut payload);
                 REQUEST_DETACH
             }
+            Self::SpawnLogger {
+                generation,
+                logger,
+                startup_timeout,
+            } => {
+                encode_generation(*generation, &mut payload);
+                payload.extend_from_slice(&logger.pipeline().to_be_bytes());
+                payload.extend_from_slice(&logger.stage().to_be_bytes());
+                encode_timeout(*startup_timeout, &mut payload)?;
+                REQUEST_SPAWN_LOGGER
+            }
+            Self::CloseLoggerInputs => REQUEST_CLOSE_LOGGER_INPUTS,
             Self::Shutdown => REQUEST_SHUTDOWN,
         };
         encode_frame(kind, &payload)
@@ -150,6 +171,15 @@ impl BrokerRequest {
             REQUEST_DETACH => Self::Detach {
                 generation: decode_generation(&mut cursor)?,
             },
+            REQUEST_SPAWN_LOGGER => Self::SpawnLogger {
+                generation: decode_generation(&mut cursor)?,
+                logger: BrokerLoggerId::new(
+                    u16::from_be_bytes(cursor.take::<2>()?),
+                    u16::from_be_bytes(cursor.take::<2>()?),
+                ),
+                startup_timeout: decode_timeout(&mut cursor)?,
+            },
+            REQUEST_CLOSE_LOGGER_INPUTS => Self::CloseLoggerInputs,
             other => return Err(BrokerProtocolError::UnknownKind(other)),
         };
         cursor.finish()?;
@@ -197,6 +227,7 @@ pub(super) enum BrokerEvent {
         generation: Generation,
         failure: BrokerReadinessFailure,
     },
+    LoggerInputsClosed,
     ShutdownComplete,
     ShutdownFailed {
         os_error: Option<i32>,
@@ -273,6 +304,7 @@ impl BrokerEvent {
                 });
                 EVENT_READINESS_FAILED
             }
+            Self::LoggerInputsClosed => EVENT_LOGGER_INPUTS_CLOSED,
             Self::ShutdownComplete => EVENT_SHUTDOWN_COMPLETE,
             Self::ShutdownFailed { os_error } => {
                 encode_optional_error(*os_error, &mut payload);
@@ -328,6 +360,7 @@ impl BrokerEvent {
                     _ => return Err(BrokerProtocolError::InvalidReadinessFailure),
                 },
             },
+            EVENT_LOGGER_INPUTS_CLOSED => Self::LoggerInputsClosed,
             EVENT_SHUTDOWN_COMPLETE => Self::ShutdownComplete,
             EVENT_SHUTDOWN_FAILED => Self::ShutdownFailed {
                 os_error: decode_optional_error(&mut cursor)?,
@@ -921,8 +954,8 @@ mod tests {
         BrokerSignalTarget, MAX_FRAME_BYTES,
     };
     use crate::process::{
-        ChildEvent, ProcessCommand, ProcessCredentials, ProcessEnvironment, ProcessGroupId,
-        ProcessId, ProcessSignal, SpawnFailure, SpawnStage, SupplementaryGroups,
+        BrokerLoggerId, ChildEvent, ProcessCommand, ProcessCredentials, ProcessEnvironment,
+        ProcessGroupId, ProcessId, ProcessSignal, SpawnFailure, SpawnStage, SupplementaryGroups,
     };
 
     #[test]
@@ -954,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn signal_detach_and_shutdown_requests_round_trip() -> Result<(), Box<dyn Error>> {
+    fn logger_signal_detach_and_shutdown_requests_round_trip() -> Result<(), Box<dyn Error>> {
         let generation = Generation::new(9).ok_or("invalid test generation")?;
         for request in [
             BrokerRequest::Signal {
@@ -968,6 +1001,12 @@ mod tests {
                 signal: ProcessSignal::Terminate,
             },
             BrokerRequest::Detach { generation },
+            BrokerRequest::SpawnLogger {
+                generation,
+                logger: BrokerLoggerId::new(1, 2),
+                startup_timeout: Duration::from_secs(2),
+            },
+            BrokerRequest::CloseLoggerInputs,
             BrokerRequest::Shutdown,
         ] {
             assert_eq!(BrokerRequest::decode(&request.encode()?)?, request);
@@ -1031,6 +1070,7 @@ mod tests {
                 generation,
                 failure: BrokerReadinessFailure::Timeout,
             },
+            BrokerEvent::LoggerInputsClosed,
             BrokerEvent::ShutdownComplete,
             BrokerEvent::ShutdownFailed { os_error: None },
         ] {

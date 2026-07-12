@@ -3,6 +3,7 @@
 use std::{
     collections::VecDeque,
     error::Error,
+    ffi::OsString,
     fmt::{self, Display, Formatter},
     future::pending,
     io,
@@ -20,24 +21,28 @@ use tokio::{
 
 use crate::{
     config::{
-        LoggingConfig, ProcessMode, ReadinessConfig, ReadinessMode, RestartPolicy, ServiceConfig,
+        LoggerRestartConfig, ProcessMode, ReadinessConfig, ReadinessMode, RestartPolicy,
+        ServiceConfig, StartConditionConfig,
     },
     control::{
         ControlCommand, ControlEffect, ControlListener, DEFAULT_MAX_CONTROL_CLIENTS, Operation,
         Response, ResponseCode, Signal, SignalScope, StopCompletion, decide_request,
         run_control_server,
     },
+    logging::{LoggerStage, LoggingPlan},
     pid_file::OwnedPidFile,
     process::{
-        BrokerSignalScope, ChildEvent, DaemonError, DaemonStartup, Daemonized, ProcessBrokerClient,
+        BrokerLoggerId, BrokerLoggerPipeline, BrokerLoggingPlan, BrokerSignalScope, BrokerTaskId,
+        ChildEvent, DaemonError, DaemonStartup, Daemonized, ProcessBrokerClient,
         ProcessBrokerError, ProcessBrokerEvent, ProcessCommand, ProcessId, ProcessSignal,
-        SignalTarget, daemonize, reap_any_event, signal, start_process_broker, wait_for_event,
+        SignalTarget, daemonize, reap_any_event, signal, start_process_broker_with_logging,
+        wait_for_event,
     },
     runtime::RuntimeOwner,
-    status::{LastResult, StatusSnapshot},
+    status::{LastResult, LoggerStatus, StatusSnapshot},
     supervisor::{
-        ChildResult, DesiredState, Generation, RestartDecision, RestartTracker, StateMachine,
-        SupervisorState, TransitionError,
+        ChildResult, ConditionTracker, DesiredState, FailureReason, Generation, RestartDecision,
+        RestartTracker, StateMachine, SupervisorState, TransitionError,
     },
 };
 
@@ -46,6 +51,9 @@ const CHILD_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const BROKER_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const SERVICE_STOP_GRACE: Duration = Duration::from_secs(5);
+const LOGGER_PREPARE_GRACE: Duration = Duration::from_secs(5);
+const LOGGER_DRAIN_GRACE: Duration = Duration::from_secs(5);
+const LOGGER_STOP_GRACE: Duration = Duration::from_secs(2);
 const SPAWN_FAILURE_EXIT: u8 = 127;
 
 /// Final observation returned by the foreground executor.
@@ -171,8 +179,8 @@ impl From<TransitionError> for ExecutorError {
 ///
 /// Returns configuration-capability, process, broker, or state-transition failures.
 pub fn run_foreground(config: &ServiceConfig) -> Result<SupervisionOutcome, ExecutorError> {
-    let command = prepare_execution(config, false)?;
-    run_prepared(config, None, command, &mut StartupReporter::Foreground)
+    let commands = prepare_execution(config, false)?;
+    run_prepared(config, None, commands, &mut StartupReporter::Foreground)
 }
 
 /// Run one foreground service while exclusively owning an authenticated control endpoint.
@@ -197,14 +205,14 @@ pub fn run_foreground_controlled(
         .and_then(|name| name.to_str())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid service name"))?
         .to_owned();
-    let command = prepare_execution(config, true)?;
+    let commands = prepare_execution(config, true)?;
     run_prepared(
         config,
         Some(ControlSetup {
             owner,
             service_name,
         }),
-        command,
+        commands,
         &mut StartupReporter::Foreground,
     )
 }
@@ -223,14 +231,14 @@ pub fn run_daemon(
     config: &ServiceConfig,
     control_directory: Option<&Path>,
 ) -> Result<DaemonRunOutcome, ExecutorError> {
-    let command = prepare_execution(config, control_directory.is_some())?;
+    let commands = prepare_execution(config, control_directory.is_some())?;
     match daemonize(DAEMON_STARTUP_TIMEOUT)? {
         Daemonized::Parent { .. } => Ok(DaemonRunOutcome::Parent),
         Daemonized::Daemon(notifier) => {
             let mut startup = StartupReporter::Daemon(Some(notifier));
             let execution = (|| {
                 let control = control_directory.map(ControlSetup::acquire).transpose()?;
-                run_prepared(config, control, command, &mut startup)
+                run_prepared(config, control, commands, &mut startup)
             })();
             if let Err(error) = &execution {
                 startup.fail_if_pending(error);
@@ -307,15 +315,138 @@ fn startup_io_error(error: &ExecutorError) -> io::Error {
 fn prepare_execution(
     config: &ServiceConfig,
     controlled: bool,
-) -> Result<ProcessCommand, ExecutorError> {
+) -> Result<PreparedLaunch, ExecutorError> {
     validate_supported(config, controlled)?;
-    ProcessCommand::from_service(config, std::env::vars_os()).map_err(Into::into)
+    let service = ProcessCommand::from_service(config, std::env::vars_os())?;
+    let condition = config
+        .start_condition
+        .as_ref()
+        .map(|condition| ProcessCommand::from_lifecycle(&condition.command, &service))
+        .transpose()?;
+    let post_exit = config
+        .post_exit
+        .as_ref()
+        .map(|hook| ProcessCommand::from_lifecycle(&hook.command, &service))
+        .transpose()?;
+    let (logging, loggers) = prepare_logging(config, &service)?;
+    Ok(PreparedLaunch {
+        loggers,
+        logging,
+        execution: PreparedExecution {
+            condition,
+            post_exit,
+            service,
+        },
+    })
+}
+
+struct PreparedLaunch {
+    execution: PreparedExecution,
+    loggers: Vec<BrokerLoggerId>,
+    logging: BrokerLoggingPlan,
+}
+
+struct PreparedExecution {
+    condition: Option<ProcessCommand>,
+    post_exit: Option<ProcessCommand>,
+    service: ProcessCommand,
+}
+
+fn prepare_logging(
+    config: &ServiceConfig,
+    service: &ProcessCommand,
+) -> Result<(BrokerLoggingPlan, Vec<BrokerLoggerId>), ExecutorError> {
+    let plan = LoggingPlan::from_config(&config.logging)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    if plan.pipelines.is_empty() {
+        return Ok((BrokerLoggingPlan::default(), Vec::new()));
+    }
+    let adapter = logger_adapter_program(config.logging.file_adapter.as_deref())?;
+    let mut pipelines = Vec::with_capacity(plan.pipelines.len());
+    let mut loggers = Vec::new();
+    for (pipeline_index, pipeline) in plan.pipelines.into_iter().enumerate() {
+        let pipeline_id = u16::try_from(pipeline_index)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many log pipelines"))?;
+        let stage_count = pipeline.stages.len();
+        let mut stages = Vec::with_capacity(stage_count);
+        for (stage_index, stage) in pipeline.stages.into_iter().enumerate() {
+            let stage_id = u16::try_from(stage_index).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "too many logger stages")
+            })?;
+            let has_downstream = stage_index.saturating_add(1) < stage_count;
+            stages.push(prepare_logger_command(
+                stage,
+                has_downstream,
+                &adapter,
+                service,
+            )?);
+            loggers.push(BrokerLoggerId::new(pipeline_id, stage_id));
+        }
+        pipelines.push(BrokerLoggerPipeline {
+            stream: pipeline.stream,
+            stages,
+        });
+    }
+    Ok((BrokerLoggingPlan { pipelines }, loggers))
+}
+
+fn logger_adapter_program(configured: Option<&Path>) -> io::Result<OsString> {
+    if let Some(configured) = configured {
+        return Ok(configured.as_os_str().to_owned());
+    }
+    let executable = std::env::current_exe()?;
+    let directory = executable.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "immortal executable has no parent directory",
+        )
+    })?;
+    Ok(directory.join("immortallog").into_os_string())
+}
+
+fn prepare_logger_command(
+    stage: LoggerStage,
+    has_downstream: bool,
+    adapter: &OsString,
+    service: &ProcessCommand,
+) -> io::Result<ProcessCommand> {
+    match stage {
+        LoggerStage::External(command) => ProcessCommand::from_lifecycle(&command, service),
+        LoggerStage::FileAdapter(config) => {
+            let destination = config.file.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "file logger has no destination",
+                )
+            })?;
+            let mut arguments = Vec::new();
+            push_logger_limit(&mut arguments, "--max-age", config.max_age_seconds);
+            push_logger_limit(&mut arguments, "--keep", config.keep.map(u64::from));
+            push_logger_limit(&mut arguments, "--max-bytes", config.max_bytes);
+            push_logger_limit(&mut arguments, "--max-total-bytes", config.max_total_bytes);
+            if config.timestamp {
+                arguments.push(OsString::from("--timestamp"));
+            }
+            if has_downstream {
+                arguments.push(OsString::from("--passthrough"));
+            }
+            arguments.push(destination.into_os_string());
+            ProcessCommand::from_lifecycle_os(adapter, arguments, service)
+        }
+    }
+}
+
+fn push_logger_limit(arguments: &mut Vec<OsString>, option: &str, value: Option<u64>) {
+    if let Some(value) = value {
+        arguments.push(OsString::from(option));
+        arguments.push(OsString::from(value.to_string()));
+    }
 }
 
 fn run_prepared(
     config: &ServiceConfig,
     control: Option<ControlSetup>,
-    command: ProcessCommand,
+    prepared: PreparedLaunch,
     startup: &mut StartupReporter,
 ) -> Result<SupervisionOutcome, ExecutorError> {
     let _supervisor_pid_file = config
@@ -324,7 +455,9 @@ fn run_prepared(
         .as_deref()
         .map(|path| OwnedPidFile::publish(path, std::process::id()))
         .transpose()?;
-    let endpoint = start_process_broker()?;
+    let endpoint = start_process_broker_with_logging(prepared.logging)?;
+    let commands = prepared.execution;
+    let loggers = prepared.loggers;
     let broker_process = endpoint.process();
     let runtime = Builder::new_current_thread()
         .enable_io()
@@ -335,11 +468,28 @@ fn run_prepared(
         wait_for_ready(&mut client).await?;
         let mut signals = SupervisorSignals::new()?;
         let outcome = if let Some(setup) = control {
-            drive_controlled_service(&mut client, command, config, &mut signals, setup, startup)
-                .await
+            drive_controlled_service(
+                &mut client,
+                commands,
+                loggers,
+                config,
+                &mut signals,
+                setup,
+                startup,
+            )
+            .await
         } else {
             startup.notify_ready()?;
-            drive_service(&mut client, command, config, &mut signals, None, None).await
+            drive_service(
+                &mut client,
+                commands,
+                loggers,
+                config,
+                &mut signals,
+                None,
+                None,
+            )
+            .await
         };
         let shutdown = shutdown_broker(&mut client).await;
         match (outcome, shutdown) {
@@ -359,16 +509,8 @@ fn validate_supported(config: &ServiceConfig, controlled: bool) -> Result<(), Ex
     if !config.enabled {
         return Err(ExecutorError::Unsupported("disabled service execution"));
     }
-    if !config.requires.is_empty() || config.start_condition.is_some() {
-        return Err(ExecutorError::Unsupported(
-            "dependencies and start conditions",
-        ));
-    }
-    if config.post_exit.is_some() {
-        return Err(ExecutorError::Unsupported("post-exit hooks"));
-    }
-    if config.logging != LoggingConfig::default() {
-        return Err(ExecutorError::Unsupported("configured logging routes"));
+    if !config.requires.is_empty() {
+        return Err(ExecutorError::Unsupported("dependencies"));
     }
     if config.process_mode != ProcessMode::Foreground {
         return Err(ExecutorError::Unsupported("descriptor-tracking processes"));
@@ -389,7 +531,8 @@ fn validate_supported(config: &ServiceConfig, controlled: bool) -> Result<(), Ex
 
 async fn drive_controlled_service(
     client: &mut ProcessBrokerClient,
-    command: ProcessCommand,
+    commands: PreparedExecution,
+    loggers: Vec<BrokerLoggerId>,
     config: &ServiceConfig,
     signals: &mut SupervisorSignals,
     setup: ControlSetup,
@@ -399,7 +542,7 @@ async fn drive_controlled_service(
         setup.owner.socket(),
         DEFAULT_MAX_CONTROL_CLIENTS,
     )?);
-    let (command_sender, mut commands) = mpsc::channel(DEFAULT_MAX_CONTROL_CLIENTS);
+    let (command_sender, mut control_commands) = mpsc::channel(DEFAULT_MAX_CONTROL_CLIENTS);
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let server_listener = Arc::clone(&listener);
     let server = tokio::spawn(run_control_server(
@@ -410,10 +553,11 @@ async fn drive_controlled_service(
     startup.notify_ready()?;
     let outcome = drive_service(
         client,
-        command,
+        commands,
+        loggers,
         config,
         signals,
-        Some(&mut commands),
+        Some(&mut control_commands),
         Some(setup.service_name.as_str()),
     )
     .await;
@@ -441,24 +585,39 @@ async fn wait_for_ready(client: &mut ProcessBrokerClient) -> Result<(), Executor
 
 async fn drive_service(
     client: &mut ProcessBrokerClient,
-    command: ProcessCommand,
+    commands: PreparedExecution,
+    loggers: Vec<BrokerLoggerId>,
     config: &ServiceConfig,
     signals: &mut SupervisorSignals,
     mut controls: Option<&mut mpsc::Receiver<ControlCommand>>,
     service_name: Option<&str>,
 ) -> Result<SupervisionOutcome, ExecutorError> {
-    let mut execution = ExecutionContext::new(config);
+    let mut execution = ExecutionContext::new(config, loggers);
+    start_down_loggers(client, &mut execution).await?;
 
     loop {
-        if advance_childless_state(
-            &mut execution.machine,
-            &mut execution.first_start,
-            config.start_delay_seconds,
-            &mut execution.deadline,
-        )? {
+        if fail_childless_start_on_logger_exhaustion(client, &mut execution).await? {
             continue;
         }
-        if supervision_finished(&execution.machine, controls.is_some()) {
+        if execution.auxiliary.is_idle()
+            && (execution.loggers_ready()
+                || matches!(
+                    execution.machine.desired(),
+                    DesiredState::Halt | DesiredState::Exit
+                ))
+            && advance_childless_state(
+                &mut execution.machine,
+                &mut execution.first_start,
+                config.start_delay_seconds,
+                &mut execution.deadline,
+            )?
+        {
+            continue;
+        }
+        let lifecycle_finished = (!execution.first_start
+            || execution.machine.state() == SupervisorState::Exited)
+            && supervision_finished(&execution.machine, controls.is_some());
+        if advance_logger_shutdown(client, lifecycle_finished, &mut execution).await? {
             respond_abandoned_signals(&mut execution.pending_signals);
             return Ok(outcome(
                 &execution.machine,
@@ -467,11 +626,19 @@ async fn drive_service(
             ));
         }
 
-        match next_executor_event(client, signals, &mut controls, execution.deadline).await? {
+        match next_executor_event(client, signals, &mut controls, execution.next_deadline()).await?
+        {
             ExecutorEvent::Timer => {
-                handle_executor_timer(client, &command, &mut execution, &config.readiness).await?;
+                handle_due_logger_timers(client, &mut execution).await?;
+                if execution
+                    .deadline
+                    .is_some_and(|deadline| deadline <= TokioInstant::now())
+                {
+                    handle_executor_timer(client, &commands, config, &mut execution).await?;
+                }
             }
             ExecutorEvent::Shutdown => {
+                cancel_auxiliary(client, &mut execution).await?;
                 begin_supervisor_shutdown(
                     client,
                     &mut execution.machine,
@@ -488,10 +655,84 @@ async fn drive_service(
             }
             ExecutorEvent::ControlClosed => return Err(ExecutorError::ControlServerStopped),
             ExecutorEvent::Broker(event) => {
-                handle_broker_event(client, event, config, &mut execution).await?;
+                handle_broker_event(client, event, &commands, config, &mut execution).await?;
             }
         }
     }
+}
+
+async fn fail_childless_start_on_logger_exhaustion(
+    client: &mut ProcessBrokerClient,
+    execution: &mut ExecutionContext,
+) -> Result<bool, ExecutorError> {
+    if !execution.loggers_failed() || execution.machine.state().live_generation().is_some() {
+        return Ok(false);
+    }
+    match execution.machine.state() {
+        SupervisorState::Down => {}
+        SupervisorState::WaitingCondition | SupervisorState::Backoff { .. } => {
+            if !execution.auxiliary.is_idle() {
+                cancel_auxiliary(client, execution).await?;
+                return Ok(true);
+            }
+            execution.machine.cancel_pending()?;
+            execution.auxiliary = AuxiliaryExecution::Idle;
+            execution.deadline = None;
+        }
+        SupervisorState::Initializing
+        | SupervisorState::Starting(_)
+        | SupervisorState::Running(_)
+        | SupervisorState::Ready(_)
+        | SupervisorState::Paused { .. }
+        | SupervisorState::Stopping(_)
+        | SupervisorState::Completed(_)
+        | SupervisorState::Failed(_)
+        | SupervisorState::Exited => return Ok(false),
+    }
+    execution
+        .machine
+        .fail_without_child(FailureReason::LoggerRetryLimit)?;
+    Ok(true)
+}
+
+async fn advance_logger_shutdown(
+    client: &mut ProcessBrokerClient,
+    lifecycle_finished: bool,
+    execution: &mut ExecutionContext,
+) -> Result<bool, ExecutorError> {
+    if !lifecycle_finished {
+        return Ok(false);
+    }
+    if execution.loggers.is_empty() {
+        execution.logger_shutdown = LoggerShutdownState::Complete;
+        return Ok(true);
+    }
+    if execution.logger_shutdown == LoggerShutdownState::Running {
+        execution.logger_shutdown = LoggerShutdownState::Preparing {
+            deadline: TokioInstant::now() + LOGGER_PREPARE_GRACE,
+        };
+    }
+    if matches!(
+        execution.logger_shutdown,
+        LoggerShutdownState::Preparing { .. }
+    ) && execution.loggers_ready()
+    {
+        client.close_logger_inputs().await?;
+        execution.logger_shutdown = LoggerShutdownState::ClosingInputs {
+            deadline: TokioInstant::now() + BROKER_EVENT_TIMEOUT,
+        };
+    }
+    if matches!(
+        execution.logger_shutdown,
+        LoggerShutdownState::Draining { .. } | LoggerShutdownState::Terminating { .. }
+    ) && execution
+        .loggers
+        .iter()
+        .all(|logger| matches!(logger.state, LoggerExecutionState::Down))
+    {
+        execution.logger_shutdown = LoggerShutdownState::Complete;
+    }
+    Ok(execution.logger_shutdown == LoggerShutdownState::Complete)
 }
 
 fn advance_childless_state(
@@ -525,7 +766,7 @@ fn advance_childless_state(
 }
 
 fn supervision_finished(machine: &StateMachine, controlled: bool) -> bool {
-    machine.state() == SupervisorState::Exiting
+    machine.state() == SupervisorState::Exited
         || (!controlled
             && matches!(
                 machine.state(),
@@ -550,10 +791,16 @@ enum PendingSignal {
 }
 
 struct ExecutionContext {
+    auxiliary: AuxiliaryExecution,
+    condition_tracker: ConditionTracker,
     deadline: Option<TokioInstant>,
     epoch: Instant,
     first_start: bool,
+    logger_shutdown: LoggerShutdownState,
+    loggers: Vec<LoggerExecution>,
     machine: StateMachine,
+    next_task: u64,
+    pending_completion: Option<PendingCompletion>,
     pending_detach: Option<PendingDetach>,
     pending_signals: VecDeque<PendingSignal>,
     pending_stop: Option<StopCompletion>,
@@ -563,12 +810,18 @@ struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    fn new(config: &ServiceConfig) -> Self {
+    fn new(config: &ServiceConfig, loggers: Vec<BrokerLoggerId>) -> Self {
         Self {
+            auxiliary: AuxiliaryExecution::Idle,
+            condition_tracker: ConditionTracker::default(),
             deadline: None,
             epoch: Instant::now(),
             first_start: true,
+            logger_shutdown: LoggerShutdownState::Running,
+            loggers: loggers.into_iter().map(LoggerExecution::new).collect(),
             machine: StateMachine::default(),
+            next_task: 1,
+            pending_completion: None,
             pending_detach: None,
             pending_signals: VecDeque::new(),
             pending_stop: None,
@@ -577,39 +830,168 @@ impl ExecutionContext {
             tracker: RestartTracker::default(),
         }
     }
+
+    fn loggers_ready(&self) -> bool {
+        self.loggers
+            .iter()
+            .all(|logger| matches!(logger.state, LoggerExecutionState::Running { .. }))
+    }
+
+    fn loggers_failed(&self) -> bool {
+        self.loggers
+            .iter()
+            .any(|logger| matches!(logger.state, LoggerExecutionState::Failed))
+    }
+
+    fn next_deadline(&self) -> Option<TokioInstant> {
+        self.loggers
+            .iter()
+            .filter_map(|logger| logger.state.deadline())
+            .fold(
+                self.logger_shutdown.deadline().or(self.deadline),
+                |current, deadline| Some(current.map_or(deadline, |current| current.min(deadline))),
+            )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoggerShutdownState {
+    Running,
+    Preparing {
+        deadline: TokioInstant,
+    },
+    ClosingInputs {
+        deadline: TokioInstant,
+    },
+    Draining {
+        deadline: TokioInstant,
+    },
+    Terminating {
+        deadline: TokioInstant,
+        kill_sent: bool,
+    },
+    Complete,
+}
+
+impl LoggerShutdownState {
+    const fn deadline(self) -> Option<TokioInstant> {
+        match self {
+            Self::Preparing { deadline }
+            | Self::ClosingInputs { deadline }
+            | Self::Draining { deadline }
+            | Self::Terminating { deadline, .. } => Some(deadline),
+            Self::Running | Self::Complete => None,
+        }
+    }
+
+    const fn permits_restart(self) -> bool {
+        matches!(self, Self::Running | Self::Preparing { .. })
+    }
+}
+
+struct LoggerExecution {
+    failure_streak: u32,
+    logger: BrokerLoggerId,
+    state: LoggerExecutionState,
+}
+
+impl LoggerExecution {
+    const fn new(logger: BrokerLoggerId) -> Self {
+        Self {
+            failure_streak: 0,
+            logger,
+            state: LoggerExecutionState::Down,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LoggerExecutionState {
+    Down,
+    Starting {
+        task: BrokerTaskId,
+        deadline: TokioInstant,
+    },
+    Running {
+        task: BrokerTaskId,
+        started_at: Instant,
+    },
+    Backoff {
+        deadline: TokioInstant,
+    },
+    Failed,
+    Killing {
+        task: BrokerTaskId,
+        deadline: TokioInstant,
+    },
+}
+
+impl LoggerExecutionState {
+    const fn task(self) -> Option<BrokerTaskId> {
+        match self {
+            Self::Starting { task, .. }
+            | Self::Running { task, .. }
+            | Self::Killing { task, .. } => Some(task),
+            Self::Down | Self::Backoff { .. } | Self::Failed => None,
+        }
+    }
+
+    const fn deadline(self) -> Option<TokioInstant> {
+        match self {
+            Self::Starting { deadline, .. }
+            | Self::Backoff { deadline }
+            | Self::Killing { deadline, .. } => Some(deadline),
+            Self::Down | Self::Running { .. } | Self::Failed => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum AuxiliaryExecution {
+    #[default]
+    Idle,
+    Starting(BrokerTaskId),
+    Running(BrokerTaskId),
+    Killing {
+        task: BrokerTaskId,
+        retry: bool,
+    },
+    Passed,
+    HookStarting(BrokerTaskId),
+    HookRunning(BrokerTaskId),
+    HookKilling(BrokerTaskId),
+}
+
+impl AuxiliaryExecution {
+    const fn is_idle(self) -> bool {
+        matches!(self, Self::Idle | Self::Passed)
+    }
+
+    const fn is_hook(self) -> bool {
+        matches!(
+            self,
+            Self::HookStarting(_) | Self::HookRunning(_) | Self::HookKilling(_)
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingCompletion {
+    generation: Generation,
+    policy_result: ChildResult,
+    runtime_seconds: u64,
+    stop: Option<StopCompletion>,
 }
 
 async fn handle_executor_timer(
     client: &mut ProcessBrokerClient,
-    command: &ProcessCommand,
+    commands: &PreparedExecution,
+    config: &ServiceConfig,
     execution: &mut ExecutionContext,
-    readiness: &ReadinessConfig,
 ) -> Result<(), ExecutorError> {
     match execution.machine.state() {
-        SupervisorState::Waiting => {
-            let generation = execution.machine.preconditions_ready()?;
-            execution
-                .tracker
-                .record_start(elapsed_seconds(execution.epoch));
-            execution.status.started_at = Some(Instant::now());
-            execution.status.down_since = None;
-            execution.status.readiness_failed = false;
-            if readiness.mode == ReadinessMode::Immediate {
-                client
-                    .spawn(generation, command.clone(), CHILD_STARTUP_TIMEOUT)
-                    .await?;
-            } else {
-                client
-                    .spawn_with_readiness(
-                        generation,
-                        command.clone(),
-                        CHILD_STARTUP_TIMEOUT,
-                        Duration::from_secs(readiness.timeout_seconds),
-                    )
-                    .await?;
-            }
-            execution.deadline =
-                Some(TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT);
+        SupervisorState::WaitingCondition => {
+            handle_waiting_timer(client, commands, config, execution).await?;
         }
         SupervisorState::Backoff { generation, .. } => {
             execution.deadline = None;
@@ -631,9 +1013,30 @@ async fn handle_executor_timer(
         SupervisorState::Starting(_) => {
             return Err(ExecutorError::BrokerTimedOut("service startup"));
         }
-        SupervisorState::Started(_) => {
+        SupervisorState::Running(_) => {
             return Err(ExecutorError::BrokerTimedOut("service readiness"));
         }
+        SupervisorState::Completed(_) => match execution.auxiliary {
+            AuxiliaryExecution::HookRunning(task) => {
+                client
+                    .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
+                    .await?;
+                execution.auxiliary = AuxiliaryExecution::HookKilling(task);
+                execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+            }
+            AuxiliaryExecution::HookStarting(_) => {
+                return Err(ExecutorError::BrokerTimedOut("post-exit hook startup"));
+            }
+            AuxiliaryExecution::HookKilling(_) => {
+                return Err(ExecutorError::BrokerTimedOut("post-exit hook cleanup"));
+            }
+            _ => {
+                return Err(ExecutorError::Transition(TransitionError::Invalid {
+                    state: execution.machine.state(),
+                    event: "post_exit_timer",
+                }));
+            }
+        },
         state => {
             return Err(ExecutorError::Transition(TransitionError::Invalid {
                 state,
@@ -641,6 +1044,302 @@ async fn handle_executor_timer(
             }));
         }
     }
+    Ok(())
+}
+
+async fn handle_waiting_timer(
+    client: &mut ProcessBrokerClient,
+    commands: &PreparedExecution,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let condition = config.start_condition.as_ref();
+    let condition_command = commands.condition.as_ref();
+    match (condition, condition_command, execution.auxiliary) {
+        (None, None, _) | (Some(_), Some(_), AuxiliaryExecution::Passed) => {
+            start_service(client, &commands.service, &config.readiness, execution).await
+        }
+        (Some(_), Some(command), AuxiliaryExecution::Idle) => {
+            let task = allocate_task(execution)?;
+            client
+                .spawn_task(task, command.clone(), CHILD_STARTUP_TIMEOUT)
+                .await?;
+            execution.auxiliary = AuxiliaryExecution::Starting(task);
+            execution.deadline =
+                Some(TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT);
+            Ok(())
+        }
+        (Some(_), Some(_), AuxiliaryExecution::Running(task)) => {
+            client
+                .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
+                .await?;
+            execution.auxiliary = AuxiliaryExecution::Killing { task, retry: true };
+            execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+            Ok(())
+        }
+        (Some(_), Some(_), AuxiliaryExecution::Starting(_)) => {
+            Err(ExecutorError::BrokerTimedOut("condition startup"))
+        }
+        (Some(_), Some(_), AuxiliaryExecution::Killing { .. }) => {
+            Err(ExecutorError::BrokerTimedOut("condition cleanup"))
+        }
+        _ => Err(ExecutorError::OperatingSystem(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "prepared condition does not match validated configuration",
+        ))),
+    }
+}
+
+async fn cancel_auxiliary(
+    client: &mut ProcessBrokerClient,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let (task, hook) = match execution.auxiliary {
+        AuxiliaryExecution::Starting(task) | AuxiliaryExecution::Running(task) => (task, false),
+        AuxiliaryExecution::HookStarting(task) | AuxiliaryExecution::HookRunning(task) => {
+            (task, true)
+        }
+        AuxiliaryExecution::Idle
+        | AuxiliaryExecution::Killing { .. }
+        | AuxiliaryExecution::Passed
+        | AuxiliaryExecution::HookKilling(_) => return Ok(()),
+    };
+    client
+        .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
+        .await?;
+    execution.auxiliary = if hook {
+        AuxiliaryExecution::HookKilling(task)
+    } else {
+        AuxiliaryExecution::Killing { task, retry: false }
+    };
+    execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+    Ok(())
+}
+
+fn allocate_task(execution: &mut ExecutionContext) -> io::Result<BrokerTaskId> {
+    let task = BrokerTaskId::new(execution.next_task).ok_or_else(|| {
+        io::Error::other("pre-start condition task identifier space is exhausted")
+    })?;
+    execution.next_task = execution
+        .next_task
+        .checked_add(1)
+        .ok_or_else(|| io::Error::other("pre-start condition task identifier overflow"))?;
+    Ok(task)
+}
+
+async fn start_down_loggers(
+    client: &mut ProcessBrokerClient,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    if !execution.logger_shutdown.permits_restart() {
+        return Ok(());
+    }
+    loop {
+        let Some(position) = execution
+            .loggers
+            .iter()
+            .position(|logger| matches!(logger.state, LoggerExecutionState::Down))
+        else {
+            return Ok(());
+        };
+        let logger = execution
+            .loggers
+            .get(position)
+            .ok_or_else(|| io::Error::other("selected logger disappeared"))?
+            .logger;
+        let task = allocate_task(execution)?;
+        client
+            .spawn_logger(task, logger, CHILD_STARTUP_TIMEOUT)
+            .await?;
+        let state = execution
+            .loggers
+            .get_mut(position)
+            .ok_or_else(|| io::Error::other("selected logger disappeared"))?;
+        state.state = LoggerExecutionState::Starting {
+            task,
+            deadline: TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT,
+        };
+    }
+}
+
+async fn handle_due_logger_timers(
+    client: &mut ProcessBrokerClient,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let now = TokioInstant::now();
+    match execution.logger_shutdown {
+        LoggerShutdownState::Preparing { deadline } if deadline <= now => {
+            client.close_logger_inputs().await?;
+            execution.logger_shutdown = LoggerShutdownState::ClosingInputs {
+                deadline: now + BROKER_EVENT_TIMEOUT,
+            };
+            return Ok(());
+        }
+        LoggerShutdownState::ClosingInputs { deadline } if deadline <= now => {
+            return Err(ExecutorError::BrokerTimedOut("closing logger inputs"));
+        }
+        LoggerShutdownState::Draining { deadline } if deadline <= now => {
+            signal_loggers(client, execution, ProcessSignal::Terminate).await?;
+            execution.logger_shutdown = LoggerShutdownState::Terminating {
+                deadline: now + LOGGER_STOP_GRACE,
+                kill_sent: false,
+            };
+            return Ok(());
+        }
+        LoggerShutdownState::Terminating {
+            deadline,
+            kill_sent: false,
+        } if deadline <= now => {
+            signal_loggers(client, execution, ProcessSignal::Kill).await?;
+            execution.logger_shutdown = LoggerShutdownState::Terminating {
+                deadline: now + BROKER_EVENT_TIMEOUT,
+                kill_sent: true,
+            };
+            return Ok(());
+        }
+        LoggerShutdownState::Terminating {
+            deadline,
+            kill_sent: true,
+        } if deadline <= now => {
+            return Err(ExecutorError::BrokerTimedOut("logger termination"));
+        }
+        LoggerShutdownState::Running
+        | LoggerShutdownState::Preparing { .. }
+        | LoggerShutdownState::ClosingInputs { .. }
+        | LoggerShutdownState::Draining { .. }
+        | LoggerShutdownState::Terminating { .. }
+        | LoggerShutdownState::Complete => {}
+    }
+    if !execution.logger_shutdown.permits_restart() {
+        return Ok(());
+    }
+    for logger in &mut execution.loggers {
+        match logger.state {
+            LoggerExecutionState::Backoff { deadline } if deadline <= now => {
+                logger.state = LoggerExecutionState::Down;
+            }
+            LoggerExecutionState::Starting { task, deadline } if deadline <= now => {
+                client
+                    .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
+                    .await?;
+                logger.state = LoggerExecutionState::Killing {
+                    task,
+                    deadline: now + BROKER_EVENT_TIMEOUT,
+                };
+            }
+            LoggerExecutionState::Killing { deadline, .. } if deadline <= now => {
+                return Err(ExecutorError::BrokerTimedOut("logger cleanup"));
+            }
+            LoggerExecutionState::Down
+            | LoggerExecutionState::Starting { .. }
+            | LoggerExecutionState::Running { .. }
+            | LoggerExecutionState::Backoff { .. }
+            | LoggerExecutionState::Failed
+            | LoggerExecutionState::Killing { .. } => {}
+        }
+    }
+    start_down_loggers(client, execution).await
+}
+
+async fn signal_loggers(
+    client: &mut ProcessBrokerClient,
+    execution: &mut ExecutionContext,
+    signal: ProcessSignal,
+) -> Result<(), ExecutorError> {
+    let deadline = TokioInstant::now() + BROKER_EVENT_TIMEOUT;
+    for logger in execution.loggers.iter_mut().rev() {
+        let Some(task) = logger.state.task() else {
+            logger.state = LoggerExecutionState::Down;
+            continue;
+        };
+        client
+            .signal_task(task, BrokerSignalScope::Group, signal)
+            .await?;
+        if signal == ProcessSignal::Terminate {
+            client
+                .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Continue)
+                .await?;
+        }
+        logger.state = LoggerExecutionState::Killing { task, deadline };
+    }
+    Ok(())
+}
+
+fn schedule_logger_restart(
+    logger: &mut LoggerExecution,
+    broker: ProcessId,
+    restart: &LoggerRestartConfig,
+) {
+    let runtime = match logger.state {
+        LoggerExecutionState::Running { started_at, .. } => Some(started_at.elapsed()),
+        LoggerExecutionState::Down
+        | LoggerExecutionState::Starting { .. }
+        | LoggerExecutionState::Backoff { .. }
+        | LoggerExecutionState::Failed
+        | LoggerExecutionState::Killing { .. } => None,
+    };
+    if runtime
+        .is_some_and(|runtime| runtime >= Duration::from_secs(restart.backoff.reset_after_seconds))
+    {
+        logger.failure_streak = 0;
+    }
+    let Some(failure_streak) = logger.failure_streak.checked_add(1) else {
+        logger.state = LoggerExecutionState::Failed;
+        return;
+    };
+    logger.failure_streak = failure_streak;
+    if restart
+        .max_retries
+        .is_some_and(|max_retries| failure_streak > max_retries)
+    {
+        logger.state = LoggerExecutionState::Failed;
+        return;
+    }
+    let exponent = logger.failure_streak.saturating_sub(1);
+    let factor = u64::from(restart.backoff.multiplier).saturating_pow(exponent);
+    let base_seconds = restart
+        .backoff
+        .initial_seconds
+        .saturating_mul(factor)
+        .min(restart.backoff.max_seconds);
+    let seed = u64::from(logger.logger.pipeline())
+        .saturating_mul(u64::from(u16::MAX).saturating_add(1))
+        .saturating_add(u64::from(logger.logger.stage()));
+    logger.state = LoggerExecutionState::Backoff {
+        deadline: TokioInstant::now()
+            + jittered_backoff_seed(base_seconds, restart.backoff.jitter_percent, seed, broker),
+    };
+}
+
+async fn start_service(
+    client: &mut ProcessBrokerClient,
+    command: &ProcessCommand,
+    readiness: &ReadinessConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let generation = execution.machine.preconditions_ready()?;
+    execution.auxiliary = AuxiliaryExecution::Idle;
+    execution
+        .tracker
+        .record_start(elapsed_seconds(execution.epoch));
+    execution.status.started_at = Some(Instant::now());
+    execution.status.down_since = None;
+    execution.status.readiness_failed = false;
+    if readiness.mode == ReadinessMode::Immediate {
+        client
+            .spawn(generation, command.clone(), CHILD_STARTUP_TIMEOUT)
+            .await?;
+    } else {
+        client
+            .spawn_with_readiness(
+                generation,
+                command.clone(),
+                CHILD_STARTUP_TIMEOUT,
+                Duration::from_secs(readiness.timeout_seconds),
+            )
+            .await?;
+    }
+    execution.deadline = Some(TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT);
     Ok(())
 }
 
@@ -704,6 +1403,7 @@ impl RuntimeStatus {
         machine: &StateMachine,
         tracker: &RestartTracker,
         deadline: Option<TokioInstant>,
+        loggers: &[LoggerExecution],
     ) -> StatusSnapshot {
         let mut snapshot = StatusSnapshot::from_machine(machine);
         snapshot.supervisor_pid = Some(std::process::id());
@@ -733,8 +1433,32 @@ impl RuntimeStatus {
         } else {
             None
         };
+        snapshot.logger = logger_status(loggers);
         snapshot.command.clone_from(&self.command);
         snapshot
+    }
+}
+
+fn logger_status(loggers: &[LoggerExecution]) -> LoggerStatus {
+    if loggers.is_empty() {
+        LoggerStatus::NotConfigured
+    } else if loggers
+        .iter()
+        .any(|logger| matches!(logger.state, LoggerExecutionState::Failed))
+    {
+        LoggerStatus::Failed
+    } else if loggers
+        .iter()
+        .any(|logger| matches!(logger.state, LoggerExecutionState::Backoff { .. }))
+    {
+        LoggerStatus::Backoff
+    } else if loggers
+        .iter()
+        .all(|logger| matches!(logger.state, LoggerExecutionState::Running { .. }))
+    {
+        LoggerStatus::Ready
+    } else {
+        LoggerStatus::Starting
     }
 }
 
@@ -784,13 +1508,14 @@ async fn begin_supervisor_shutdown(
 ) -> Result<(), ExecutorError> {
     machine.set_desired(DesiredState::Halt);
     match machine.state() {
-        SupervisorState::Waiting | SupervisorState::Backoff { .. } => {
+        SupervisorState::WaitingCondition | SupervisorState::Backoff { .. } => {
             machine.cancel_pending()?;
             *deadline = None;
         }
         SupervisorState::Starting(generation)
-        | SupervisorState::Started(generation)
-        | SupervisorState::Ready(generation) => {
+        | SupervisorState::Running(generation)
+        | SupervisorState::Ready(generation)
+        | SupervisorState::Paused { generation, .. } => {
             machine.begin_stop(generation)?;
             begin_group_stop(
                 client,
@@ -806,7 +1531,16 @@ async fn begin_supervisor_shutdown(
         SupervisorState::Stopping(_) => {
             *pending_stop = Some(StopCompletion::Halt);
         }
-        SupervisorState::Down | SupervisorState::Failed(_) | SupervisorState::Exiting => {}
+        SupervisorState::Down
+        | SupervisorState::Completed(_)
+        | SupervisorState::Failed(_)
+        | SupervisorState::Exited => {}
+        SupervisorState::Initializing => {
+            return Err(ExecutorError::Transition(TransitionError::Invalid {
+                state: SupervisorState::Initializing,
+                event: "supervisor_shutdown",
+            }));
+        }
     }
     Ok(())
 }
@@ -817,13 +1551,7 @@ async fn apply_control_command(
     command: ControlCommand,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
-    if execution.pending_detach.is_some() && command.request().operation != Operation::Status {
-        let response = Response {
-            code: ResponseCode::Conflict,
-            generation: execution.machine.state().generation(),
-            message: "a live-child detach operation is already pending".to_owned(),
-            status: None,
-        };
+    if let Some(response) = control_preflight_rejection(&command, execution) {
         let _ = command.respond(response);
         return Ok(());
     }
@@ -837,13 +1565,26 @@ async fn apply_control_command(
             &execution.machine,
             &execution.tracker,
             execution.deadline,
+            &execution.loggers,
         ));
+    }
+    if response.code == ResponseCode::Ok
+        && matches!(
+            operation,
+            Operation::Start | Operation::Once | Operation::Restart
+        )
+        && reset_failed_loggers(execution)
+    {
+        start_down_loggers(client, execution).await?;
     }
     match decision.effect {
         ControlEffect::None | ControlEffect::BeginStart => {}
         ControlEffect::CancelPending { .. } => {
+            cancel_auxiliary(client, execution).await?;
             execution.machine.cancel_pending()?;
-            execution.deadline = None;
+            if execution.auxiliary.is_idle() {
+                execution.deadline = None;
+            }
         }
         ControlEffect::StopGroup { generation, after } => {
             if matches!(execution.machine.state(), SupervisorState::Stopping(_)) {
@@ -863,12 +1604,15 @@ async fn apply_control_command(
             }
         }
         ControlEffect::ExitSupervisor { leave_child: false } => {
+            cancel_auxiliary(client, execution).await?;
             if matches!(
                 execution.machine.state(),
-                SupervisorState::Waiting | SupervisorState::Backoff { .. }
+                SupervisorState::WaitingCondition | SupervisorState::Backoff { .. }
             ) {
                 execution.machine.cancel_pending()?;
-                execution.deadline = None;
+                if execution.auxiliary.is_idle() {
+                    execution.deadline = None;
+                }
             }
         }
         ControlEffect::ExitSupervisor { leave_child: true } => {
@@ -905,6 +1649,42 @@ async fn apply_control_command(
     }
     let _ = command.respond(response);
     Ok(())
+}
+
+fn reset_failed_loggers(execution: &mut ExecutionContext) -> bool {
+    let mut reset = false;
+    for logger in &mut execution.loggers {
+        if matches!(logger.state, LoggerExecutionState::Failed) {
+            logger.failure_streak = 0;
+            logger.state = LoggerExecutionState::Down;
+            reset = true;
+        }
+    }
+    reset
+}
+
+fn control_preflight_rejection(
+    command: &ControlCommand,
+    execution: &ExecutionContext,
+) -> Option<Response> {
+    let operation = command.request().operation;
+    if operation == Operation::Exit && !execution.loggers.is_empty() {
+        return Some(Response {
+            code: ResponseCode::Invalid,
+            generation: execution.machine.state().generation(),
+            message: "exit cannot detach a service with broker-owned logging pipelines".to_owned(),
+            status: None,
+        });
+    }
+    if execution.pending_detach.is_some() && operation != Operation::Status {
+        return Some(Response {
+            code: ResponseCode::Conflict,
+            generation: execution.machine.state().generation(),
+            message: "a live-child detach operation is already pending".to_owned(),
+            status: None,
+        });
+    }
+    None
 }
 
 async fn begin_group_stop(
@@ -950,6 +1730,39 @@ async fn request_group_stop(
 async fn handle_broker_event(
     client: &mut ProcessBrokerClient,
     event: ProcessBrokerEvent,
+    commands: &PreparedExecution,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    if matches!(event, ProcessBrokerEvent::LoggerInputsClosed)
+        && matches!(
+            execution.logger_shutdown,
+            LoggerShutdownState::ClosingInputs { .. }
+        )
+    {
+        execution.logger_shutdown = LoggerShutdownState::Draining {
+            deadline: TokioInstant::now() + LOGGER_DRAIN_GRACE,
+        };
+        return Ok(());
+    }
+    if task_id(&event).is_some_and(|task| {
+        execution
+            .loggers
+            .iter()
+            .any(|logger| logger.state.task() == Some(task))
+    }) {
+        return handle_logger_event(client, event, &config.logging.restart, execution);
+    }
+    if task_id(&event).is_some() {
+        return handle_auxiliary_event(client, event, config, execution);
+    }
+    handle_service_broker_event(client, event, commands, config, execution).await
+}
+
+async fn handle_service_broker_event(
+    client: &mut ProcessBrokerClient,
+    event: ProcessBrokerEvent,
+    commands: &PreparedExecution,
     config: &ServiceConfig,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
@@ -990,16 +1803,23 @@ async fn handle_broker_event(
                 generation,
                 ChildResult::Exited(SPAWN_FAILURE_EXIT),
                 true,
+                commands.post_exit.as_ref(),
                 execution,
             )
+            .await
         }
         ProcessBrokerEvent::Child { generation, event }
             if execution.machine.state().live_generation() == Some(generation) =>
         {
-            if let Some(result) = event.terminal_result() {
-                complete_generation(client, config, generation, result, false, execution)?;
-            }
-            Ok(())
+            handle_service_child_event(
+                client,
+                generation,
+                event,
+                commands.post_exit.as_ref(),
+                config,
+                execution,
+            )
+            .await
         }
         ProcessBrokerEvent::SignalDelivered { generation } => {
             finish_signal_request(&mut execution.pending_signals, generation, None)
@@ -1009,12 +1829,12 @@ async fn handle_broker_event(
             os_error,
         } => finish_signal_request(&mut execution.pending_signals, generation, os_error),
         ProcessBrokerEvent::GenerationReady { generation }
-            if execution.machine.state() == SupervisorState::Started(generation) =>
+            if execution.machine.state() == SupervisorState::Running(generation) =>
         {
             publish_readiness(&mut execution.machine, generation, &mut execution.deadline)
         }
         ProcessBrokerEvent::ReadinessFailed { generation, .. }
-            if execution.machine.state() == SupervisorState::Started(generation) =>
+            if execution.machine.state() == SupervisorState::Running(generation) =>
         {
             execution.status.readiness_failed = true;
             execution.machine.begin_stop(generation)?;
@@ -1041,6 +1861,336 @@ async fn handle_broker_event(
     }
 }
 
+const fn task_id(event: &ProcessBrokerEvent) -> Option<BrokerTaskId> {
+    match event {
+        ProcessBrokerEvent::TaskStarted { task, .. }
+        | ProcessBrokerEvent::TaskSpawnFailed { task, .. }
+        | ProcessBrokerEvent::TaskChild { task, .. }
+        | ProcessBrokerEvent::TaskSignalDelivered { task }
+        | ProcessBrokerEvent::TaskSignalFailed { task, .. } => Some(*task),
+        ProcessBrokerEvent::Ready
+        | ProcessBrokerEvent::Started { .. }
+        | ProcessBrokerEvent::SpawnFailed { .. }
+        | ProcessBrokerEvent::Child { .. }
+        | ProcessBrokerEvent::SignalDelivered { .. }
+        | ProcessBrokerEvent::SignalFailed { .. }
+        | ProcessBrokerEvent::Detached { .. }
+        | ProcessBrokerEvent::DetachFailed { .. }
+        | ProcessBrokerEvent::GenerationReady { .. }
+        | ProcessBrokerEvent::ReadinessFailed { .. }
+        | ProcessBrokerEvent::LoggerInputsClosed
+        | ProcessBrokerEvent::ShutdownComplete
+        | ProcessBrokerEvent::ShutdownFailed { .. } => None,
+    }
+}
+
+fn handle_logger_event(
+    client: &ProcessBrokerClient,
+    event: ProcessBrokerEvent,
+    restart: &LoggerRestartConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let Some(task) = task_id(&event) else {
+        return Err(ExecutorError::UnexpectedBrokerEvent(event));
+    };
+    let position = execution
+        .loggers
+        .iter()
+        .position(|logger| logger.state.task() == Some(task));
+    let Some(position) = position else {
+        return Err(ExecutorError::UnexpectedBrokerEvent(event));
+    };
+    let logger = execution
+        .loggers
+        .get_mut(position)
+        .ok_or_else(|| io::Error::other("selected logger disappeared"))?;
+    match event {
+        ProcessBrokerEvent::TaskStarted { .. }
+            if matches!(logger.state, LoggerExecutionState::Starting { .. }) =>
+        {
+            logger.state = LoggerExecutionState::Running {
+                task,
+                started_at: Instant::now(),
+            };
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskStarted { .. }
+            if matches!(logger.state, LoggerExecutionState::Killing { .. }) =>
+        {
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskSpawnFailed {
+            cleanup_pending, ..
+        } if matches!(logger.state, LoggerExecutionState::Starting { .. }) => {
+            if cleanup_pending.is_some() {
+                logger.state = LoggerExecutionState::Killing {
+                    task,
+                    deadline: TokioInstant::now() + BROKER_EVENT_TIMEOUT,
+                };
+            } else if execution.logger_shutdown.permits_restart() {
+                schedule_logger_restart(logger, client.process(), restart);
+            } else {
+                logger.state = LoggerExecutionState::Down;
+            }
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskChild { event, .. } if event.is_terminal() => {
+            if execution.logger_shutdown.permits_restart() {
+                schedule_logger_restart(logger, client.process(), restart);
+            } else {
+                logger.state = LoggerExecutionState::Down;
+            }
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskChild { .. }
+        | ProcessBrokerEvent::TaskSignalDelivered { .. }
+        | ProcessBrokerEvent::TaskSignalFailed { .. } => Ok(()),
+        event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
+    }
+}
+
+fn handle_auxiliary_event(
+    client: &ProcessBrokerClient,
+    event: ProcessBrokerEvent,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    if execution.auxiliary.is_hook() {
+        handle_post_exit_event(client, event, config, execution)
+    } else {
+        handle_condition_event(client, event, config, execution)
+    }
+}
+
+async fn handle_service_child_event(
+    client: &mut ProcessBrokerClient,
+    generation: Generation,
+    event: ChildEvent,
+    post_exit: Option<&ProcessCommand>,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    match event {
+        ChildEvent::Stopped { .. }
+            if matches!(
+                execution.machine.state(),
+                SupervisorState::Running(_) | SupervisorState::Ready(_)
+            ) =>
+        {
+            execution.machine.child_paused(generation)?;
+        }
+        ChildEvent::Continued { .. }
+            if matches!(execution.machine.state(), SupervisorState::Paused { .. }) =>
+        {
+            execution.machine.child_continued(generation)?;
+        }
+        _ => {
+            if let Some(result) = event.terminal_result() {
+                complete_generation(
+                    client, config, generation, result, false, post_exit, execution,
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_post_exit_event(
+    client: &ProcessBrokerClient,
+    event: ProcessBrokerEvent,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let Some(hook) = config.post_exit.as_ref() else {
+        return Err(ExecutorError::UnexpectedBrokerEvent(event));
+    };
+    match event {
+        ProcessBrokerEvent::TaskStarted { task, .. }
+            if execution.auxiliary == AuxiliaryExecution::HookStarting(task) =>
+        {
+            execution.auxiliary = AuxiliaryExecution::HookRunning(task);
+            execution.deadline =
+                Some(TokioInstant::now() + Duration::from_secs(hook.timeout_seconds));
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskStarted { task, .. }
+            if execution.auxiliary == AuxiliaryExecution::HookKilling(task) =>
+        {
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskSpawnFailed { task, .. }
+            if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::HookStarting(current)
+                    | AuxiliaryExecution::HookKilling(current)
+                    if current == task
+            ) =>
+        {
+            finish_post_exit(client, config, execution)
+        }
+        ProcessBrokerEvent::TaskChild { task, event }
+            if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::HookRunning(current)
+                    | AuxiliaryExecution::HookKilling(current)
+                    if current == task
+            ) && event.is_terminal() =>
+        {
+            finish_post_exit(client, config, execution)
+        }
+        ProcessBrokerEvent::TaskChild { task, .. }
+            if execution.auxiliary == AuxiliaryExecution::HookRunning(task) =>
+        {
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskSignalDelivered { task }
+            if execution.auxiliary == AuxiliaryExecution::HookKilling(task) =>
+        {
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskSignalFailed { task, .. }
+            if execution.auxiliary == AuxiliaryExecution::HookKilling(task) =>
+        {
+            finish_post_exit(client, config, execution)
+        }
+        event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
+    }
+}
+
+fn finish_post_exit(
+    client: &ProcessBrokerClient,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let completion = execution.pending_completion.ok_or_else(|| {
+        ExecutorError::OperatingSystem(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "post-exit task has no pending service completion",
+        ))
+    })?;
+    finish_completion(client, config, completion, true, execution)
+}
+
+fn handle_condition_event(
+    client: &ProcessBrokerClient,
+    event: ProcessBrokerEvent,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let Some(condition) = config.start_condition.as_ref() else {
+        return Err(ExecutorError::UnexpectedBrokerEvent(event));
+    };
+    match event {
+        ProcessBrokerEvent::TaskStarted { task, .. }
+            if execution.auxiliary == AuxiliaryExecution::Starting(task) =>
+        {
+            execution.auxiliary = AuxiliaryExecution::Running(task);
+            execution.deadline =
+                Some(TokioInstant::now() + Duration::from_secs(condition.timeout_seconds));
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskStarted { task, .. }
+            if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::Killing { task: current, .. } if current == task
+            ) =>
+        {
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskSpawnFailed { task, .. }
+            if execution.auxiliary == AuxiliaryExecution::Starting(task) =>
+        {
+            schedule_condition_retry(client, task, condition, execution);
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskSpawnFailed { task, .. }
+            if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::Killing { task: current, .. } if current == task
+            ) =>
+        {
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskChild { task, event }
+            if (matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::Running(current) if current == task
+            ) || matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::Killing { task: current, .. } if current == task
+            )) && event.is_terminal() =>
+        {
+            if execution.auxiliary == AuxiliaryExecution::Running(task)
+                && matches!(event, ChildEvent::Exited { code: 0, .. })
+            {
+                execution.condition_tracker.passed();
+                execution.auxiliary = AuxiliaryExecution::Passed;
+                execution.deadline = Some(TokioInstant::now());
+            } else if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::Running(_) | AuxiliaryExecution::Killing { retry: true, .. }
+            ) {
+                schedule_condition_retry(client, task, condition, execution);
+            } else {
+                execution.auxiliary = AuxiliaryExecution::Idle;
+                execution.deadline = None;
+            }
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskChild { task, .. }
+            if execution.auxiliary == AuxiliaryExecution::Running(task) =>
+        {
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskSignalDelivered { task }
+            if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::Killing { task: current, .. } if current == task
+            ) =>
+        {
+            Ok(())
+        }
+        ProcessBrokerEvent::TaskSignalFailed { task, .. }
+            if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::Killing { task: current, .. } if current == task
+            ) =>
+        {
+            if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::Killing { retry: true, .. }
+            ) {
+                schedule_condition_retry(client, task, condition, execution);
+            } else {
+                execution.auxiliary = AuxiliaryExecution::Idle;
+                execution.deadline = None;
+            }
+            Ok(())
+        }
+        event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
+    }
+}
+
+fn schedule_condition_retry(
+    client: &ProcessBrokerClient,
+    task: BrokerTaskId,
+    condition: &StartConditionConfig,
+    execution: &mut ExecutionContext,
+) {
+    let retry = execution.condition_tracker.failed(condition);
+    execution.auxiliary = AuxiliaryExecution::Idle;
+    execution.deadline = Some(
+        TokioInstant::now()
+            + jittered_backoff_seed(
+                retry.base_delay_seconds,
+                retry.jitter_percent,
+                task.get(),
+                client.process(),
+            ),
+    );
+}
+
 fn publish_readiness(
     machine: &mut StateMachine,
     generation: Generation,
@@ -1063,9 +2213,9 @@ fn finish_detach(
     } else {
         ProcessBrokerEvent::DetachFailed { generation }
     };
-    let pending = pending_detach
-        .take()
-        .ok_or_else(|| ExecutorError::UnexpectedBrokerEvent(unexpected.clone()))?;
+    let Some(pending) = pending_detach.take() else {
+        return Err(ExecutorError::UnexpectedBrokerEvent(unexpected));
+    };
     if pending.generation != generation {
         return Err(ExecutorError::UnexpectedBrokerEvent(unexpected));
     }
@@ -1085,12 +2235,13 @@ fn finish_detach(
     Ok(())
 }
 
-fn complete_generation(
-    client: &ProcessBrokerClient,
+async fn complete_generation(
+    client: &mut ProcessBrokerClient,
     config: &ServiceConfig,
     generation: Generation,
     result: ChildResult,
     start_failed: bool,
+    post_exit: Option<&ProcessCommand>,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
     execution.status.last_result = Some(result);
@@ -1103,7 +2254,8 @@ fn complete_generation(
         .started_at
         .take()
         .map_or(0, elapsed_seconds);
-    let operator_stopped = execution.pending_stop.is_some();
+    let stop = execution.pending_stop.take();
+    let operator_stopped = stop.is_some();
     let policy_result = if execution.status.readiness_failed {
         ChildResult::Exited(1)
     } else {
@@ -1112,27 +2264,98 @@ fn complete_generation(
     if !operator_stopped && (start_failed || !policy_result.is_success(&config.restart)) {
         execution.status.failures = execution.status.failures.saturating_add(1);
     }
-    let decision = execution.pending_stop.take().map_or_else(
+    let completion = PendingCompletion {
+        generation,
+        policy_result,
+        runtime_seconds,
+        stop,
+    };
+    if execution.machine.desired() == DesiredState::Once {
+        execution.machine.set_desired(DesiredState::Down);
+    }
+    execution.status.readiness_failed = false;
+    execution.stop_kill_sent = false;
+    if let Some(post_exit) = post_exit {
+        execution.machine.child_completed(generation)?;
+        let task = allocate_task(execution)?;
+        let command = post_exit_command(
+            post_exit,
+            generation,
+            result,
+            start_failed,
+            execution.status.last_readiness_failed,
+        );
+        execution.pending_completion = Some(completion);
+        execution.auxiliary = AuxiliaryExecution::HookStarting(task);
+        client
+            .spawn_task(task, command, CHILD_STARTUP_TIMEOUT)
+            .await?;
+        execution.deadline =
+            Some(TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT);
+        return Ok(());
+    }
+    finish_completion(client, config, completion, false, execution)
+}
+
+fn post_exit_command(
+    template: &ProcessCommand,
+    generation: Generation,
+    result: ChildResult,
+    start_failed: bool,
+    readiness_failed: bool,
+) -> ProcessCommand {
+    let mut command = template.clone();
+    let (kind, status) = match result {
+        ChildResult::Exited(status) => ("exit", status),
+        ChildResult::Signaled(signal) => ("signal", signal),
+    };
+    command.environment_variable("IMMORTAL_EXIT_KIND", kind);
+    command.environment_variable("IMMORTAL_EXIT_STATUS", status.to_string());
+    command.environment_variable("IMMORTAL_GENERATION", generation.get().to_string());
+    command.environment_variable(
+        "IMMORTAL_START_FAILED",
+        if start_failed { "1" } else { "0" },
+    );
+    command.environment_variable(
+        "IMMORTAL_READINESS_FAILED",
+        if readiness_failed { "1" } else { "0" },
+    );
+    command
+}
+
+fn finish_completion(
+    client: &ProcessBrokerClient,
+    config: &ServiceConfig,
+    completion: PendingCompletion,
+    after_hook: bool,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let decision = completion.stop.map_or_else(
         || {
             execution.tracker.decide(
-                policy_result,
-                runtime_seconds,
+                completion.policy_result,
+                completion.runtime_seconds,
                 elapsed_seconds(execution.epoch),
                 execution.machine.desired(),
                 &config.restart,
             )
         },
-        |completion| match completion {
+        |stop| match stop {
             StopCompletion::Down | StopCompletion::Restart => RestartDecision::StayDown,
             StopCompletion::Halt => RestartDecision::ExitSupervisor,
         },
     );
-    if execution.machine.desired() == DesiredState::Once {
-        execution.machine.set_desired(DesiredState::Down);
+    if after_hook {
+        execution
+            .machine
+            .completion_finished(completion.generation, decision)?;
+    } else {
+        execution
+            .machine
+            .child_reaped(completion.generation, decision)?;
     }
-    execution.machine.child_reaped(generation, decision)?;
-    execution.status.readiness_failed = false;
-    execution.stop_kill_sent = false;
+    execution.auxiliary = AuxiliaryExecution::Idle;
+    execution.pending_completion = None;
     execution.deadline = match decision {
         RestartDecision::Restart {
             base_delay_seconds,
@@ -1142,7 +2365,7 @@ fn complete_generation(
                 + jittered_backoff(
                     base_delay_seconds,
                     jitter_percent,
-                    generation,
+                    completion.generation,
                     client.process(),
                 ),
         ),
@@ -1241,7 +2464,14 @@ async fn shutdown_broker(client: &mut ProcessBrokerClient) -> Result<(), Executo
     loop {
         match timeout(BROKER_EVENT_TIMEOUT, client.next_event()).await {
             Ok(Ok(ProcessBrokerEvent::ShutdownComplete)) => return Ok(()),
-            Ok(Ok(ProcessBrokerEvent::Child { .. })) => {}
+            Ok(Ok(
+                ProcessBrokerEvent::Child { .. }
+                | ProcessBrokerEvent::TaskStarted { .. }
+                | ProcessBrokerEvent::TaskSpawnFailed { .. }
+                | ProcessBrokerEvent::TaskChild { .. }
+                | ProcessBrokerEvent::TaskSignalDelivered { .. }
+                | ProcessBrokerEvent::TaskSignalFailed { .. },
+            )) => {}
             Ok(Ok(ProcessBrokerEvent::ShutdownFailed { .. })) => {
                 return Err(ExecutorError::BrokerTimedOut("shutdown cleanup"));
             }
@@ -1285,6 +2515,15 @@ fn jittered_backoff(
     generation: Generation,
     broker: crate::process::ProcessId,
 ) -> Duration {
+    jittered_backoff_seed(base_seconds, jitter_percent, generation.get(), broker)
+}
+
+fn jittered_backoff_seed(
+    base_seconds: u64,
+    jitter_percent: u8,
+    seed: u64,
+    broker: crate::process::ProcessId,
+) -> Duration {
     let spread = base_seconds
         .saturating_mul(u64::from(jitter_percent))
         .saturating_div(100);
@@ -1293,7 +2532,7 @@ fn jittered_backoff(
     }
     let width = spread.saturating_mul(2).saturating_add(1);
     let broker_seed = u64::try_from(broker.get()).map_or(0, |value| value);
-    let mut seed = generation.get() ^ broker_seed;
+    let mut seed = seed ^ broker_seed;
     seed ^= seed >> 30;
     seed = seed.wrapping_mul(0xbf58_476d_1ce4_e5b9);
     seed ^= seed >> 27;
@@ -1327,5 +2566,86 @@ impl SupervisorSignals {
                 "supervisor termination signal stream closed",
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{error::Error, time::Instant};
+
+    use tokio::time::Instant as TokioInstant;
+
+    use super::{LoggerExecution, LoggerExecutionState, logger_status, schedule_logger_restart};
+    use crate::{
+        config::{BackoffConfig, LoggerRestartConfig},
+        process::{BrokerLoggerId, BrokerTaskId, ProcessId},
+        status::LoggerStatus,
+    };
+
+    #[test]
+    fn logger_status_summarizes_every_runtime_phase() -> Result<(), Box<dyn Error>> {
+        let task = BrokerTaskId::new(1).ok_or("invalid test task")?;
+        let mut logger = LoggerExecution::new(BrokerLoggerId::new(0, 0));
+        assert_eq!(logger_status(&[]), LoggerStatus::NotConfigured);
+        assert_eq!(
+            logger_status(std::slice::from_ref(&logger)),
+            LoggerStatus::Starting
+        );
+
+        logger.state = LoggerExecutionState::Backoff {
+            deadline: TokioInstant::now(),
+        };
+        assert_eq!(
+            logger_status(std::slice::from_ref(&logger)),
+            LoggerStatus::Backoff
+        );
+
+        logger.state = LoggerExecutionState::Running {
+            task,
+            started_at: Instant::now(),
+        };
+        assert_eq!(
+            logger_status(std::slice::from_ref(&logger)),
+            LoggerStatus::Ready
+        );
+
+        logger.state = LoggerExecutionState::Failed;
+        assert_eq!(
+            logger_status(std::slice::from_ref(&logger)),
+            LoggerStatus::Failed
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn logger_retry_limit_and_stable_runtime_reset_are_independent() -> Result<(), Box<dyn Error>> {
+        let broker = ProcessId::new(1).ok_or("invalid test process")?;
+        let restart = LoggerRestartConfig {
+            max_retries: Some(1),
+            backoff: BackoffConfig {
+                initial_seconds: 1,
+                max_seconds: 1,
+                multiplier: 1,
+                jitter_percent: 0,
+                reset_after_seconds: 10,
+            },
+        };
+        let mut logger = LoggerExecution::new(BrokerLoggerId::new(0, 0));
+
+        schedule_logger_restart(&mut logger, broker, &restart);
+        assert!(matches!(logger.state, LoggerExecutionState::Backoff { .. }));
+        logger.state = LoggerExecutionState::Down;
+        schedule_logger_restart(&mut logger, broker, &restart);
+        assert!(matches!(logger.state, LoggerExecutionState::Failed));
+
+        let task = BrokerTaskId::new(1).ok_or("invalid test task")?;
+        let started_at = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(10))
+            .ok_or("test instant underflow")?;
+        logger.state = LoggerExecutionState::Running { task, started_at };
+        schedule_logger_restart(&mut logger, broker, &restart);
+        assert!(matches!(logger.state, LoggerExecutionState::Backoff { .. }));
+        assert_eq!(logger.failure_streak, 1);
+        Ok(())
     }
 }

@@ -45,3 +45,73 @@ harness = false
 name = "executor_contract"
 path = "tests/executor_contract.rs"
 harness = false
+
+[[test]]
+name = "condition_retry_contract"
+path = "tests/condition_retry_contract.rs"
+harness = false
+
+[[test]]
+name = "condition_timeout_contract"
+path = "tests/condition_timeout_contract.rs"
+harness = false
+
+[[test]]
+name = "condition_shutdown_contract"
+path = "tests/condition_shutdown_contract.rs"
+harness = false
+
+[[test]]
+name = "post_exit_context_contract"
+path = "tests/post_exit_context_contract.rs"
+harness = false
+
+[[test]]
+name = "post_exit_failure_contract"
+path = "tests/post_exit_failure_contract.rs"
+harness = false
+
+[[test]]
+name = "post_exit_timeout_contract"
+path = "tests/post_exit_timeout_contract.rs"
+harness = false
+
+[[test]]
+name = "post_exit_spawn_failure_contract"
+path = "tests/post_exit_spawn_failure_contract.rs"
+harness = false
+
+[[test]]
+name = "post_exit_shutdown_contract"
+path = "tests/post_exit_shutdown_contract.rs"
+harness = false
+
+[[test]]
+name = "post_exit_signal_contract"
+path = "tests/post_exit_signal_contract.rs"
+harness = false
+
+[[test]]
+name = "post_exit_start_failure_contract"
+path = "tests/post_exit_start_failure_contract.rs"
+harness = false
+
+[[test]]
+name = "post_exit_readiness_failure_contract"
+path = "tests/post_exit_readiness_failure_contract.rs"
+harness = false
+
+[[test]]
+name = "logger_restart_contract"
+path = "tests/logger_restart_contract.rs"
+harness = false
+
+[[test]]
+name = "logger_drain_contract"
+path = "tests/logger_drain_contract.rs"
+harness = false
+
+[[test]]
+name = "file_adapter_contract"
+path = "tests/file_adapter_contract.rs"
+harness = false

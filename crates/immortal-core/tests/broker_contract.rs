@@ -189,6 +189,37 @@ fn main() -> Result<(), Box<dyn Error>> {
         let exited = tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??;
         assert_child_exit(exited, credentialed, 0)?;
 
+        let stopped = generation(8)?;
+        let mut command = ProcessCommand::new("/bin/sleep");
+        command.argument("5");
+        client.spawn(stopped, command, STARTUP_TIMEOUT).await?;
+        assert_started(client.next_event().await?, stopped)?;
+        for (stop_signal, expected_signal) in [
+            (ProcessSignal::Stop, u8::try_from(libc::SIGSTOP)?),
+            (ProcessSignal::TerminalInput, u8::try_from(libc::SIGTTIN)?),
+            (ProcessSignal::TerminalOutput, u8::try_from(libc::SIGTTOU)?),
+        ] {
+            client
+                .signal(stopped, BrokerSignalScope::Group, stop_signal)
+                .await?;
+            assert_signal_delivered(client.next_event().await?, stopped)?;
+            let event = tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??;
+            assert_child_stopped(event, stopped, expected_signal)?;
+
+            client
+                .signal(stopped, BrokerSignalScope::Group, ProcessSignal::Continue)
+                .await?;
+            assert_signal_delivered(client.next_event().await?, stopped)?;
+            let event = tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??;
+            assert_child_continued(event, stopped)?;
+        }
+        client
+            .signal(stopped, BrokerSignalScope::Group, ProcessSignal::Terminate)
+            .await?;
+        assert_signal_delivered(client.next_event().await?, stopped)?;
+        let event = tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??;
+        assert_child_signaled(event, stopped)?;
+
         let task = BrokerTaskId::new(1).ok_or("invalid auxiliary task ID")?;
         client
             .spawn_task(task, ProcessCommand::new("/bin/true"), STARTUP_TIMEOUT)
@@ -210,6 +241,47 @@ fn main() -> Result<(), Box<dyn Error>> {
             event => {
                 return Err(io::Error::other(format!(
                     "expected auxiliary task completion, received {event:?}"
+                ))
+                .into());
+            }
+        }
+
+        let killed_task = BrokerTaskId::new(2).ok_or("invalid auxiliary task ID")?;
+        let mut command = ProcessCommand::new("/bin/sleep");
+        command.argument("5");
+        client
+            .spawn_task(killed_task, command, STARTUP_TIMEOUT)
+            .await?;
+        match client.next_event().await? {
+            ProcessBrokerEvent::TaskStarted { task, .. } if task == killed_task => {}
+            event => {
+                return Err(io::Error::other(format!(
+                    "expected long auxiliary task start, received {event:?}"
+                ))
+                .into());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        client
+            .signal_task(killed_task, BrokerSignalScope::Group, ProcessSignal::Kill)
+            .await?;
+        match client.next_event().await? {
+            ProcessBrokerEvent::TaskSignalDelivered { task } if task == killed_task => {}
+            event => {
+                return Err(io::Error::other(format!(
+                    "expected auxiliary kill acknowledgement, received {event:?}"
+                ))
+                .into());
+            }
+        }
+        match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await?? {
+            ProcessBrokerEvent::TaskChild {
+                task,
+                event: ChildEvent::Signaled { .. },
+            } if task == killed_task => {}
+            event => {
+                return Err(io::Error::other(format!(
+                    "expected killed auxiliary task completion, received {event:?}"
                 ))
                 .into());
             }
@@ -257,6 +329,68 @@ fn assert_child_exit(
         } if generation == expected && code == expected_code => Ok(()),
         event => Err(io::Error::other(format!(
             "expected generation exit code {expected_code}, received {event:?}"
+        ))
+        .into()),
+    }
+}
+
+fn assert_signal_delivered(
+    event: ProcessBrokerEvent,
+    expected: Generation,
+) -> Result<(), Box<dyn Error>> {
+    match event {
+        ProcessBrokerEvent::SignalDelivered { generation } if generation == expected => Ok(()),
+        event => Err(io::Error::other(format!(
+            "expected generation {expected:?} signal acknowledgement, received {event:?}"
+        ))
+        .into()),
+    }
+}
+
+fn assert_child_stopped(
+    event: ProcessBrokerEvent,
+    expected: Generation,
+    expected_signal: u8,
+) -> Result<(), Box<dyn Error>> {
+    match event {
+        ProcessBrokerEvent::Child {
+            generation,
+            event: ChildEvent::Stopped { signal, .. },
+        } if generation == expected && signal == expected_signal => Ok(()),
+        event => Err(io::Error::other(format!(
+            "expected generation {expected:?} to stop from signal {expected_signal}, received {event:?}"
+        ))
+        .into()),
+    }
+}
+
+fn assert_child_continued(
+    event: ProcessBrokerEvent,
+    expected: Generation,
+) -> Result<(), Box<dyn Error>> {
+    match event {
+        ProcessBrokerEvent::Child {
+            generation,
+            event: ChildEvent::Continued { .. },
+        } if generation == expected => Ok(()),
+        event => Err(io::Error::other(format!(
+            "expected generation {expected:?} to continue, received {event:?}"
+        ))
+        .into()),
+    }
+}
+
+fn assert_child_signaled(
+    event: ProcessBrokerEvent,
+    expected: Generation,
+) -> Result<(), Box<dyn Error>> {
+    match event {
+        ProcessBrokerEvent::Child {
+            generation,
+            event: ChildEvent::Signaled { .. },
+        } if generation == expected => Ok(()),
+        event => Err(io::Error::other(format!(
+            "expected generation {expected:?} to terminate from a signal, received {event:?}"
         ))
         .into()),
     }

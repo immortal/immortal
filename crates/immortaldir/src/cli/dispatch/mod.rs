@@ -7,6 +7,7 @@ use std::{
 };
 
 use clap::ArgMatches;
+use immortal_core::reconcile::LaunchConcurrency;
 
 /// Typed `immortaldir` operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,6 +18,10 @@ pub struct Action {
     pub runtime_directory: PathBuf,
     /// Safety reconciliation interval.
     pub scan_interval_seconds: u64,
+    /// Exact `immortal` executable used for new supervisors.
+    pub supervisor_binary: PathBuf,
+    /// Validated maximum launches submitted within one dependency wave.
+    pub launch_concurrency: LaunchConcurrency,
     /// Exit after one complete reconciliation.
     pub once: bool,
     /// Print the desired plan without mutations.
@@ -53,10 +58,25 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         .get_one::<u64>("scan-interval")
         .copied()
         .ok_or(DispatchError("missing scan interval"))?;
+    let supervisor_binary = matches
+        .get_one::<String>("supervisor-binary")
+        .map(PathBuf::from)
+        .ok_or(DispatchError("missing supervisor binary"))?;
+    let launch_concurrency = match matches.get_one::<u64>("max-concurrent-starts").copied() {
+        Some(value) => usize::try_from(value)
+            .map_err(|_| DispatchError("invalid maximum concurrent starts"))
+            .and_then(|value| {
+                LaunchConcurrency::new(value)
+                    .map_err(|_| DispatchError("invalid maximum concurrent starts"))
+            })?,
+        None => LaunchConcurrency::default(),
+    };
     Ok(Action {
         directory,
         runtime_directory,
         scan_interval_seconds,
+        supervisor_binary,
+        launch_concurrency,
         once: matches.get_flag("once"),
         dry_run: matches.get_flag("dry-run"),
     })
@@ -65,6 +85,8 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
 #[cfg(test)]
 mod tests {
     use std::{error::Error, path::PathBuf};
+
+    use immortal_core::reconcile::LaunchConcurrency;
 
     use super::{Action, action};
     use crate::cli::commands;
@@ -77,6 +99,8 @@ mod tests {
             "/tmp/runtime",
             "--scan-interval",
             "30",
+            "--max-concurrent-starts",
+            "4",
             "--once",
             "--dry-run",
             "/tmp/services",
@@ -87,6 +111,8 @@ mod tests {
                 directory: PathBuf::from("/tmp/services"),
                 runtime_directory: PathBuf::from("/tmp/runtime"),
                 scan_interval_seconds: 30,
+                supervisor_binary: PathBuf::from("immortal"),
+                launch_concurrency: LaunchConcurrency::new(4)?,
                 once: true,
                 dry_run: true,
             }

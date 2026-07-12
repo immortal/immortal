@@ -95,6 +95,22 @@ change without synchronized documentation is incomplete.
 - Keep functions focused. Group cohesive mutable lifecycle state into explicit
   structs rather than passing long loose parameter lists or maps.
 - Prefer typed errors and `?` over sentinel values or lossy string errors.
+- Use idiomatic stable Rust rather than translating Java, C++, or
+  object-oriented ownership patterns. Prefer ownership and short lexical borrows
+  over shared mutable state.
+- Do not clone unless ownership must cross a boundary and the copy is justified.
+  Do not box values or introduce `Arc<Mutex<T>>` by default; document the
+  ownership or concurrency requirement when either is necessary.
+- Keep every public type reachable through one canonical path. Internal modules
+  may re-export an item while assembling that path, but users must not see
+  duplicate paths such as both `crate::Type` and `crate::module::Type`.
+- Before adding explicit lifetimes, shared ownership, locking, or nontrivial
+  allocation, explain who owns each value, where it is borrowed, why the
+  mechanism is required, and its allocation, copying, scheduling, memory, and
+  complexity costs.
+- Prefer small functions and strong domain types whose observable behavior can
+  be tested independently. Tests must prove useful properties and failure
+  behavior rather than restating implementation constants.
 - Group imports by root: standard library, external crates, then local `crate`
   or `super` modules, with a blank line between groups.
 - When importing more than one path from the same crate, use one nested import

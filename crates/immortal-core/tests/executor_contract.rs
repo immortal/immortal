@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     config.restart.backoff.max_seconds = 1;
     config.restart.backoff.jitter_percent = 0;
     let outcome = run_foreground(&config)?;
-    if outcome.state != SupervisorState::Exiting
+    if outcome.state != SupervisorState::Exited
         || outcome.last_result != Some(ChildResult::Exited(0))
         || outcome.last_start_failed
         || outcome.last_readiness_failed

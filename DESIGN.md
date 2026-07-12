@@ -29,7 +29,7 @@ abstraction rather than reaching into supervisor state.
 ### immortaldir
 
 Turns a directory of service definitions into a desired set of supervisors. It
-will reconcile current and desired state so correctness does not depend on a
+reconciles current and desired state so correctness does not depend on a
 filesystem watcher delivering every event.
 
 ## CLI architecture
@@ -69,7 +69,8 @@ dispatch and actions with contract tests.
 - `status`: bounded transport-independent supervisor observations.
 - `readiness`: the `IMMORTAL_READY_FD` token and deadline contract.
 - `runtime`: safe runtime-root and supervisor discovery policy.
-- `reconcile`: stable definition snapshots and desired-state planning.
+- `reconcile`: stable definition/applied snapshots, checked supervisor launch,
+  and desired-state planning.
 - `watch`: native notification hints plus periodic reconciliation triggers.
 - `platform`: the smallest possible Linux, macOS, and FreeBSD adaptations.
 
@@ -134,8 +135,38 @@ The controlled foreground executor acquires exclusive runtime ownership before
 the broker fork and binds its authenticated socket only after the Tokio runtime
 exists. The supervisor event loop remains the sole lifecycle owner. Explicit
 `Exit` sends a generation-bound detach request to the broker; only a successful
-detach transitions the supervisor to `Exiting`, after which the empty broker is
+detach transitions the supervisor to `Exited`, after which the empty broker is
 shut down and reaped while the service is deliberately reparented to the OS.
+
+Pre-start conditions and post-exit hooks use broker task identities rather than
+service generations, but retain the same bounded IPC, process-group isolation,
+timeout, signal, and reaping guarantees. A condition completes before a service
+generation is allocated and keeps independent backoff state. Once a service
+generation is reaped, its terminal identity remains in `Completed` while the
+post-exit hook runs. Only after hook cleanup does the event loop publish the
+already selected Backoff, Down, Failed, or Exited transition. Hook failure does
+not rewrite the service result. Supervisor shutdown cancels and reaps either
+kind of auxiliary task before broker shutdown.
+
+The post-exit command receives the resolved service execution context plus
+`IMMORTAL_EXIT_KIND`, `IMMORTAL_EXIT_STATUS`, `IMMORTAL_GENERATION`,
+`IMMORTAL_START_FAILED`, and `IMMORTAL_READINESS_FAILED`. These fields describe
+the main generation, including failed exec and readiness paths; they do not
+describe the hook's own outcome.
+
+Logging pipelines are materialized before the broker starts. The single-threaded
+broker owns stable CLOEXEC pipe masters and duplicates only the endpoints needed
+by each service or logger spawn. The Tokio supervisor owns logger restart policy
+and health but never reads or copies log bytes. Logger exec success gates the
+first service generation. A logger crash leaves its pipe identity and buffered
+bytes intact while independent exponential backoff runs. Each logger stage owns
+its failure streak; the immutable configuration is borrowed only while handling
+an event. Configured exhaustion before a service generation cancels childless
+pre-start work and publishes `Failed`. Exhaustion after a service generation is
+live changes logger health without silently stopping that service. Explicit
+start operations reset failed logger stages. Final shutdown closes broker
+writer masters, permits bounded EOF drain, then signals logger groups from
+downstream to upstream before broker reaping.
 
 ### Required `immortal/fork` contract
 
@@ -207,14 +238,42 @@ have black-box contracts.
 Milestone 4 is implemented for the controlled foreground path. Runtime locking,
 stale-socket safety, peer-authenticated bounded serving, optimistic generation
 matching, all lifecycle operations, raw signal delivery, live-child detach, and
-complete status publication share the same serialized executor. Logging health
-is correctly reported as not configured until milestone 3 connects logger
-chains; `immortaldir` operational reconciliation remains gated.
+complete status publication share the same serialized executor. Logger
+Starting, Ready, Backoff, and Failed health is published from the same owner;
+bounded exhaustion and explicit operator recovery are contract-tested.
 
-The descriptor-readiness portion of milestone 3 is implemented. For each
+The readiness and lifecycle-hook portions of milestone 3 are implemented. For each
 `notify-fd` generation the broker creates a CLOEXEC socket pair, maps the child
 endpoint to descriptor 3, publishes `IMMORTAL_READY_FD=3`, and monitors the
 other endpoint on its current-thread Tokio runtime. Exact-token success,
 invalid input, early close, and timeout are generation-bound broker events;
 failure stops the group and feeds restart policy without treating a PID as
-identity. Hooks and logger chains remain pending.
+identity. Pre-start conditions have independent bounded retry policy. Post-exit
+hooks run after reaping with typed exit, signal, generation, exec-failure, and
+readiness-failure context; hook failure, timeout, and shutdown cleanup are
+contract-tested. Broker-owned logger chains now cover external commands,
+replaceable file adapters, stable pipes across logger failure, combined and
+separate streams, multi-stage passthrough, status, EOF drain, and bounded
+downstream-first shutdown.
+
+The sequential portion of milestone 5 is operational. `immortaldir` creates
+one checked launcher broker before Tokio, compares complete scans with live
+authenticated supervisors, and persists normalized launch and applied-state
+snapshots below the owner-only runtime root. It starts missing definitions,
+preserves unchanged and operator-stopped supervisors, applies valid changes,
+stops disabled services, and halts only confirmed deletions. Replacement waits
+for both control-socket disappearance and advisory-lock release. An active lock
+without a control socket is deferred and retried rather than guessed from PID
+metadata; an exited enabled supervisor is recreated after confirmed lock
+release. Typed failed mutations remain pending for later scans while independent
+services continue in the current scan. Independent starts are submitted as
+bounded broker task batches within deterministic dependency waves; later waves
+wait for Ready, and later dependency failure does not cascade.
+Deletion-confirmation state across `immortaldir` restarts remains pending.
+
+Portable start conditions remain supervisor policy, not directory policy. A
+checked daemon may publish `WaitingCondition` while its broker retries the
+condition with independent backoff; `immortaldir` waits for Ready before
+advancing dependent waves. The operational contract proves that failed
+conditions leave the service start counter at zero and that later success
+unblocks reconciliation.

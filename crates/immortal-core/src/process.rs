@@ -10,7 +10,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::{self, Display, Formatter},
     io,
-    os::fd::{OwnedFd, RawFd},
+    os::fd::{AsRawFd, OwnedFd, RawFd},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     time::Duration,
@@ -21,6 +21,9 @@ use crate::config::{EnvironmentMode, ServiceConfig};
 mod broker;
 mod broker_protocol;
 
+pub(crate) use broker::{
+    BrokerLoggerId, BrokerLoggerPipeline, BrokerLoggingPlan, start_process_broker_with_logging,
+};
 pub use broker::{
     BrokerSignalScope, BrokerTaskId, ProcessBrokerClient, ProcessBrokerEndpoint,
     ProcessBrokerError, ProcessBrokerEvent, ReadinessFailure, start_process_broker,
@@ -366,6 +369,45 @@ impl ProcessCommand {
             environment,
             working_directory: config.working_directory.clone(),
             credentials: resolve_credentials(config.user.as_deref())?,
+        })
+    }
+
+    /// Build a lifecycle command with the service's resolved execution context.
+    ///
+    /// The environment, working directory, and credentials are copied once
+    /// during supervisor preparation. Repeated attempts then use the same
+    /// deterministic inputs as the service command.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidInput` when the argv is empty, or `NotFound` when a bare
+    /// executable cannot be resolved from the service environment.
+    pub(crate) fn from_lifecycle(command: &[String], service: &Self) -> io::Result<Self> {
+        let (program, arguments) = command.split_first().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "lifecycle command is empty")
+        })?;
+        Self::from_lifecycle_os(
+            OsStr::new(program),
+            arguments.iter().map(OsString::from).collect(),
+            service,
+        )
+    }
+
+    pub(crate) fn from_lifecycle_os(
+        program: &OsStr,
+        arguments: Vec<OsString>,
+        service: &Self,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            program: resolve_program(
+                program,
+                &service.environment,
+                service.working_directory.as_deref(),
+            )?,
+            arguments,
+            environment: service.environment.clone(),
+            working_directory: service.working_directory.clone(),
+            credentials: service.credentials.clone(),
         })
     }
 
@@ -737,6 +779,41 @@ pub struct SpawnedProcess {
     group: ProcessGroupId,
 }
 
+/// One owned descriptor explicitly permitted to survive child execution.
+///
+/// Descriptors not present in this plan are closed by the canonical `fork`
+/// boundary before `execve`. A descriptor may retain its current number or be
+/// mapped to a deliberate child-facing number.
+#[derive(Debug)]
+pub struct ProcessDescriptor {
+    source: OwnedFd,
+    target: RawFd,
+}
+
+impl ProcessDescriptor {
+    /// Preserve an owned descriptor at its current number in the child.
+    #[must_use]
+    pub fn inherit(source: OwnedFd) -> Self {
+        let target = source.as_raw_fd();
+        Self { source, target }
+    }
+
+    /// Map an owned descriptor to an explicit child-facing number.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidInput` when the requested descriptor number is negative.
+    pub fn map(source: OwnedFd, target: RawFd) -> io::Result<Self> {
+        if target < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "child descriptor target must not be negative",
+            ));
+        }
+        Ok(Self { source, target })
+    }
+}
+
 impl SpawnedProcess {
     /// Return the main direct child.
     #[must_use]
@@ -869,13 +946,22 @@ pub fn spawn(
     command: ProcessCommand,
     startup_timeout: Duration,
 ) -> Result<SpawnedProcess, SpawnError> {
-    spawn_with_descriptor(command, startup_timeout, None)
+    spawn_with_descriptors(command, startup_timeout, [])
 }
 
-fn spawn_with_descriptor(
+/// Prepare and execute one command with an explicit descriptor allow-list.
+///
+/// Only standard input/output/error and the descriptors supplied here can
+/// survive successful execution. Descriptor targets must be unique.
+///
+/// # Errors
+///
+/// Returns a stable preparation or fork failure while retaining any child that
+/// still requires broker cleanup.
+pub fn spawn_with_descriptors(
     command: ProcessCommand,
     startup_timeout: Duration,
-    descriptor: Option<(OwnedFd, RawFd)>,
+    descriptors: impl IntoIterator<Item = ProcessDescriptor>,
 ) -> Result<SpawnedProcess, SpawnError> {
     let mut prepared = fork::PreparedCommand::new(&command.program).map_err(specification_error)?;
     for argument in command.arguments {
@@ -903,9 +989,9 @@ fn spawn_with_descriptor(
             supplementary_groups,
         ));
     }
-    if let Some((source, target)) = descriptor {
+    for descriptor in descriptors {
         prepared
-            .map_descriptor(source, target)
+            .map_descriptor(descriptor.source, descriptor.target)
             .map_err(specification_error)?;
     }
     prepared.process_group(fork::ProcessGroup::New);

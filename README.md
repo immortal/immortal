@@ -67,8 +67,11 @@ the fork crate's typed `Exited`, `Signalled`, `Stopped`, and `Continued` events
 without decoding raw wait statuses or exposing fork-library types to the rest
 of Immortal. Its blocking broker mechanism also materializes direct commands,
 creates a dedicated process group, reports exec failure before start, and uses
-typed process or group signal targets. A single-threaded native contract proves
-exit, exec failure, stop/continue, group termination, bounded waits, and cleanup.
+typed process or group signal targets. Its owned descriptor allow-list preserves
+only deliberate mappings across `exec`; readiness uses the same general path.
+A single-threaded native contract proves exit, exec failure, descriptor
+inheritance and omission, stop/continue, group termination, bounded waits, and
+cleanup.
 The private broker IPC is now bounded and versioned. The supervisor addresses
 only monotonic generations across it; raw PIDs remain broker-owned observations.
 A pre-Tokio broker contract proves readiness, spawn and failure responses,
@@ -80,8 +83,8 @@ broker and optional authenticated control socket are ready. The executor also
 applies pre-resolved numeric credentials and publishes replacement-safe atomic
 supervisor/main PID files as observation only. Broker reads use one persistent
 task and bounded queue so cancellation cannot split a frame. Logger routes,
-hooks, and descriptor-tracking mode remain gated until their executor paths are
-connected.
+pre-start conditions, and post-exit hooks use the same broker boundary;
+descriptor-tracking mode remains gated.
 
 Foreground supervisors can now opt into an exact absolute service runtime
 directory with `--control-dir ROOT/SERVICE`. Immortal acquires and retains a
@@ -104,10 +107,17 @@ native review, the candidate can be released and the commit pin replaced with
 the released crate version.
 
 Dependency planning is deterministic and portable. Enabled services are
-topologically sorted into start waves; services in one wave may start
-concurrently, while the next wave waits for their requirements to become
-Ready. Missing or disabled requirements and cycles reject the plan. A
-requirement gates start only—later dependency failure does not cascade a stop.
+topologically sorted into start waves, and the next wave waits for its
+requirements to become Ready. Within a wave, `immortaldir` submits bounded
+checked-launch batches through its one pre-Tokio broker; the default limit is
+8, `--max-concurrent-starts` can select 1 through 64, and
+`IMMORTAL_MAX_CONCURRENT_STARTS` provides the equivalent environment input.
+Missing or disabled requirements and cycles reject the plan. A requirement
+gates start only—later dependency failure does not cascade a stop.
+Per-service `start_condition` execution remains inside the launched
+supervisor's process broker. `immortaldir` observes `WaitingCondition` and waits
+for Ready; failed conditions consume neither a service start nor its retry
+limits.
 
 See [DESIGN.md](DESIGN.md) for module ownership and implementation rules.
 
@@ -146,16 +156,15 @@ flowchart TB
     fork -->|reviewed Unix operations| kernel
 
     init -.->|starts| dir
-    dir -.->|planned start and reconciliation| daemon
+    dir -.->|checked launch and reconciliation| daemon
     ctl -.->|authenticated Unix control socket| daemon
     daemon -.->|broker owns, signals, and reaps| service
-    service -.->|planned stdout/stderr route| log
+    service -.->|configured stdout/stderr route| log
 ```
 
 Solid arrows are Rust/Cargo dependencies. Dashed arrows are runtime
-relationships; labels containing `planned` identify paths that remain tracked
-in the implementation checklist below. CLI crates never call `fork` directly:
-all process behavior crosses the `immortal-core::process` boundary.
+relationships. CLI crates never call `fork` directly: all process behavior
+crosses the `immortal-core::process` boundary.
 
 Each CLI follows the one-way flow:
 
@@ -191,7 +200,7 @@ behavioral compatibility. Intentional changes are documented and tested.
 | Go status JSON | Preserve equivalent information in `immortalctl --output json` |
 | Exact internal Go architecture | Do not preserve |
 
-Two open requests are explicit requirements:
+Two historical requests are explicit contracts:
 
 - [Issue #71](https://github.com/immortal/immortal/issues/71): support
   retry-until-success with `restart = on-failure`, configurable successful exit
@@ -252,7 +261,16 @@ post_exit:
   timeout_seconds: 30
 
 logging:
+  file_adapter: null      # null uses immortallog beside immortal
   combine_stderr: false
+  restart:
+    max_retries: null     # restarts after the initial logger start
+    backoff:
+      initial_seconds: 1
+      max_seconds: 60
+      multiplier: 2
+      jitter_percent: 20
+      reset_after_seconds: 60
   stdout:
     file:
       file: /var/log/api.log
@@ -280,15 +298,31 @@ before its configured deadline; fragmented writes are accepted, while invalid
 tokens, early EOF, and timeout fail that generation. The broker creates the
 CLOEXEC descriptor channel before spawning, maps only the child endpoint, and
 monitors the supervisor endpoint asynchronously without creating worker threads.
+`start_condition` runs before a generation is allocated and has its own retry
+history, so a failing dependency check cannot consume service restart limits.
+`post_exit` runs after the service process group has been reaped and before the
+selected restart, Down, Failed, or Exited transition is published. Its resolved
+service environment also contains `IMMORTAL_EXIT_KIND` (`exit` or `signal`),
+`IMMORTAL_EXIT_STATUS`, `IMMORTAL_GENERATION`, `IMMORTAL_START_FAILED`, and
+`IMMORTAL_READINESS_FAILED`. Hook exec failure or a nonzero hook result does not
+replace the service result; timeout or supervisor shutdown kills and reaps the
+hook process group.
 Descriptor tracking requires explicit lifecycle hooks and deliberately does not
 adopt a PID.
+
+`start_condition` executes through the same single-threaded process broker with
+the service's resolved environment, working directory, and credentials. Exit
+status zero permits one service generation; nonzero exit, signal termination,
+or spawn failure retries with the condition's independent backoff. A timeout
+kills and reaps the condition process group before retrying. Condition attempts
+never consume service restart limits or increment the service start count.
 
 When reading a file, Immortal resolves working directories, PID/log paths,
 hook/logger executables containing `/`, and service executables containing `/`
 before daemonization. File/PID/hook/logger paths are relative to the definition
 directory; the service executable is relative to its resolved working
 directory. Bare executable names remain unresolved for the process executor's
-future `PATH` lookup. `environment_mode: inherit` defines overrides after the
+`PATH` lookup. `environment_mode: inherit` defines overrides after the
 supervisor environment; `clear` defines an empty base with only configured
 values.
 
@@ -301,6 +335,23 @@ timestamped, and it imposes no maximum line length. Rotation syncs the live
 file, atomically renames it into an Immortal-owned archive namespace, creates a
 replacement, and enforces archive-count and aggregate-byte limits both on open
 and after rotation.
+The broker creates and retains every CLOEXEC pipe endpoint before starting a
+logger. Service and logger restarts receive duplicated endpoints, so pipe
+identity and lossless kernel backpressure remain stable. Logger exec success
+gates the first service start; logger crashes use independent capped
+exponential backoff. `logging.restart.max_retries` bounds restarts after each
+logger's initial start; `null` retries forever, and a stable runtime resets that
+logger's failure streak. Exhaustion before a service generation exists cancels
+only childless pre-start work and publishes service and logger `Failed` health.
+Exhaustion while a service is live leaves that service running and publishes
+logger `Failed` health. An accepted `start`, `once`, or `restart` resets failed
+logger stages and their retry histories. Final shutdown closes broker writer
+masters, drains to EOF, then terminates logger groups downstream-first after a
+hard deadline. A logged service currently rejects control `Exit`, because
+abandoning only the service would break ownership of its broker-backed logging
+graph; use `Halt` until whole-graph detach is implemented.
+`logging.file_adapter` may select another external adapter path; otherwise
+Immortal uses `immortallog` beside its own executable.
 
 Exactly one service source is accepted. With `--config`, direct command options
 are rejected instead of being silently merged; change the definition directly.
@@ -354,14 +405,57 @@ FSEvents, or kqueue) only as hints. Hints are nonrecursive and debounced for
 because a complete scan runs at startup and every 30 seconds regardless of
 notifications.
 
-`immortaldir --dry-run` can run once or continuously through this watcher path
-without touching supervisors. Non-dry-run reconciliation remains unavailable
-until the fork-backed process and control-server runtime is implemented.
-The continuous planner retains last-known-good definitions, treats invalid
+`immortaldir` can reconcile once or continuously. It creates one dedicated
+launcher broker before Tokio, publishes normalized launch snapshots in an
+owner-only `.definitions` directory below the runtime root, and starts each
+missing supervisor through checked `immortal --config ... --control-dir ...`
+daemon startup. Mutations use the authenticated control protocol with exact
+generation matching; replacement waits for both socket removal and release of
+the supervisor advisory lock. A held lock without a usable control socket is
+reported and retried rather than treated as absence; an unlocked stale runtime
+is reclaimed only by the normal checked supervisor acquisition path. Applied
+snapshots preserve semantic comparison and enabled/Down intent when
+`immortaldir` restarts. `--dry-run` performs the same bounded scan and planning
+without opening a broker or touching runtime state.
+
+The continuous reconciler retains last-known-good definitions, treats invalid
 replacements as present, and requires two complete scans to confirm deletion.
-Incomplete enumeration never advances deletion confirmation. Semantic
-`START`, `RESTART`, and `STOP` transitions are emitted once; unchanged and
-first-missing states are `KEEP`.
+Incomplete enumeration never advances deletion confirmation. It preserves an
+unchanged healthy supervisor, stops an enabled supervisor when the definition
+becomes disabled, relaunches on re-enable, preserves an operator-requested Down
+state across configuration changes, and halts a supervisor only after stable
+deletion. A failed service retains one typed pending mutation for a later scan
+without blocking independent services in the current scan. Operational
+stops and replacement preparation remain serialized for generation safety;
+independent checked starts run in bounded batches. Cross-restart deletion
+confirmations remain tracked work.
+
+### Boot and network ordering
+
+The host init system starts and stops `immortaldir`; Immortal does not replace
+PID 1 or duplicate machine boot policy. Use coarse OS ordering only to ensure
+the definitions/runtime filesystems and basic networking machinery exist, then
+use each service's broker-executed `start_condition` for the exact resource it
+needs. Interfaces, routes, DNS, remote peers, and credentials can change after
+boot, so “the network target ran” is not application readiness.
+
+- On Linux with systemd, install a normal `Type=simple` unit for
+  `immortaldir`. Add both `Wants=network-online.target` and
+  `After=network-online.target` only when the directory manager itself needs a
+  configured network; `network.target` alone does not mean connectivity is
+  usable. See the official
+  [systemd network-ordering guidance](https://www.freedesktop.org/software/systemd/man/257/rc-local.service.html).
+- On FreeBSD, install an `rc.d` wrapper with `# PROVIDE: immortaldir`, a
+  site-appropriate `# REQUIRE:` line such as `NETWORKING SERVERS`, and
+  `# KEYWORD: shutdown`, then enable it through `rc.conf`. `rcorder` establishes
+  ordering, not proof that a required daemon successfully started; the service
+  condition remains authoritative. See FreeBSD's
+  [rc.d scripting guide](https://docs.freebsd.org/en/articles/rc-scripting/).
+- On macOS, install a system LaunchDaemon whose `ProgramArguments` execute
+  `immortaldir`, with `RunAtLoad` and `KeepAlive` for the long-running watcher.
+  Do not model a dynamic interface as a permanent dependency; Apple explicitly
+  notes that network availability can come and go. See
+  [Creating launchd jobs](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
 
 ### Exit status contract
 
@@ -439,7 +533,7 @@ failure tests, and required CI pass.
 - [x] Bound and version broker IPC without accepting raw PID targets.
 - [x] Daemonize before creating Tokio or any other thread.
 - [x] Implement double-fork/session detachment and safe stdio redirection.
-- [ ] Preserve inherited descriptors through an explicit allow-list.
+- [x] Preserve inherited descriptors through an explicit allow-list.
 - [x] Report daemon startup success or failure to the invoking process.
 - [x] Hold the service lock descriptor for the supervisor lifetime.
 - [x] Remove stale sockets only after acquiring the service lock.
@@ -452,8 +546,9 @@ failure tests, and required CI pass.
 
 #### State and restart policy
 
-- [ ] Implement `Initializing`, `WaitingCondition`, `Starting`, `Running`,
+- [x] Model and encode `Initializing`, `WaitingCondition`, `Starting`, `Running`,
   `Ready`, `Paused`, `Stopping`, `Backoff`, `Completed`, `Failed`, and `Exited`.
+- [ ] Publish `Initializing` while runtime resources are being acquired.
 - [x] Keep desired state separate from observed state.
 - [x] Implement Up, Down, Once, Restart, Halt, and Exit transitions.
 - [x] Implement `always`, `on-failure`, and `never` restart policies.
@@ -471,8 +566,8 @@ failure tests, and required CI pass.
 - [x] Define and test the bounded `IMMORTAL_READY_FD` token and timeout reader.
 - [x] Create, inherit, and monitor the readiness descriptor through `fork`.
 - [x] Define and validate argv conditions with independent timeout/backoff.
-- [ ] Execute pre-start conditions through the process broker.
-- [ ] Run bounded post-exit hooks with exit/signal context.
+- [x] Execute pre-start conditions through the process broker.
+- [x] Run bounded post-exit hooks with exit/signal and generation context.
 - [ ] Implement descriptor-based fghack lifetime tracking.
 - [ ] Require stop/reload hooks for fghack and reject raw adopted-PID signals.
 - [ ] Document foreground invocations for common self-daemonizing software.
@@ -525,7 +620,7 @@ failure tests, and required CI pass.
 - [x] Reject multiple conflicting legacy signal flags.
 - [x] Reject absent, exited, and stale-generation targets (fghack remains gated).
 - [x] Support explicit `--scope main|group`.
-- [ ] Confirm STOP/TTIN/TTOU/CONT through child wait events.
+- [x] Confirm STOP/TTIN/TTOU/CONT through child wait events.
 - [x] Preserve the signal exit reason for restart-policy decisions.
 
 #### Control protocol
@@ -560,51 +655,54 @@ failure tests, and required CI pass.
 - [x] Recover from dropped and coalesced filesystem notifications.
 - [x] Implement mutation-free `--once --dry-run` output.
 - [x] Never remove unknown runtime files or directories.
-- [ ] Detect stale supervisors via lock/control state rather than PID guessing.
+- [x] Detect stale supervisors via lock/control state rather than PID guessing.
 
 #### Desired state and dependencies
 
-- [ ] Start enabled definitions missing from runtime state.
-- [ ] Preserve healthy unchanged supervisors.
+- [x] Start enabled definitions missing from runtime state.
+- [x] Preserve healthy unchanged supervisors.
 - [x] Plan restart only after a valid semantic configuration change.
-- [ ] Apply a planned restart through the supervisor control boundary.
+- [x] Apply a planned restart through the supervisor control boundary.
 - [x] Confirm stable deletion across two complete authoritative scans.
-- [ ] Stop and exit a service after confirmed deletion.
+- [x] Stop and exit a service after confirmed deletion.
 - [x] Retain persistent `enabled: false` in desired state.
-- [ ] Apply disabled desired state to a live supervisor.
-- [ ] Preserve an operator-requested Down state while its supervisor lives.
-- [ ] Restart an exited supervisor whose definition remains enabled.
+- [x] Apply disabled desired state to a live supervisor.
+- [x] Preserve an operator-requested Down state while its supervisor lives.
+- [x] Restart an exited supervisor whose definition remains enabled.
 - [x] Prevent duplicate semantic plan actions from watcher and periodic scans.
-- [ ] Retry and deduplicate operational mutations after partial failure.
-- [ ] Bound concurrent starts/restarts and isolate per-service failures.
+- [x] Retain and retry one pending mutation per service after partial failure.
+- [x] Isolate per-service mutation failures within a complete scan.
+- [x] Bound concurrent starts/restarts.
 - [x] Validate `requires`, missing dependencies, and cycles.
-- [ ] Start independent services concurrently.
-- [ ] Gate dependent starts on Ready without later cascading stops.
-- [ ] Keep waiting dependents from consuming retry limits.
+- [x] Start independent services concurrently.
+- [x] Gate dependent starts on Ready without later cascading stops.
+- [x] Keep waiting dependents from consuming retry limits.
 - [x] Plan portable start conditions with independent timeout/backoff.
-- [ ] Gate operational starts on broker-executed condition success.
-- [ ] Document Linux, FreeBSD, and macOS boot/network ordering.
-- [ ] Add issue #68 readiness and condition regression fixtures.
+- [x] Gate operational starts on broker-executed condition success.
+- [x] Document Linux, FreeBSD, and macOS boot/network ordering.
+- [x] Add issue #68 readiness and condition regression fixtures.
 
 ### Logging
 
-- [ ] Supervise external logger commands as independent children.
+- [x] Supervise external logger commands as independent children.
 - [x] Use argv rather than implicit shell strings.
-- [ ] Confirm logger readiness before starting its service.
-- [ ] Preserve stable pipe endpoints across service/logger restarts.
-- [ ] Restart service and logger independently without losing the pipe.
-- [ ] Expose logger failure/backoff in status.
-- [ ] Default to lossless backpressure instead of silent dropping.
-- [ ] Stop the service before draining and stopping its logging chain.
+- [x] Confirm logger exec success before starting its service.
+- [x] Preserve stable pipe endpoints across service/logger restarts.
+- [x] Restart service and logger independently without losing the pipe.
+- [x] Expose logger Starting, Ready, and Backoff health in status.
+- [x] Add configurable logger retry exhaustion and expose Failed health.
+- [x] Default to lossless backpressure instead of silent dropping.
+- [x] Stop the service before draining and stopping its logging chain.
 - [x] Provide a small, replaceable `immortallog` file compatibility adapter.
-- [ ] Support legacy combined output, separate stderr, and file-plus-command.
-- [ ] Keep byte fan-out out of the supervisor.
+- [x] Support combined output, separate stderr, and file-plus-command chains.
+- [x] Keep byte fan-out out of the supervisor.
 - [x] Sync before rotation and use atomic timestamped archives.
 - [x] Recover interrupted rotation and enforce count/total-size retention.
 - [x] Inject disk-write/sync failure and broken downstream pipes.
 - [x] Stream huge and partial lines without unbounded line buffering.
-- [ ] Test real permission failures, logger crash loops, pipe backpressure, and
-  shutdown drain timeouts.
+- [x] Test a real logger crash loop through exhaustion and manual recovery.
+- [ ] Test real permission failures, pipe backpressure, and shutdown drain
+  timeouts.
 
 ## Performance baselines
 

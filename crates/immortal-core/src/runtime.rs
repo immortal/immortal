@@ -309,6 +309,42 @@ pub fn discover(root: &Path) -> Result<DiscoveryResult, RuntimeRootError> {
     Ok(result)
 }
 
+/// Report whether a validated service directory still has a live lock owner.
+///
+/// This probes the advisory lock itself rather than PID files or socket
+/// presence. Acquiring an unlocked probe is immediately undone when the local
+/// file handle is dropped; no runtime entry is created or removed.
+///
+/// # Errors
+///
+/// Returns an error for an unsafe root/service/lock entry or lock I/O failure.
+pub fn supervisor_is_active(directory: &Path) -> io::Result<bool> {
+    let (root, _name) = validate_service_path(directory)?;
+    let root_metadata = validate_root(root)?;
+    let directory_metadata = match fs::symlink_metadata(directory) {
+        Ok(_) => validate_service_directory(directory, &root_metadata)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let path = directory.join(SUPERVISOR_LOCK_NAME);
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    let lock = match options.open(&path) {
+        Ok(lock) => lock,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    validate_lock_identity(&path, &lock, &directory_metadata)?;
+    match lock.try_lock() {
+        Ok(()) => Ok(false),
+        Err(TryLockError::WouldBlock) => Ok(true),
+        Err(TryLockError::Error(error)) => Err(error),
+    }
+}
+
 fn validate_root(root: &Path) -> io::Result<Metadata> {
     if !root.is_absolute() {
         return Err(io::Error::new(
@@ -444,6 +480,7 @@ mod tests {
 
     use super::{
         CONTROL_SOCKET_NAME, DiscoveryProblemKind, RuntimeOwner, SUPERVISOR_LOCK_NAME, discover,
+        supervisor_is_active,
     };
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -538,6 +575,7 @@ mod tests {
         let root = TestDirectory::new()?;
         let service = root.path().join("api");
         let owner = RuntimeOwner::acquire(&service)?;
+        assert!(supervisor_is_active(&service)?);
         assert_eq!(owner.directory(), service);
         assert_eq!(owner.socket(), service.join(CONTROL_SOCKET_NAME));
         assert_eq!(
@@ -562,6 +600,7 @@ mod tests {
         assert!(owner.socket().exists());
 
         drop(owner);
+        assert!(!supervisor_is_active(&service)?);
         let replacement = RuntimeOwner::acquire(&service)?;
         assert!(!replacement.socket().exists());
         Ok(())

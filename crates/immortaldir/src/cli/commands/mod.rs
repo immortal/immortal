@@ -14,9 +14,10 @@ pub fn new() -> Command {
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .long_about(
-            "Reconcile immortal service definitions from a directory. Dry-run mode performs \
-             bounded scans and can watch for changes; supervisor mutations remain gated until \
-             the process-control runtime is implemented.",
+            "Reconcile immortal service definitions from a directory. Each authoritative scan \
+             can start missing supervisors, preserve unchanged or operator-stopped services, \
+             apply valid changes, stop disabled services, and halt confirmed deletions. Dry-run \
+             mode reports the same desired-state plan without changing supervisors.",
         )
         .after_help(
             "Examples:
@@ -31,6 +32,8 @@ pub fn new() -> Command {
         .arg(arg_directory())
         .arg(arg_runtime_dir())
         .arg(arg_scan_interval())
+        .arg(arg_max_concurrent_starts())
+        .arg(arg_supervisor_binary())
         .arg(arg_once())
         .arg(arg_dry_run())
 }
@@ -68,6 +71,31 @@ fn arg_scan_interval() -> Arg {
         .default_value("30")
         .help("Maximum delay between reconciliation scans")
         .value_parser(clap::value_parser!(u64).range(1..))
+}
+
+fn arg_max_concurrent_starts() -> Arg {
+    Arg::new("max-concurrent-starts")
+        .long("max-concurrent-starts")
+        .value_name("COUNT")
+        .env("IMMORTAL_MAX_CONCURRENT_STARTS")
+        .help(format!(
+            "Maximum supervisors launched concurrently within one dependency wave (default: {})",
+            immortal_core::reconcile::DEFAULT_MAX_CONCURRENT_LAUNCHES
+        ))
+        .value_parser(
+            clap::value_parser!(u64)
+                .range(1..=immortal_core::reconcile::MAX_CONCURRENT_LAUNCHES as u64),
+        )
+}
+
+fn arg_supervisor_binary() -> Arg {
+    Arg::new("supervisor-binary")
+        .long("supervisor-binary")
+        .value_name("PATH")
+        .value_hint(ValueHint::ExecutablePath)
+        .env("IMMORTAL_BIN")
+        .default_value("immortal")
+        .help("Executable used to launch new immortal supervisors")
 }
 
 fn arg_once() -> Arg {
@@ -182,6 +210,8 @@ mod tests {
             "/tmp/run",
             "--scan-interval",
             "10",
+            "--max-concurrent-starts",
+            "4",
             "--once",
             "--dry-run",
             "/tmp/services",
@@ -192,6 +222,7 @@ mod tests {
         };
 
         assert_eq!(matches.get_one::<u64>("scan-interval"), Some(&10));
+        assert_eq!(matches.get_one::<u64>("max-concurrent-starts"), Some(&4));
         assert!(matches.get_flag("once"));
         assert!(matches.get_flag("dry-run"));
     }
@@ -204,6 +235,22 @@ mod tests {
             result.err().map(|error| error.kind()),
             Some(ErrorKind::ValueValidation)
         );
+    }
+
+    #[test]
+    fn concurrent_start_limit_is_bounded() {
+        for value in ["0", "65"] {
+            let result = new().try_get_matches_from([
+                "immortaldir",
+                "--max-concurrent-starts",
+                value,
+                "/tmp/services",
+            ]);
+            assert_eq!(
+                result.err().map(|error| error.kind()),
+                Some(ErrorKind::ValueValidation)
+            );
+        }
     }
 
     #[test]

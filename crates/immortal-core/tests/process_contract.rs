@@ -6,13 +6,19 @@
 
 use std::{
     error::Error,
-    io, thread,
+    ffi::OsString,
+    fs::{self, File, OpenOptions},
+    io,
+    os::fd::{AsRawFd, OwnedFd},
+    path::{Path, PathBuf},
+    thread,
     time::{Duration, Instant},
 };
 
 use immortal_core::process::{
-    ChildEvent, ProcessCommand, ProcessSignal, SignalTarget, SpawnError, SpawnFailure, SpawnStage,
-    SpawnedProcess, reap_any_event, signal, spawn,
+    ChildEvent, ProcessCommand, ProcessDescriptor, ProcessEnvironment, ProcessSignal, SignalTarget,
+    SpawnError, SpawnFailure, SpawnStage, SpawnedProcess, reap_any_event, signal, spawn,
+    spawn_with_descriptors,
 };
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
@@ -22,8 +28,63 @@ const POLL_INTERVAL: Duration = Duration::from_millis(5);
 fn main() -> Result<(), Box<dyn Error>> {
     exits_with_reported_status()?;
     exec_failure_is_not_reported_as_a_started_child()?;
+    explicit_descriptor_allow_list_is_enforced()?;
     stop_continue_and_group_termination_are_observable()?;
     Ok(())
+}
+
+fn explicit_descriptor_allow_list_is_enforced() -> Result<(), Box<dyn Error>> {
+    let files = DescriptorFiles::new()?;
+    let inherited = writable_file(files.inherited())?;
+    let inherited_descriptor = inherited.as_raw_fd();
+    let omitted = writable_file(files.omitted())?;
+    let omitted_descriptor = omitted.as_raw_fd();
+
+    let mut environment = ProcessEnvironment::new();
+    environment.insert(
+        OsString::from("INHERITED_FD"),
+        OsString::from(inherited_descriptor.to_string()),
+    );
+    environment.insert(
+        OsString::from("OMITTED_FD"),
+        OsString::from(omitted_descriptor.to_string()),
+    );
+    let mut command = ProcessCommand::new("/bin/sh");
+    command
+        .argument("-c")
+        .argument(
+            "if eval \"printf leaked >&$OMITTED_FD\" 2>/dev/null; then exit 91; fi; \
+             eval \"printf preserved >&$INHERITED_FD\"",
+        )
+        .environment(environment);
+    let descriptor = ProcessDescriptor::inherit(OwnedFd::from(inherited));
+    let mut child = ChildGuard::new(spawn_with_descriptors(
+        command,
+        STARTUP_TIMEOUT,
+        [descriptor],
+    )?);
+    let event = child.wait_for(ChildEvent::is_terminal, EVENT_TIMEOUT)?;
+    if !matches!(event, ChildEvent::Exited { code: 0, .. }) {
+        return Err(
+            io::Error::other(format!("descriptor allow-list child failed: {event:?}")).into(),
+        );
+    }
+    drop(omitted);
+    if fs::read(files.inherited())? != b"preserved" {
+        return Err(io::Error::other("explicitly inherited descriptor was not preserved").into());
+    }
+    if !fs::read(files.omitted())?.is_empty() {
+        return Err(io::Error::other("omitted descriptor survived child execution").into());
+    }
+    Ok(())
+}
+
+fn writable_file(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(path)
 }
 
 fn exits_with_reported_status() -> Result<(), Box<dyn Error>> {
@@ -199,5 +260,45 @@ impl Drop for ChildGuard {
                 Err(_) => return,
             }
         }
+    }
+}
+
+struct DescriptorFiles {
+    inherited: PathBuf,
+    omitted: PathBuf,
+}
+
+impl DescriptorFiles {
+    fn new() -> io::Result<Self> {
+        let directory = std::env::temp_dir();
+        let process = std::process::id();
+        let inherited = directory.join(format!("immortal-inherited-descriptor-{process}"));
+        let omitted = directory.join(format!("immortal-omitted-descriptor-{process}"));
+        remove_if_present(&inherited)?;
+        remove_if_present(&omitted)?;
+        Ok(Self { inherited, omitted })
+    }
+
+    fn inherited(&self) -> &Path {
+        &self.inherited
+    }
+
+    fn omitted(&self) -> &Path {
+        &self.omitted
+    }
+}
+
+impl Drop for DescriptorFiles {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.inherited);
+        let _ = fs::remove_file(&self.omitted);
+    }
+}
+
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }

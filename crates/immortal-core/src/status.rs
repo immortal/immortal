@@ -8,24 +8,30 @@ pub const MAX_STATUS_ARGUMENTS: usize = 1024;
 /// Lifecycle state without embedding generation-specific process identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ServiceState {
+    /// Runtime resources are being initialized.
+    Initializing,
     /// No service child exists.
     Down,
     /// Dependencies or a start condition are pending.
-    Waiting,
+    WaitingCondition,
     /// A generation is being created.
     Starting,
     /// The child executed but has not declared readiness.
-    Started,
+    Running,
     /// The current generation is ready.
     Ready,
+    /// The owned generation is paused by job control.
+    Paused,
     /// The owned process group is being stopped.
     Stopping,
     /// A bounded restart delay is pending.
     Backoff,
+    /// Post-exit work is running for a completed generation.
+    Completed,
     /// Automatic restart stopped after a configured failure.
     Failed,
     /// Supervisor shutdown is in progress.
-    Exiting,
+    Exited,
 }
 
 impl ServiceState {
@@ -34,42 +40,51 @@ impl ServiceState {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Down => "down",
-            Self::Waiting => "waiting",
+            Self::Initializing => "initializing",
+            Self::WaitingCondition => "waiting-condition",
             Self::Starting => "starting",
-            Self::Started => "started",
+            Self::Running => "running",
             Self::Ready => "ready",
+            Self::Paused => "paused",
             Self::Stopping => "stopping",
             Self::Backoff => "backoff",
+            Self::Completed => "completed",
             Self::Failed => "failed",
-            Self::Exiting => "exiting",
+            Self::Exited => "exited",
         }
     }
 
     pub(crate) const fn code(self) -> u8 {
         match self {
             Self::Down => 1,
-            Self::Waiting => 2,
+            Self::WaitingCondition => 2,
             Self::Starting => 3,
-            Self::Started => 4,
+            Self::Running => 4,
             Self::Ready => 5,
             Self::Stopping => 6,
             Self::Backoff => 7,
             Self::Failed => 8,
-            Self::Exiting => 9,
+            Self::Exited => 9,
+            Self::Initializing => 10,
+            Self::Paused => 11,
+            Self::Completed => 12,
         }
     }
 
     pub(crate) const fn from_code(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Down),
-            2 => Some(Self::Waiting),
+            2 => Some(Self::WaitingCondition),
             3 => Some(Self::Starting),
-            4 => Some(Self::Started),
+            4 => Some(Self::Running),
             5 => Some(Self::Ready),
             6 => Some(Self::Stopping),
             7 => Some(Self::Backoff),
             8 => Some(Self::Failed),
-            9 => Some(Self::Exiting),
+            9 => Some(Self::Exited),
+            10 => Some(Self::Initializing),
+            11 => Some(Self::Paused),
+            12 => Some(Self::Completed),
             _ => None,
         }
     }
@@ -251,19 +266,26 @@ impl StatusSnapshot {
     #[must_use]
     pub fn from_machine(machine: &StateMachine) -> Self {
         let state = match machine.state() {
+            SupervisorState::Initializing => ServiceState::Initializing,
             SupervisorState::Down => ServiceState::Down,
-            SupervisorState::Waiting => ServiceState::Waiting,
+            SupervisorState::WaitingCondition => ServiceState::WaitingCondition,
             SupervisorState::Starting(_) => ServiceState::Starting,
-            SupervisorState::Started(_) => ServiceState::Started,
+            SupervisorState::Running(_) => ServiceState::Running,
             SupervisorState::Ready(_) => ServiceState::Ready,
+            SupervisorState::Paused { .. } => ServiceState::Paused,
             SupervisorState::Stopping(_) => ServiceState::Stopping,
             SupervisorState::Backoff { .. } => ServiceState::Backoff,
+            SupervisorState::Completed(_) => ServiceState::Completed,
             SupervisorState::Failed(_) => ServiceState::Failed,
-            SupervisorState::Exiting => ServiceState::Exiting,
+            SupervisorState::Exited => ServiceState::Exited,
         };
         let readiness = match machine.state() {
-            SupervisorState::Started(_) => ReadinessStatus::Waiting,
-            SupervisorState::Ready(_) => ReadinessStatus::Ready,
+            SupervisorState::Running(_) | SupervisorState::Paused { ready: false, .. } => {
+                ReadinessStatus::Waiting
+            }
+            SupervisorState::Ready(_) | SupervisorState::Paused { ready: true, .. } => {
+                ReadinessStatus::Ready
+            }
             SupervisorState::Failed(FailureReason::ReadinessTimeout) => ReadinessStatus::TimedOut,
             _ => ReadinessStatus::NotApplicable,
         };
@@ -319,5 +341,37 @@ pub(crate) const fn desired_state_from_code(code: u8) -> Option<DesiredState> {
         4 => Some(DesiredState::Halt),
         5 => Some(DesiredState::Exit),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ServiceState;
+
+    #[test]
+    fn service_state_codes_are_unique_and_round_trip() {
+        let states = [
+            ServiceState::Initializing,
+            ServiceState::Down,
+            ServiceState::WaitingCondition,
+            ServiceState::Starting,
+            ServiceState::Running,
+            ServiceState::Ready,
+            ServiceState::Paused,
+            ServiceState::Stopping,
+            ServiceState::Backoff,
+            ServiceState::Completed,
+            ServiceState::Failed,
+            ServiceState::Exited,
+        ];
+        let mut codes = states.map(ServiceState::code);
+        codes.sort_unstable();
+        assert_eq!(codes, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+
+        for state in states {
+            assert_eq!(ServiceState::from_code(state.code()), Some(state));
+        }
+        assert_eq!(ServiceState::from_code(0), None);
+        assert_eq!(ServiceState::from_code(13), None);
     }
 }
