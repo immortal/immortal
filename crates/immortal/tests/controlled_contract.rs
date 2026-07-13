@@ -1,4 +1,7 @@
 //! Black-box contracts for one authenticated, runtime-owned foreground supervisor.
+//!
+//! Lifecycle coverage includes final logger EOF drain before Halt lets the
+//! supervisor exit.
 
 use std::{
     error::Error,
@@ -36,7 +39,44 @@ fn main() -> Result<(), Box<dyn Error>> {
     prove_explicit_exit_leaves_the_child(binary)?;
     prove_initializing_is_published_until_loggers_are_ready(binary)?;
     prove_direct_logger_permission_denial(binary)?;
+    prove_halt_drains_logger(binary)?;
     prove_logger_retry_exhaustion_and_recovery(binary)
+}
+
+fn prove_halt_drains_logger(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let runtime = RuntimeDirectory::new_named("halt-drain")?;
+    let written = runtime.root().join("service-wrote");
+    let output = runtime.root().join("logger-output");
+    let config = ConfigFile::new(
+        "halt-drain",
+        &format!(
+            "version: 2\ncommand:\n  - /bin/sh\n  - -c\n  - |\n      printf 'drained-before-halt\\n'\n      : > \"$WRITTEN\"\n      exec /bin/sleep 30\nenvironment:\n  WRITTEN: '{}'\nlogging:\n  combine_stderr: true\n  stdout:\n    logger: [/bin/sh, -c, \"cat > '{}'\"]\n",
+            path_str(&written)?,
+            path_str(&output)?,
+        ),
+    )?;
+    let supervisor = ChildGuard::new(spawn_immortal(binary, &config, runtime.service())?);
+    runtime.wait_for_socket(COMMAND_TIMEOUT)?;
+    let generation = wait_for_state(runtime.socket(), ServiceState::Ready, None, COMMAND_TIMEOUT)?;
+    wait_for_file(&written, COMMAND_TIMEOUT)?;
+
+    let halt = lifecycle_request(
+        runtime.socket(),
+        runtime.service_name(),
+        Operation::Halt,
+        generation,
+    )?;
+    require_ok(&halt, "logger-draining halt")?;
+    assert_status(
+        supervisor.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "logger-draining supervisor halt",
+    )?;
+    let actual = fs::read_to_string(output)?;
+    if actual != "drained-before-halt\n" {
+        return Err(format!("Halt returned before logger drain: {actual:?}").into());
+    }
+    Ok(())
 }
 
 fn prove_descriptor_tracking_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {

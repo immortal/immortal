@@ -182,10 +182,10 @@ impl From<TransitionError> for ExecutorError {
 
 /// Run one service through a broker created before the current-thread Tokio runtime.
 ///
-/// This first operational executor supports direct foreground commands,
-/// deterministic environment/path resolution, immediate readiness, restart
-/// policy, bounded backoff, and complete broker shutdown. Features whose
-/// lifecycle is not yet connected fail closed through [`ExecutorError::Unsupported`].
+/// The executor owns service groups, readiness, hooks, logger chains, restart
+/// policy, bounded backoff, and complete broker shutdown. Configuration which
+/// requires a directory manager or persistent control owner fails closed
+/// through [`ExecutorError::Unsupported`].
 ///
 /// # Errors
 ///

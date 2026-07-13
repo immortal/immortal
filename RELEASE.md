@@ -26,7 +26,8 @@ records its crates.io source and checksum.
    both fuzz targets for the exact candidate commit.
 5. Run `cargo build --workspace --release --locked` and exercise every binary's
    short and long version output from the resulting artifacts.
-6. Validate strict version 2 examples with `immortal --check-config` and run an
+6. Run `scripts/dev-ssh scripts/rehearse-upgrade` to validate the strict
+   version 2 example with `immortal --check-config` and an
    `immortaldir --once --dry-run` upgrade rehearsal.
 7. Verify that no test or rehearsal leaves a child, process group, socket, lock,
    PID file, runtime directory, or temporary definition behind.

@@ -327,6 +327,12 @@ before its configured deadline; fragmented writes are accepted, while invalid
 tokens, early EOF, and timeout fail that generation. The broker creates the
 CLOEXEC descriptor channel before spawning, maps only the child endpoint, and
 monitors the supervisor endpoint asynchronously without creating worker threads.
+
+The repository includes a minimal portable definition at
+[`examples/services/sleep.yml`](examples/services/sleep.yml). Validate it with
+`immortal --config examples/services/sleep.yml --check-config`, or exercise
+directory planning without creating runtime state with
+`immortaldir --once --dry-run examples/services`.
 `start_condition` runs before a generation is allocated and has its own retry
 history, so a failing dependency check cannot consume service restart limits.
 `post_exit` runs after the service generation has ended and before the
@@ -422,6 +428,13 @@ the input. Without `--config`, CLI defaults are resolved first and
 explicit CLI values override only those defaults. Arguments after the child
 command begins are always child argv, even when they look like Immortal flags.
 
+The released `--env-dir`, `--follow-pid`, `--log-file`, `--logger`, and `--name`
+flags remain visible to inventory old invocations but deliberately return the
+Unavailable exit class when used. Migrate environment and logging behavior to
+strict version 2 fields. Replace PID-following with foreground execution or the
+documented descriptor-tracking contract; runtime identity never comes from a
+PID file.
+
 ### Runtime and control boundary
 
 The system runtime root is `/run/immortal` on Linux and `/var/run/immortal` on
@@ -503,18 +516,22 @@ without opening a broker or touching runtime state.
 
 The continuous reconciler retains last-known-good definitions, treats invalid
 replacements as present, and requires two complete scans to confirm deletion.
-Incomplete enumeration never advances deletion confirmation. It preserves an
-unchanged healthy supervisor, stops an enabled supervisor when the definition
-becomes disabled, relaunches on re-enable, preserves an operator-requested Down
-state across configuration changes, and halts a supervisor only after stable
+Incomplete enumeration never advances deletion confirmation. A bounded,
+owner-only ledger is atomically checkpointed before mutations; applied
+snapshots remain configuration authority. This preserves confirmation across
+manager restarts and retains a confirmed deletion until the supervisor and its
+applied snapshot have both been removed. The reconciler preserves an unchanged
+healthy supervisor, stops an enabled supervisor when the definition becomes
+disabled, relaunches on re-enable, preserves an operator-requested Down state
+across configuration changes, and halts a supervisor only after stable
 deletion. A failed service retains one typed pending mutation for a later scan
-without blocking independent services in the current scan. Operational
-stops and replacement preparation remain serialized for generation safety;
-independent checked starts run in bounded batches. Cross-restart deletion
-confirmations remain tracked work. `SIGTERM` and `SIGINT` are handled only at a
-safe reconciliation boundary; `immortaldir` then shuts down and reaps its
-otherwise childless launcher broker without stopping the independent service
-supervisors it previously started.
+without blocking independent services in the current scan. Operational stops
+and replacement preparation remain serialized for generation safety;
+independent checked starts run in bounded batches. `SIGTERM` and `SIGINT` are
+observed while idle or during reconciliation; an in-flight mutation reaches
+its safe boundary before `immortaldir` shuts down and reaps its otherwise
+childless launcher broker. The independent service supervisors it previously
+started remain running.
 
 ### Boot and network ordering
 
@@ -686,7 +703,7 @@ failure tests, and required CI pass.
 - [x] `once`: start one generation and remain Down after it exits.
 - [x] `restart`: stop/reap then start a new generation in the same supervisor.
 - [x] `exit`: explicitly leave the service running and warn about orphaning.
-- [x] `halt`: stop the group, reap it, and exit the supervisor (logger draining remains pending).
+- [x] `halt`: stop and reap the group, drain logger chains through EOF, and exit the supervisor.
 - [x] Wait deterministically for typed lifecycle completion with a hard timeout.
 - [x] Provide `--no-wait` for explicitly asynchronous control.
 

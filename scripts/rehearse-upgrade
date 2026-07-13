@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+canonical=$(cargo run --quiet --locked -p immortal -- \
+    --config examples/services/sleep.yml --check-config)
+first_line=$(printf '%s\n' "$canonical" | sed -n '1p')
+if [ "$first_line" != "version: 2" ]; then
+    echo "example did not emit canonical version 2 configuration" >&2
+    exit 1
+fi
+
+plan=$(cargo run --quiet --locked -p immortaldir -- \
+    --once --dry-run examples/services)
+expected=$(printf 'START\tsleep')
+if [ "$plan" != "$expected" ]; then
+    echo "unexpected example reconciliation plan: $plan" >&2
+    exit 1
+fi

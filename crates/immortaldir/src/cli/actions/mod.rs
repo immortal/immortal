@@ -2,14 +2,18 @@
 //!
 //! Each trigger performs a complete scan, updates one owned desired-state
 //! tracker, validates live runtime entries, then applies generation-bound
-//! control mutations and checked launches. Launch snapshots and last-applied
-//! state survive `immortaldir` restarts; PID files never participate in
-//! identity. The launcher broker is created by `start` before Tokio and moved
-//! into this single-owner loop, so no shared mutable lifecycle state is needed.
+//! control mutations and checked launches. Launch snapshots, last-applied
+//! state, and bounded deletion confirmations survive `immortaldir` restarts;
+//! PID files never participate in identity. Tracker state is checkpointed
+//! before mutations, and a confirmed deletion is acknowledged only after the
+//! supervisor and applied snapshot are gone. The launcher broker is created by
+//! `start` before Tokio and moved into this single-owner loop, so no shared
+//! mutable lifecycle state is needed.
 //! Service-local failures remain typed and pending while unrelated work
 //! continues; loss of the runtime root or broker still fails the loop closed.
-//! TERM or INT is consumed only while the loop is idle, then the launcher
-//! broker is shut down and reaped without cancelling an in-flight mutation.
+//! TERM or INT is observed while idle or during reconciliation. An in-flight
+//! mutation still reaches its safe boundary before the launcher broker is shut
+//! down and reaped.
 
 use std::{
     collections::BTreeMap,
@@ -266,8 +270,8 @@ pub async fn execute(
     endpoint: Option<ProcessBrokerEndpoint>,
 ) -> Result<(), ActionError> {
     let directory = canonical_definitions_directory(&action.directory)?;
-    let mut tracker = DesiredStateTracker::default();
     if action.dry_run {
+        let mut tracker = DesiredStateTracker::default();
         if action.once {
             return scan_and_print(&directory, &mut tracker);
         }
@@ -276,6 +280,7 @@ pub async fn execute(
 
     let endpoint = endpoint.ok_or(ActionError::MissingBroker)?;
     let snapshots = DefinitionSnapshots::open(&action.runtime_directory)?;
+    let mut tracker = snapshots.load_tracker()?;
     let mut launcher = SupervisorLauncher::connect(endpoint).await?;
     let mut operational = OperationalState::default();
     if action.once {
@@ -288,11 +293,7 @@ pub async fn execute(
             &mut launcher,
         )
         .await;
-        let shutdown = launcher.shutdown().await.map_err(ActionError::from);
-        return match (result, shutdown) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(error), _) | (Ok(()), Err(error)) => Err(error),
-        };
+        return finish_launcher(launcher, result).await;
     }
 
     let mut triggers = ReconcileTriggers::with_intervals(
@@ -304,33 +305,51 @@ pub async fn execute(
     loop {
         let trigger = tokio::select! {
             result = signals.recv() => {
-                result?;
-                return launcher.shutdown().await.map_err(ActionError::from);
+                return finish_launcher(launcher, result.map_err(ActionError::from)).await;
             }
             trigger = triggers.next() => trigger,
         };
         for error in trigger.watcher_errors {
             writeln!(io::stderr().lock(), "watcher: {error}")?;
         }
-        match scan_and_apply(
-            action,
-            &directory,
-            &snapshots,
-            &mut tracker,
-            &mut operational,
-            &mut launcher,
-        )
-        .await
-        {
+        let (reconciliation, termination) = {
+            let reconciliation = scan_and_apply(
+                action,
+                &directory,
+                &snapshots,
+                &mut tracker,
+                &mut operational,
+                &mut launcher,
+            );
+            tokio::pin!(reconciliation);
+            tokio::select! {
+                result = &mut reconciliation => (result, None),
+                termination = signals.recv() => {
+                    (reconciliation.await, Some(termination))
+                }
+            }
+        };
+        match reconciliation {
             Ok(()) => {}
             Err(error @ (ActionError::Launcher(_) | ActionError::Runtime(_))) => {
-                return match launcher.shutdown().await {
-                    Ok(()) => Err(error),
-                    Err(shutdown) => Err(ActionError::Launcher(shutdown)),
-                };
+                return finish_launcher(launcher, Err(error)).await;
             }
             Err(error) => writeln!(io::stderr().lock(), "reconcile: {error}")?,
         }
+        if let Some(termination) = termination {
+            return finish_launcher(launcher, termination.map_err(ActionError::from)).await;
+        }
+    }
+}
+
+async fn finish_launcher(
+    launcher: SupervisorLauncher,
+    result: Result<(), ActionError>,
+) -> Result<(), ActionError> {
+    let shutdown = launcher.shutdown().await.map_err(ActionError::from);
+    match (result, shutdown) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), _) | (Ok(()), Err(error)) => Err(error),
     }
 }
 
@@ -378,6 +397,12 @@ struct PreparedLaunch {
     launch: SupervisorLaunch,
 }
 
+#[derive(Default)]
+struct StopOutcome {
+    failures: Vec<ServiceFailure>,
+    deleted: Vec<String>,
+}
+
 async fn scan_and_apply(
     action: &Action,
     directory: &Path,
@@ -400,6 +425,7 @@ async fn scan_and_apply(
             operational.pending.insert(name, planned);
         }
     }
+    snapshots.record_tracker(tracker)?;
     let desired = tracker.desired();
     let discovery = discover(&action.runtime_directory)?;
     report_discovery_problems(&discovery)?;
@@ -439,8 +465,16 @@ async fn scan_and_apply(
         }
     }
 
-    failures.extend(apply_stops(action, desired, snapshots, operational, &discovery).await?);
     let plan = dependency_plan(desired)?;
+    let stopped = apply_stops(action, desired, snapshots, operational, &discovery).await?;
+    failures.extend(stopped.failures);
+    if !stopped.deleted.is_empty() {
+        for name in stopped.deleted {
+            tracker.acknowledge_deletion(&name);
+        }
+        snapshots.record_tracker(tracker)?;
+    }
+    let desired = tracker.desired();
     failures.extend(
         apply_start_waves(
             action,
@@ -611,14 +645,15 @@ async fn apply_stops(
     snapshots: &DefinitionSnapshots,
     operational: &mut OperationalState,
     discovery: &immortal_core::runtime::DiscoveryResult,
-) -> Result<Vec<ServiceFailure>, ActionError> {
+) -> Result<StopOutcome, ActionError> {
     let names: Vec<String> = operational
         .pending
         .iter()
         .filter_map(|(name, pending)| (*pending == ReconcileAction::Stop).then_some(name.clone()))
         .collect();
-    let mut failures = Vec::new();
+    let mut outcome = StopOutcome::default();
     for name in names {
+        let deleting = !desired.contains_key(&name);
         let result = apply_one_stop(action, desired, snapshots, &name, discovery).await;
         match result {
             Ok(()) => {
@@ -628,16 +663,19 @@ async fn apply_stops(
                     operational.known.remove(&name);
                 }
                 operational.pending.remove(&name);
+                if deleting {
+                    outcome.deleted.push(name);
+                }
             }
             Err(MutationError::Isolated(error)) => {
-                failures.push(ServiceFailure::new(&name, error));
+                outcome.failures.push(ServiceFailure::new(&name, error));
             }
             Err(MutationError::RuntimeLost(error)) => {
                 return Err(ActionError::Runtime(error));
             }
         }
     }
-    Ok(failures)
+    Ok(outcome)
 }
 
 async fn apply_one_stop(

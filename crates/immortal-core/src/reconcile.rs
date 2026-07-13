@@ -3,7 +3,10 @@
 //! A scan reads stable, size-limited definition snapshots and isolates invalid
 //! candidates. The desired-state tracker converts complete scans into semantic
 //! actions with confirmed deletion, while [`DefinitionSnapshots`] atomically
-//! publishes normalized launch/applied state below an owner-only runtime root.
+//! publishes normalized launch/applied state and a bounded deletion ledger
+//! below an owner-only runtime root. Applied snapshots remain configuration
+//! authority; the ledger holds only names and absence counts, and retains a
+//! confirmed deletion until its supervisor and applied state are gone.
 //! [`SupervisorLauncher`] moves one pre-Tokio broker client through bounded
 //! checked daemon-launch batches; it owns mechanism only, leaving lifecycle
 //! policy to the calling reconciliation loop.
@@ -11,7 +14,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
-    fmt::{self, Display, Formatter},
+    fmt::{self, Display, Formatter, Write as FmtWrite},
     fs::{self, DirBuilder, File, Metadata, OpenOptions},
     io::{self, Read, Write},
     num::NonZeroUsize,
@@ -24,9 +27,7 @@ use std::{
 use tokio::time::timeout;
 
 use crate::{
-    config::{
-        ConfigError, MAX_CONFIG_BYTES, ServiceConfig, emit_config, parse_bytes_at, parse_file,
-    },
+    config::{ConfigError, MAX_CONFIG_BYTES, ServiceConfig, emit_config, parse_bytes_at},
     platform::file_identity,
     process::{
         BrokerTaskId, ChildEvent, ProcessBrokerEndpoint, ProcessBrokerEvent, ProcessCommand,
@@ -43,6 +44,9 @@ pub const DEFAULT_MAX_CONCURRENT_LAUNCHES: usize = 8;
 /// Hard upper bound for one checked supervisor-launch batch.
 pub const MAX_CONCURRENT_LAUNCHES: usize = 64;
 const SNAPSHOT_DIRECTORY: &str = ".definitions";
+const TRACKER_STATE_FILE: &str = "tracker.state";
+const TRACKER_STATE_VERSION: usize = 1;
+const MAX_TRACKER_STATE_BYTES: usize = 2 * 1024 * 1024;
 const SUPERVISOR_START_TIMEOUT: Duration = Duration::from_secs(15);
 static NEXT_SNAPSHOT: AtomicU64 = AtomicU64::new(0);
 
@@ -257,22 +261,12 @@ impl DefinitionSnapshots {
     /// configuration parse and validation failure.
     pub fn load_applied(&self, name: &str) -> io::Result<Option<ServiceConfig>> {
         let path = self.named_path(name, "applied")?;
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
+        let Some(bytes) = self.read_owned_file(&path, MAX_CONFIG_BYTES)? else {
+            return Ok(None);
         };
-        if metadata.file_type().is_symlink()
-            || !metadata.is_file()
-            || metadata.uid() != self.owner_uid
-            || metadata.mode() & 0o777 != 0o600
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "unsafe applied-state snapshot",
-            ));
-        }
-        parse_file(&path).map(Some).map_err(io::Error::other)
+        parse_bytes_at(&bytes, &path)
+            .map(Some)
+            .map_err(io::Error::other)
     }
 
     /// Remove applied state after a definition is stably deleted and halted.
@@ -300,13 +294,245 @@ impl DefinitionSnapshots {
         fs::remove_file(path)
     }
 
+    /// Restore desired configurations and deletion confirmations after restart.
+    ///
+    /// Applied snapshots remain the configuration authority. The bounded tracker
+    /// ledger contributes only safe service names and consecutive-absence counts;
+    /// stale ledger entries without an applied snapshot are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsafe snapshot entries, an oversized or malformed
+    /// ledger, duplicate names, unsupported versions, or invalid applied state.
+    pub fn load_tracker(&self) -> io::Result<DesiredStateTracker> {
+        let mut counts = self.load_tracker_counts()?;
+        for name in self.applied_names()? {
+            counts.entry(name).or_insert(0);
+        }
+
+        let deletion_confirmations =
+            NonZeroUsize::new(DEFAULT_DELETION_CONFIRMATIONS).unwrap_or(NonZeroUsize::MIN);
+        let mut tracker = DesiredStateTracker::new(deletion_confirmations);
+        for (name, count) in counts {
+            if count > deletion_confirmations.get() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tracker absence count exceeds deletion threshold",
+                ));
+            }
+            let Some(config) = self.load_applied(&name)? else {
+                continue;
+            };
+            tracker.desired.insert(name.clone(), config);
+            if count > 0 {
+                tracker.absent_scans.insert(name, count);
+            }
+        }
+        Ok(tracker)
+    }
+
+    /// Atomically checkpoint desired names and deletion confirmations.
+    ///
+    /// The ledger deliberately excludes configuration contents, which remain in
+    /// validated applied snapshots, and retains confirmed deletions until the
+    /// caller acknowledges successful supervisor cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for serialization bounds or atomic write/sync failures.
+    pub fn record_tracker(&self, tracker: &DesiredStateTracker) -> io::Result<()> {
+        let mut names: BTreeSet<&str> = tracker.desired.keys().map(String::as_str).collect();
+        names.extend(tracker.absent_scans.keys().map(String::as_str));
+        if names.len() > DEFAULT_MAX_DEFINITIONS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tracker service count exceeds definition limit",
+            ));
+        }
+
+        let mut contents = format!("version\t{TRACKER_STATE_VERSION}\n");
+        for name in names {
+            let count = tracker.absent_scans.get(name).copied().unwrap_or(0);
+            if count > tracker.deletion_confirmations.get() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tracker absence count exceeds deletion threshold",
+                ));
+            }
+            writeln!(&mut contents, "{name}\t{count}").map_err(io::Error::other)?;
+            if contents.len() > MAX_TRACKER_STATE_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tracker state exceeds size limit",
+                ));
+            }
+        }
+        let destination = self.directory.join(TRACKER_STATE_FILE);
+        self.atomic_replace(&destination, "tracker", contents.as_bytes())
+    }
+
+    fn load_tracker_counts(&self) -> io::Result<BTreeMap<String, usize>> {
+        let path = self.directory.join(TRACKER_STATE_FILE);
+        let Some(bytes) = self.read_owned_file(&path, MAX_TRACKER_STATE_BYTES)? else {
+            return Ok(BTreeMap::new());
+        };
+        let contents = std::str::from_utf8(&bytes).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("tracker state is not UTF-8: {error}"),
+            )
+        })?;
+        let mut lines = contents.lines();
+        let header = format!("version\t{TRACKER_STATE_VERSION}");
+        if lines.next() != Some(header.as_str()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported tracker state version",
+            ));
+        }
+
+        let mut counts = BTreeMap::new();
+        for line in lines {
+            let Some((name, count)) = line.split_once('\t') else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "malformed tracker state entry",
+                ));
+            };
+            if !safe_definition_name(name) || count.contains('\t') {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unsafe tracker state entry",
+                ));
+            }
+            let count = count.parse::<usize>().map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid tracker absence count: {error}"),
+                )
+            })?;
+            if counts.insert(name.to_owned(), count).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "duplicate tracker state entry",
+                ));
+            }
+            if counts.len() > DEFAULT_MAX_DEFINITIONS {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "tracker service count exceeds definition limit",
+                ));
+            }
+        }
+        Ok(counts)
+    }
+
+    fn applied_names(&self) -> io::Result<BTreeSet<String>> {
+        let mut names = BTreeSet::new();
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            let Some(file_name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Some(name) = file_name.strip_suffix(".applied.yml") else {
+                continue;
+            };
+            if !safe_definition_name(name) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unsafe applied-state snapshot name",
+                ));
+            }
+            names.insert(name.to_owned());
+            if names.len() > DEFAULT_MAX_DEFINITIONS {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "applied-state snapshot count exceeds definition limit",
+                ));
+            }
+        }
+        Ok(names)
+    }
+
+    fn read_owned_file(&self, path: &Path, limit: usize) -> io::Result<Option<Vec<u8>>> {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if !self.state_file_is_safe(&metadata) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "unsafe reconciliation state file",
+            ));
+        }
+        if metadata.len() > limit as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "reconciliation state file exceeds size limit",
+            ));
+        }
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+        let mut file = options.open(path)?;
+        let before = file.metadata()?;
+        if !self.state_file_is_safe(&before) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "unsafe opened reconciliation state file",
+            ));
+        }
+        if metadata_changed(&metadata, &before) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "reconciliation state changed before open",
+            ));
+        }
+        if before.len() > limit as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "reconciliation state file exceeds size limit",
+            ));
+        }
+        let capacity = usize::try_from(before.len()).map_or(limit, |size| size.min(limit));
+        let mut bytes = Vec::with_capacity(capacity);
+        (&mut file)
+            .take(limit.saturating_add(1) as u64)
+            .read_to_end(&mut bytes)?;
+        let file_after = file.metadata()?;
+        let path_after = fs::symlink_metadata(path)?;
+        if bytes.len() > limit
+            || !self.state_file_is_safe(&file_after)
+            || !self.state_file_is_safe(&path_after)
+            || metadata_changed(&before, &file_after)
+            || metadata_changed(&before, &path_after)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "reconciliation state changed during read",
+            ));
+        }
+        Ok(Some(bytes))
+    }
+
+    fn state_file_is_safe(&self, metadata: &Metadata) -> bool {
+        metadata.is_file() && metadata.uid() == self.owner_uid && metadata.mode() & 0o777 == 0o600
+    }
+
     fn publish_named(&self, name: &str, kind: &str, config: &ServiceConfig) -> io::Result<PathBuf> {
         let contents = emit_config(config).map_err(io::Error::other)?;
         let destination = self.named_path(name, kind)?;
+        self.atomic_replace(&destination, name, contents.as_bytes())?;
+        Ok(destination)
+    }
+
+    fn atomic_replace(&self, destination: &Path, label: &str, contents: &[u8]) -> io::Result<()> {
         let sequence = NEXT_SNAPSHOT.fetch_add(1, Ordering::Relaxed);
         let temporary =
             self.directory
-                .join(format!(".{name}.{}.{}.tmp", std::process::id(), sequence));
+                .join(format!(".{label}.{}.{}.tmp", std::process::id(), sequence));
         let mut options = OpenOptions::new();
         options
             .write(true)
@@ -315,16 +541,15 @@ impl DefinitionSnapshots {
             .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
         let result = (|| -> io::Result<()> {
             let mut file = options.open(&temporary)?;
-            file.write_all(contents.as_bytes())?;
+            file.write_all(contents)?;
             file.sync_all()?;
-            fs::rename(&temporary, &destination)?;
+            fs::rename(&temporary, destination)?;
             File::open(&self.directory)?.sync_all()
         })();
         if result.is_err() {
             let _ignored = fs::remove_file(&temporary);
         }
-        result?;
-        Ok(destination)
+        result
     }
 
     fn named_path(&self, name: &str, kind: &str) -> io::Result<PathBuf> {
@@ -974,10 +1199,19 @@ impl DesiredStateTracker {
         &self.desired
     }
 
+    /// Forget a confirmed deletion only after the supervisor and applied state
+    /// have been removed successfully.
+    pub fn acknowledge_deletion(&mut self, name: &str) {
+        if !self.desired.contains_key(name) {
+            self.absent_scans.remove(name);
+        }
+    }
+
     /// Apply one complete scan and return one deterministic action per known name.
     ///
-    /// Reapplying an identical scan yields `Keep`; a confirmed deletion yields
-    /// `Stop` once and disappears from subsequent plans.
+    /// Reapplying an identical scan yields `Keep`. A confirmed deletion yields
+    /// `Stop` once in memory; a persisted unacknowledged deletion is replayed
+    /// after restart so cleanup cannot be lost.
     pub fn apply(&mut self, scan: &ScanResult) -> BTreeMap<String, ReconcileAction> {
         let problem_names: BTreeSet<String> = scan
             .problems
@@ -1021,7 +1255,7 @@ impl DesiredStateTracker {
             let count = self.absent_scans.entry(name.clone()).or_default();
             *count = count.saturating_add(1);
             if *count >= self.deletion_confirmations.get() {
-                self.absent_scans.remove(&name);
+                *count = self.deletion_confirmations.get();
                 self.desired.remove(&name);
                 actions.insert(name, ReconcileAction::Stop);
             } else {
@@ -1153,7 +1387,8 @@ mod tests {
     use std::{
         collections::BTreeMap,
         error::Error,
-        fs, io,
+        fs::{self, File},
+        io,
         num::NonZeroUsize,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
@@ -1162,9 +1397,9 @@ mod tests {
 
     use super::{
         DefinitionSnapshots, DependencyError, DesiredStateTracker, LaunchConcurrency,
-        MAX_CONCURRENT_LAUNCHES, ReconcileAction, ScanLimits, ScanProblem, ScanProblemKind,
-        ScanResult, canonical_definitions_directory, compare, dependency_plan, metadata_changed,
-        retain_last_known_good, scan_directory,
+        MAX_CONCURRENT_LAUNCHES, MAX_TRACKER_STATE_BYTES, ReconcileAction, ScanLimits, ScanProblem,
+        ScanProblemKind, ScanResult, TRACKER_STATE_FILE, canonical_definitions_directory, compare,
+        dependency_plan, metadata_changed, retain_last_known_good, scan_directory,
     };
     use crate::config::MAX_CONFIG_BYTES;
 
@@ -1264,6 +1499,103 @@ mod tests {
                 entry.is_ok_and(|entry| entry.path().extension().is_none_or(|value| value != "tmp"))
             })
         );
+        Ok(())
+    }
+
+    #[test]
+    fn tracker_checkpoint_retries_confirmed_deletion_after_restart() -> Result<(), Box<dyn Error>> {
+        let runtime = TestDirectory::new()?;
+        fs::set_permissions(runtime.path(), fs::Permissions::from_mode(0o700))?;
+        let definitions = TestDirectory::new()?;
+        let definition = definitions.path().join("api.yml");
+        fs::write(&definition, "version: 2\ncommand: [/bin/true]\n")?;
+        let snapshots = DefinitionSnapshots::open(runtime.path())?;
+        let config = crate::config::parse_file(&definition)?;
+        snapshots.record_applied("api", &config)?;
+        assert_eq!(
+            snapshots.load_tracker()?.desired().get("api"),
+            Some(&config)
+        );
+
+        let mut tracker = DesiredStateTracker::default();
+        let present = scan_directory(definitions.path(), ScanLimits::default())?;
+        assert_eq!(
+            tracker.apply(&present).get("api"),
+            Some(&ReconcileAction::Start)
+        );
+        snapshots.record_tracker(&tracker)?;
+
+        fs::remove_file(&definition)?;
+        let missing = scan_directory(definitions.path(), ScanLimits::default())?;
+        assert_eq!(
+            tracker.apply(&missing).get("api"),
+            Some(&ReconcileAction::Keep)
+        );
+        snapshots.record_tracker(&tracker)?;
+
+        let mut restored = snapshots.load_tracker()?;
+        assert!(restored.desired().contains_key("api"));
+        assert_eq!(
+            restored.apply(&missing).get("api"),
+            Some(&ReconcileAction::Stop)
+        );
+        snapshots.record_tracker(&restored)?;
+
+        let mut confirmed = snapshots.load_tracker()?;
+        assert_eq!(
+            confirmed.apply(&missing).get("api"),
+            Some(&ReconcileAction::Stop)
+        );
+        snapshots.remove_applied("api")?;
+        confirmed.acknowledge_deletion("api");
+        snapshots.record_tracker(&confirmed)?;
+        assert_eq!(snapshots.load_tracker()?, DesiredStateTracker::default());
+
+        let state = snapshots.directory.join(TRACKER_STATE_FILE);
+        assert_eq!(fs::metadata(state)?.permissions().mode() & 0o777, 0o600);
+        Ok(())
+    }
+
+    #[test]
+    fn tracker_checkpoint_rejects_malformed_unbounded_and_unsafe_state()
+    -> Result<(), Box<dyn Error>> {
+        use std::os::unix::fs::symlink;
+
+        let runtime = TestDirectory::new()?;
+        fs::set_permissions(runtime.path(), fs::Permissions::from_mode(0o700))?;
+        let snapshots = DefinitionSnapshots::open(runtime.path())?;
+        let state = snapshots.directory.join(TRACKER_STATE_FILE);
+
+        fs::write(&state, "version\t1\n")?;
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o644))?;
+        assert!(snapshots.load_tracker().is_err());
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o600))?;
+
+        for malformed in [
+            "",
+            "version\t2\n",
+            "version\t1\nmissing-count\n",
+            "version\t1\nunsafe/name\t0\n",
+            "version\t1\napi\t0\napi\t1\n",
+            "version\t1\napi\t3\n",
+        ] {
+            fs::write(&state, malformed)?;
+            assert!(snapshots.load_tracker().is_err(), "accepted {malformed:?}");
+        }
+
+        fs::write(&state, [0xff, 0xfe])?;
+        assert!(snapshots.load_tracker().is_err());
+        let file = File::create(&state)?;
+        file.set_len((MAX_TRACKER_STATE_BYTES as u64).saturating_add(1))?;
+        assert!(snapshots.load_tracker().is_err());
+
+        drop(file);
+        fs::remove_file(&state)?;
+        let target = runtime.path().join("tracker-target");
+        fs::write(&target, "version\t1\n")?;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600))?;
+        symlink(target, &state)?;
+        assert!(snapshots.load_tracker().is_err());
         Ok(())
     }
 

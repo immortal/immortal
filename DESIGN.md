@@ -2,11 +2,12 @@
 
 ## Purpose
 
-The current branch is a contract-first rebuild, not a production-ready partial
-supervisor. Configuration, lifecycle policy, control, logging, status, and
-reconciliation can be implemented and tested before the process executor, but
-the binaries must fail closed until the complete fork-backed lifecycle passes
-native contract tests.
+The current branch is a contract-first rebuild and remains a release candidate,
+not a production-ready supervisor. Configuration, lifecycle policy, process
+execution, control, logging, status, and reconciliation are connected through
+fork-backed native contracts. The binaries expose only behavior covered by
+those contracts and fail closed for deliberately gated compatibility options;
+production readiness still requires the external evidence in `RELEASE.md`.
 
 The implementation should remain understandable without sacrificing operating
 system correctness. New behavior must arrive with tests and documentation in the
@@ -69,8 +70,8 @@ dispatch and actions with contract tests.
 - `status`: bounded transport-independent supervisor observations.
 - `readiness`: the `IMMORTAL_READY_FD` token and deadline contract.
 - `runtime`: safe runtime-root and supervisor discovery policy.
-- `reconcile`: stable definition/applied snapshots, checked supervisor launch,
-  and desired-state planning.
+- `reconcile`: stable launch/applied snapshots, a bounded deletion checkpoint,
+  checked supervisor launch, and desired-state planning.
 - `watch`: native notification hints plus periodic reconciliation triggers.
 - `platform`: the smallest possible Linux, macOS, and FreeBSD adaptations.
 
@@ -326,7 +327,9 @@ downstream-first shutdown.
 The sequential portion of milestone 5 is operational. `immortaldir` creates
 one checked launcher broker before Tokio, compares complete scans with live
 authenticated supervisors, and persists normalized launch and applied-state
-snapshots below the owner-only runtime root. It starts missing definitions,
+snapshots below the owner-only runtime root. A bounded owner-only ledger records
+desired names and consecutive absence counts atomically before mutations;
+applied snapshots remain configuration authority. It starts missing definitions,
 preserves unchanged and operator-stopped supervisors, applies valid changes,
 stops disabled services, and halts only confirmed deletions. Replacement waits
 for both control-socket disappearance and advisory-lock release. An active lock
@@ -336,7 +339,13 @@ release. Typed failed mutations remain pending for later scans while independent
 services continue in the current scan. Independent starts are submitted as
 bounded broker task batches within deterministic dependency waves; later waves
 wait for Ready, and later dependency failure does not cascade.
-Deletion-confirmation state across `immortaldir` restarts remains pending.
+Confirmed deletions remain in the ledger until Halt, socket/lock disappearance,
+and applied-snapshot removal succeed. A black-box contract replaces
+`immortaldir` between the two required absence scans and proves the restarted
+manager completes cleanup. TERM and INT are polled while idle and alongside an
+in-flight reconciliation; a received signal is latched until that mutation
+reaches its safe boundary, after which the launcher broker is shut down and
+reaped.
 
 Portable start conditions remain supervisor policy, not directory policy. A
 checked daemon may publish `WaitingCondition` while its broker retries the

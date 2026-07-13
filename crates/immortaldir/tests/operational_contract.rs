@@ -1,10 +1,16 @@
-//! One fresh process proving continuous checked reconciliation and cleanup.
+//! Black-box contracts for continuous checked reconciliation and cleanup.
+//!
+//! The contract also replaces the manager between two authoritative scans to
+//! prove that persisted deletion confirmation resumes safely after restart.
+//! That phase runs in a separate process so the operational parent creates all
+//! process brokers before its first Tokio runtime and signal driver.
 
 use std::{
     error::Error,
     fs, io,
     os::unix::{fs::PermissionsExt, net::UnixListener as StdUnixListener},
     path::{Path, PathBuf},
+    process::{Child, Command, ExitStatus},
     thread,
     time::{Duration, Instant},
 };
@@ -15,14 +21,16 @@ use immortal_core::{
     executor::{DaemonRunOutcome, run_daemon},
     process::{ProcessId, ProcessSignal, SignalTarget, signal, start_process_broker},
     reconcile::{
-        DefinitionSnapshots, LaunchConcurrency, LauncherError, SupervisorLaunch, SupervisorLauncher,
+        DefinitionSnapshots, LaunchConcurrency, LauncherError, ReconcileAction, ScanResult,
+        SupervisorLaunch, SupervisorLauncher,
     },
     runtime::{RuntimeOwner, discover, supervisor_is_active},
+    shutdown::TerminationSignals,
 };
 use immortaldir::cli::{actions, dispatch::Action};
 use tokio::{
     runtime::Builder,
-    sync::mpsc,
+    sync::mpsc::{self, error::TrySendError},
     time::{sleep, timeout},
 };
 
@@ -33,8 +41,164 @@ fn main() -> Result<(), Box<dyn Error>> {
     if arguments.get(1).map(String::as_str) == Some("--config") {
         return run_fake_immortal(&arguments);
     }
+    if arguments.get(1).map(String::as_str) == Some("--manager") {
+        return run_manager(&arguments);
+    }
+    if arguments.get(1).map(String::as_str) == Some("--restart-contract") {
+        let root = TestRoot::new()?;
+        return prove_cross_restart_deletion(root.path());
+    }
 
+    prove_cross_restart_in_subprocess()?;
     prove_operational_lifecycle()
+}
+
+fn prove_cross_restart_in_subprocess() -> Result<(), Box<dyn Error>> {
+    let executable = std::env::current_exe()?;
+    let mut contract = TestProcess::spawn_restart_contract(&executable)?;
+    contract.wait_for_success("cross-restart contract")
+}
+
+fn run_manager(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    let directory = PathBuf::from(arguments.get(2).ok_or("missing manager definitions")?);
+    let runtime_directory = PathBuf::from(
+        arguments
+            .get(3)
+            .ok_or("missing manager runtime directory")?,
+    );
+    let endpoint = start_process_broker()?;
+    let action = Action {
+        directory,
+        runtime_directory,
+        scan_interval_seconds: 30,
+        supervisor_binary: std::env::current_exe()?,
+        launch_concurrency: LaunchConcurrency::new(2)?,
+        once: false,
+        dry_run: false,
+    };
+    let tokio = Builder::new_current_thread().enable_all().build()?;
+    tokio.block_on(actions::execute(&action, Some(endpoint)))?;
+    Ok(())
+}
+
+fn prove_cross_restart_deletion(root: &Path) -> Result<(), Box<dyn Error>> {
+    let definitions = root.join("restart-definitions");
+    let runtime = root.join("restart-runtime");
+    fs::create_dir(&definitions)?;
+    fs::create_dir(&runtime)?;
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700))?;
+    let definition = definitions.join("restart.yml");
+    fs::write(&definition, "version: 2\ncommand: [/bin/sleep, '30']\n")?;
+    let executable = std::env::current_exe()?;
+    let tokio = Builder::new_current_thread().enable_all().build()?;
+
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let mut first = TestProcess::spawn_manager(&executable, &definitions, &runtime)?;
+        tokio.block_on(wait_for_ready_command(&runtime, "restart", "30"))?;
+        fs::remove_file(&definition)?;
+        tokio.block_on(wait_for_first_deletion_confirmation(&runtime, "restart"))?;
+        first.terminate()?;
+        tokio.block_on(wait_for_ready_command(&runtime, "restart", "30"))?;
+
+        let mut second = TestProcess::spawn_manager(&executable, &definitions, &runtime)?;
+        tokio.block_on(wait_for_service_absence(&runtime, "restart"))?;
+        second.terminate()?;
+
+        let snapshots = DefinitionSnapshots::open(&runtime)?;
+        if snapshots.load_applied("restart")?.is_some()
+            || !snapshots.load_tracker()?.desired().is_empty()
+        {
+            return Err("confirmed deletion state remained after supervisor cleanup".into());
+        }
+        Ok(())
+    })();
+    let cleanup = tokio.block_on(halt_if_present(&runtime, "restart"));
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), _) | (Ok(()), Err(error)) => Err(error),
+    }
+}
+
+async fn wait_for_first_deletion_confirmation(
+    runtime: &Path,
+    name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let deadline = tokio::time::Instant::now() + DEADLINE;
+    loop {
+        let snapshots = DefinitionSnapshots::open(runtime)?;
+        let mut persisted = snapshots.load_tracker()?;
+        if persisted.apply(&ScanResult::default()).get(name) == Some(&ReconcileAction::Stop) {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("first deletion confirmation was not persisted".into());
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+}
+
+struct TestProcess {
+    child: Child,
+}
+
+impl TestProcess {
+    fn spawn_manager(executable: &Path, definitions: &Path, runtime: &Path) -> io::Result<Self> {
+        Command::new(executable)
+            .arg("--manager")
+            .arg(definitions)
+            .arg(runtime)
+            .spawn()
+            .map(|child| Self { child })
+    }
+
+    fn spawn_restart_contract(executable: &Path) -> io::Result<Self> {
+        Command::new(executable)
+            .arg("--restart-contract")
+            .spawn()
+            .map(|child| Self { child })
+    }
+
+    fn terminate(&mut self) -> Result<(), Box<dyn Error>> {
+        if let Some(status) = self.child.try_wait()? {
+            return successful_status(status, "manager");
+        }
+        let process = ProcessId::try_from(i32::try_from(self.child.id())?)?;
+        signal(SignalTarget::Process(process), ProcessSignal::Terminate)?;
+        self.wait_for_success("manager shutdown")
+    }
+
+    fn wait_for_success(&mut self, context: &str) -> Result<(), Box<dyn Error>> {
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                return successful_status(status, context);
+            }
+            if Instant::now() >= deadline {
+                self.child.kill()?;
+                let _status = self.child.wait()?;
+                return Err(format!("{context} deadline exceeded").into());
+            }
+            // Bounded polling observes process exit without assuming signal latency.
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for TestProcess {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ignored = self.child.kill();
+            let _ignored = self.child.wait();
+        }
+    }
+}
+
+fn successful_status(status: ExitStatus, context: &str) -> Result<(), Box<dyn Error>> {
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{context} exited unsuccessfully: {status}").into())
+    }
 }
 
 fn prove_operational_lifecycle() -> Result<(), Box<dyn Error>> {
@@ -92,15 +256,24 @@ async fn run_reconciliation_contract(
     let broken_task = tokio::spawn(reject_control_clients(broken_control, attempt_sender));
     let task = tokio::spawn(async move { actions::execute(&action, Some(endpoint)).await });
     let result = exercise_reconciliation(definition, &runtime, &mut attempts, locked_owner).await;
+    let mut signal_observer = TerminationSignals::new()?;
     let process = ProcessId::try_from(i32::try_from(std::process::id())?)?;
     signal(SignalTarget::Process(process), ProcessSignal::Terminate)?;
+    let signal_delivery = observe_termination(&mut signal_observer).await;
     let shutdown = wait_for_reconciler_shutdown(task).await;
     let cleanup = halt_services(&runtime).await;
     broken_task.abort();
     let _cancelled = broken_task.await;
-    match (result, shutdown, cleanup) {
-        (Ok(()), Ok(()), Ok(())) => Ok(()),
-        (Err(error), _, _) | (Ok(()), Err(error), _) | (Ok(()), Ok(()), Err(error)) => Err(error),
+    result?;
+    signal_delivery?;
+    shutdown?;
+    cleanup
+}
+
+async fn observe_termination(signals: &mut TerminationSignals) -> Result<(), Box<dyn Error>> {
+    match timeout(Duration::from_secs(2), signals.recv()).await {
+        Ok(result) => result.map_err(Into::into),
+        Err(error) => Err(format!("self-sent termination signal was not observed: {error}").into()),
     }
 }
 
@@ -114,7 +287,7 @@ async fn wait_for_reconciler_shutdown(
         Err(error) => {
             task.abort();
             let _cancelled = task.await;
-            Err(error.into())
+            Err(format!("reconciler shutdown deadline exceeded: {error}").into())
         }
     }
 }
@@ -227,7 +400,15 @@ async fn reject_control_clients(
     let listener = tokio::net::UnixListener::from_std(listener)?;
     loop {
         let (stream, _address) = listener.accept().await?;
-        attempts.send(()).await.map_err(io::Error::other)?;
+        match attempts.try_send(()) {
+            Ok(()) | Err(TrySendError::Full(())) => {}
+            Err(TrySendError::Closed(())) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "broken-control observer closed",
+                ));
+            }
+        }
         drop(stream);
     }
 }
@@ -342,8 +523,12 @@ async fn exercise_reconciliation(
 
 async fn wait_for_failed_retries(attempts: &mut mpsc::Receiver<()>) -> Result<(), Box<dyn Error>> {
     for _attempt in 0..2 {
-        if timeout(DEADLINE, attempts.recv()).await?.is_none() {
-            return Err("broken service retry channel closed early".into());
+        match timeout(DEADLINE, attempts.recv()).await {
+            Ok(Some(())) => {}
+            Ok(None) => return Err("broken service retry channel closed early".into()),
+            Err(error) => {
+                return Err(format!("broken service retry deadline exceeded: {error}").into());
+            }
         }
     }
     Ok(())

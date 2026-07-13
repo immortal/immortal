@@ -39,6 +39,14 @@ validate that directory without mutating runtime state:
 immortaldir --once --dry-run /usr/local/etc/immortal
 ```
 
+Before migrating local definitions, the repository example provides a bounded
+rehearsal which must print canonical configuration followed by a `START` plan:
+
+```sh
+immortal --config examples/services/sleep.yml --check-config
+immortaldir --once --dry-run examples/services
+```
+
 Treat the runtime directory as disposable observation state, not configuration.
 Never copy sockets, locks, PID files, or `.definitions` snapshots from the Go
 installation. Do not run old and new directory managers against the same
