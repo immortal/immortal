@@ -886,7 +886,7 @@ The accepted evidence and ceilings will replace this pending table:
 |---|---|---:|---:|---:|
 | Linux | Ubuntu 24.04 | pending | pending | pending |
 | macOS | macOS 15 | pending | pending | pending |
-| FreeBSD | FreeBSD 14.3 QEMU guest | pending | pending | pending |
+| FreeBSD | Recorded v1-action QEMU guest | pending | pending | pending |
 
 ## Build and validation
 
@@ -895,13 +895,17 @@ in [INSTALL.md](INSTALL.md). Maintainers must follow the evidence-based
 [release-candidate procedure](RELEASE.md); these documents do not imply current
 production readiness.
 
-The repository pins Rust 1.97.0, matching `rust-version`. GitHub Actions runs
-the complete workspace test suite on Ubuntu 24.04 and macOS 15. The existing
-FreeBSD cross-check remains a fast compile gate, while a separate
-[FreeBSD VM action](https://github.com/vmactions/freebsd-vm) pinned to v1.4.6
-runs the same lifecycle suite inside FreeBSD 14.3. The VM job has an explicit
-deadline, installs the pinned toolchain through FreeBSD's `rustup-init` package,
-and does not copy build artifacts back to the Linux host.
+The repository pins Rust 1.97.0, matching `rust-version`. The quality job tracks
+the current stable compiler so new compiler and Clippy diagnostics are visible,
+while lifecycle, benchmark, and FreeBSD jobs remain pinned to 1.97.0 for minimum
+version coverage and comparable measurements. GitHub Actions runs the complete
+workspace test suite on Ubuntu 24.04 and macOS 15. The existing FreeBSD
+cross-check remains a fast compile gate, while a separate
+[FreeBSD VM action](https://github.com/vmactions/freebsd-vm) tracks v1 and runs
+the same lifecycle suite on its current default FreeBSD guest. The VM job has
+an explicit deadline, installs the pinned toolchain through FreeBSD's
+`rustup-init` package, records the exact guest release in benchmark metadata,
+and copies the benchmark evidence back to the Linux host for artifact upload.
 
 The native lifecycle matrix first completed successfully on 2026-07-12 at
 commit `f27be55` in [Rust CI run 29208627595](https://github.com/immortal/immortal/actions/runs/29208627595).

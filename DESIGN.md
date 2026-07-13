@@ -271,10 +271,11 @@ Packaging, release branches, and Go deprecation are deliberately outside the
 skeleton milestone.
 
 Native lifecycle evidence is separated from cross-compilation. GitHub-hosted
-Ubuntu and macOS jobs run all workspace contracts directly. A pinned FreeBSD VM
-action runs the same suite on a FreeBSD 14.3 kernel, while the Linux-hosted
-FreeBSD target check remains only a fast compile gate. A native job is not
-considered complete until its remote execution is green.
+Ubuntu and macOS jobs run all workspace contracts directly. The FreeBSD VM
+action tracks its latest v1 release and runs the same suite on its current
+default FreeBSD guest, while the Linux-hosted FreeBSD target check remains only
+a fast compile gate. The benchmark metadata records the actual guest release;
+a native job is not considered complete until its remote execution is green.
 
 Milestone 2 is implemented for foreground and checked daemon launches. The CLI
 builds or loads the strict service model and resolves account data before any
