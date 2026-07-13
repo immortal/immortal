@@ -851,10 +851,12 @@ process creation, acknowledgement, and terminal reaping; it uses hard event and
 cleanup deadlines and retains the active process-group identity until reaping.
 Each native job uploads a 90-day `lifecycle-benchmark-*` artifact containing the
 two medians plus commit, workflow-run, runner, kernel, and pinned-toolchain
-metadata. Rerunning the same workflow attempt creates a distinct artifact, so
-reviewers can retain every valid sample without copying values from console
-logs. After extracting artifacts for one platform, calculate the retained run
-count, median, maximum, nearest-rank p95, and conservative initial ceiling with:
+metadata. Collect each sample through a separate `workflow_dispatch` run so it
+has an independent run ID and retained artifact. GitHub replaces artifacts and
+logs from earlier attempts when a run is rerun, so rerun attempts are not
+independent retained evidence and must not be counted. After extracting
+artifacts for one platform, calculate the retained run count, median, maximum,
+nearest-rank p95, and conservative initial ceiling with:
 
 ```sh
 scripts/summarize-lifecycle-benchmarks Linux artifacts/linux-*/lifecycle.txt
