@@ -177,8 +177,11 @@ commands -> dispatch -> actions -> start -> main
 
 Every executable's `--version` output includes the shared package version and
 the full source commit, for example `immortal 0.1.0 - 446209f...`. Builds made
-without Git metadata report `unknown` instead of failing. The short `-V` form
-prints only the executable name and package version, such as `immortal 0.1.0`.
+without Git metadata report `unknown` instead of failing. The build script
+watches the active Git HEAD and symbolic ref, including linked-worktree common
+metadata, so an incremental build cannot retain a revision from an earlier
+commit. The short `-V` form prints only the executable name and package version,
+such as `immortal 0.1.0`.
 
 ## Compatibility and upgrade policy
 
