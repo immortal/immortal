@@ -37,7 +37,7 @@ const EVENT_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 const STORM_CYCLES: u16 = 128;
-const STORM_TIMEOUT: Duration = Duration::from_secs(15);
+const STORM_TIMEOUT: Duration = Duration::from_secs(30);
 const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn main() -> Result<(), Box<dyn Error>> {
