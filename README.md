@@ -37,6 +37,9 @@ and the design documentation for
 - Each service generation owns a process group. Lifecycle cleanup targets the
   group; compatibility signal commands target the main process unless stated
   otherwise.
+- Each active group is armed with an out-of-group owner-loss helper. Forced
+  broker death therefore kills running and stopped group members instead of
+  leaving a live service behind.
 - Self-daemonizing applications use an explicit descriptor-based compatibility
   mode with application control hooks. PID adoption is not considered safe.
 - Tokio is used for timers, signals, pipes, and Unix sockets, but process
@@ -55,12 +58,18 @@ and the design documentation for
 
 ### Canonical fork-library gate
 
-Immortal pins the reviewed `fork` 0.9.0 registry release developed under
-[`immortal/fork#16`](https://github.com/immortal/fork/issues/16) so local,
-DevPod, and CI builds use the same process contract. That release adds
+The reviewed `fork` 0.9.0 registry release developed under
+[`immortal/fork#16`](https://github.com/immortal/fork/issues/16) supplies
 checked process and process-group identifiers, full nonblocking child events,
 explicit signal targets, prepared direct execution, descriptor allow-lists,
 and checked daemon startup.
+
+Broker-death containment additionally requires the additive
+[`immortal/fork#17`](https://github.com/immortal/fork/issues/17) API. Immortal
+requires the `0.9.1` candidate and currently exercises it through the local
+review mirror. The Immortal change must not merge or publish until that exact
+API has passed native review and the temporary workspace patch has been
+replaced with the released, locked registry dependency.
 
 `immortal-core::process` has adopted those APIs. It translates
 the fork crate's typed `Exited`, `Signalled`, `Stopped`, and `Continued` events
@@ -72,6 +81,14 @@ only deliberate mappings across `exec`; readiness uses the same general path.
 A single-threaded native contract proves exit, exec failure, descriptor
 inheritance and omission, stop/continue, group termination, bounded waits, and
 cleanup.
+For every service, logger, or hook group, the broker now reserves the group
+with a short-lived anchor, starts an out-of-group helper, joins the workload,
+and retires the anchor. The armed helper owns only one lifetime socket: broker
+loss closes it and triggers group `SIGKILL`; normal terminal cleanup or explicit
+detach disarms and reaps it. This costs two helper forks at group creation and
+one sleeping helper per active group, with no shared locks or configuration
+copies. A deliberate `setsid` or process-group change leaves this portable
+boundary and is not claimed as contained.
 The private broker IPC is now bounded and versioned. The supervisor addresses
 only monotonic generations across it; raw PIDs remain broker-owned observations.
 A pre-Tokio broker contract proves readiness, spawn and failure responses,
@@ -147,7 +164,7 @@ flowchart TB
     end
 
     core["immortal-core<br/>configuration · supervision · process broker<br/>control protocol · readiness · logging model<br/>reconciliation · PID files · platform behavior"]
-    fork["fork crate<br/>fork/exec · daemonization · process groups<br/>signals · descriptors · child waiting"]
+    fork["fork crate<br/>fork/exec · daemonization · guarded process groups<br/>signals · descriptors · child waiting"]
     kernel["Unix kernel<br/>Linux · macOS · FreeBSD"]
     service["Managed service and logger processes"]
 
@@ -619,6 +636,7 @@ failure tests, and required CI pass.
 - [x] Add continuous coverage-guided configuration and protocol fuzzing.
 - [x] Add release baselines for configuration and control codecs.
 - [x] Add a bounded repeatable soak runner over the complete contract suite.
+- [x] Add bounded signal-storm and descriptor-exhaustion broker contracts.
 - [x] Define an evidence-based validation charter and comparative scope.
 - [ ] Complete the public-contract-to-test traceability audit.
 - [ ] Close every P0 adversarial ownership and cleanup finding.
@@ -662,6 +680,10 @@ failure tests, and required CI pass.
 - [x] Drain all child wait events after each coalesced `SIGCHLD`.
 - [x] Recover missed child notifications with an ownership-checked delayed reap sweep.
 - [x] Clean remaining process-group members before generation reuse.
+- [ ] Contain running and stopped owned groups after forced broker death on all
+  three native platforms (`fork#17` release and native CI still required).
+- [ ] Prove and document deliberate session/process-group escape as outside the
+  portable containment contract.
 - [x] Write and invalidate configured parent/child PID files atomically.
 - [x] Never use signal 0 or PID files to identify an owned service.
 
@@ -874,6 +896,20 @@ The first local fork-backed run on the same DevPod class, recorded on
 |---|---:|
 | Broker spawn + normal exit + reap | 504,126 ns/op |
 | Broker spawn + `SIGTERM` + reap | 333,174 ns/op |
+
+The local `fork#17` guarded-group review run on 2026-07-13 measured the same
+complete paths after adding two helper forks and one steady sleeping helper per
+active group:
+
+| Contract | Median |
+|---|---:|
+| Guarded broker spawn + normal exit + reap | 734,303 ns/op |
+| Guarded broker spawn + `SIGTERM` + reap | 681,932 ns/op |
+
+An initial fixed 5 ms helper poll made both paths exceed 10 ms; the reviewed
+adaptive bounded wait removed that scheduler delay. These local values remain
+provisional and do not justify a regression budget until native retained runs
+cover the released dependency on all three platforms.
 
 These are not portable CI thresholds. Regression budgets will be set only after
 the fork-backed spawn/wait/signal path is measurable on Linux, macOS, and

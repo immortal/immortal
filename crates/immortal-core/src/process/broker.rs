@@ -6,6 +6,13 @@
 //! plan are handled without adopting an application PID. `SIGCHLD` drives
 //! immediate reaping, while a low-frequency sweep closes platform notification
 //! gaps through the same ownership-checked wait path.
+//!
+//! Each spawn first reserves a process group with a short-lived anchor, joins
+//! the workload, and then activates one out-of-group lifetime helper. The broker
+//! owns the only disarm endpoint. Forced broker death closes it and kills the
+//! group; deliberate cleanup disarms and reaps the helper. A helper event is a
+//! containment failure, not an ordinary workload exit, and terminates policy
+//! execution after the broker kills the affected group.
 
 use std::{
     collections::BTreeMap,
@@ -34,13 +41,13 @@ use crate::readiness::{ReadinessError, wait_for_ready as wait_for_readiness};
 use crate::supervisor::Generation;
 
 use super::{
-    ChildEvent, ProcessCommand, ProcessDescriptor, ProcessGroupId, ProcessId, ProcessSignal,
-    SignalTarget, SpawnFailure, SpawnStage, SpawnedProcess,
+    ChildEvent, ProcessCommand, ProcessDescriptor, ProcessGroupGuard, ProcessGroupId, ProcessId,
+    ProcessSignal, SignalTarget, SpawnFailure, SpawnStage, SpawnedProcess,
     broker_protocol::{
         BrokerEvent, BrokerProtocolError, BrokerReadinessFailure, BrokerRequest,
         BrokerSignalTarget, HEADER_BYTES, MAX_FRAME_BYTES, declared_frame_length,
     },
-    reap_any_event, signal, spawn, spawn_with_descriptors,
+    reap_any_event, signal, spawn, spawn_with_descriptors_in_group,
 };
 
 const BROKER_EXIT_SOFTWARE: i32 = 70;
@@ -48,6 +55,7 @@ const CHILD_REAP_INTERVAL: Duration = Duration::from_millis(250);
 const SUPERVISOR_EVENT_CAPACITY: usize = 32;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const SHUTDOWN_KILL_WAIT: Duration = Duration::from_secs(3);
+const GROUP_GUARD_CLEANUP_TIMEOUT: Duration = Duration::from_secs(3);
 const READINESS_DESCRIPTOR: i32 = 3;
 const READINESS_EVENT_CAPACITY: usize = 32;
 const LIFETIME_DESCRIPTOR: i32 = 4;
@@ -400,6 +408,14 @@ pub enum ProcessBrokerEvent {
     LifetimeFailed {
         generation: Generation,
     },
+    /// The fail-closed helper disappeared, so the broker killed this generation group.
+    ContainmentFailed {
+        generation: Generation,
+    },
+    /// The fail-closed helper disappeared, so the broker killed this task group.
+    TaskContainmentFailed {
+        task: BrokerTaskId,
+    },
     LoggerInputsClosed,
     ShutdownComplete,
     ShutdownFailed {
@@ -486,6 +502,12 @@ impl From<BrokerEvent> for ProcessBrokerEvent {
             },
             BrokerEvent::LifetimeClosed { generation } => Self::LifetimeClosed { generation },
             BrokerEvent::LifetimeFailed { generation } => Self::LifetimeFailed { generation },
+            BrokerEvent::ContainmentFailed { generation } => {
+                BrokerTaskId::from_generation(generation)
+                    .map_or(Self::ContainmentFailed { generation }, |task| {
+                        Self::TaskContainmentFailed { task }
+                    })
+            }
             BrokerEvent::LoggerInputsClosed => Self::LoggerInputsClosed,
             BrokerEvent::ShutdownComplete => Self::ShutdownComplete,
             BrokerEvent::ShutdownFailed { os_error } => Self::ShutdownFailed { os_error },
@@ -1023,7 +1045,12 @@ async fn run_broker(
                 }
             }
             Some(observation) = lifetime_events.recv() => {
-                handle_lifetime_observation(observation, &mut writer, &mut state.generations).await?;
+                handle_lifetime_observation(
+                    observation,
+                    &mut writer,
+                    &mut state.generations,
+                    &mut state.processes,
+                ).await?;
             }
         }
     }
@@ -1039,7 +1066,15 @@ enum LifetimeState {
 
 struct BrokerGeneration {
     child: Option<SpawnedProcess>,
+    guard: Option<ProcessGroupGuard>,
+    group: ProcessGroupId,
     lifetime: LifetimeState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BrokerOwnedProcess {
+    Generation(Generation),
+    Guard(Generation),
 }
 
 struct BrokerRuntimeState {
@@ -1047,7 +1082,7 @@ struct BrokerRuntimeState {
     logging: BrokerLogging,
     lifetime_cleanup: Option<BrokerLifetimePlan>,
     lifetime_sender: mpsc::Sender<LifetimeObservation>,
-    processes: BTreeMap<ProcessId, Generation>,
+    processes: BTreeMap<ProcessId, BrokerOwnedProcess>,
     readiness_sender: mpsc::Sender<ReadinessObservation>,
 }
 
@@ -1155,7 +1190,7 @@ struct LifetimeObservation {
 struct BrokerSpawnState<'a> {
     generations: &'a mut BTreeMap<Generation, BrokerGeneration>,
     lifetime_sender: &'a mpsc::Sender<LifetimeObservation>,
-    processes: &'a mut BTreeMap<ProcessId, Generation>,
+    processes: &'a mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     readiness_sender: &'a mpsc::Sender<ReadinessObservation>,
     logging: &'a BrokerLogging,
 }
@@ -1172,7 +1207,7 @@ async fn handle_detach<W>(
     generation: Generation,
     writer: &mut W,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
 ) -> Result<(), ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
@@ -1184,10 +1219,21 @@ where
     else {
         return write_event(writer, &BrokerEvent::DetachFailed { generation }).await;
     };
+    let guard_process = generations
+        .get(&generation)
+        .and_then(|entry| entry.guard.as_ref())
+        .and_then(|guard| guard.process().ok());
     if generations.len() != 1
-        || processes.len() != 1
-        || processes.get(&child.process()) != Some(&generation)
+        || processes.len() != 2
+        || processes.get(&child.process()) != Some(&BrokerOwnedProcess::Generation(generation))
+        || guard_process.is_none_or(|guard| {
+            processes.get(&guard) != Some(&BrokerOwnedProcess::Guard(generation))
+        })
     {
+        return write_event(writer, &BrokerEvent::DetachFailed { generation }).await;
+    }
+    if disarm_generation_guard(generation, generations, processes).is_err() {
+        let _ = signal(SignalTarget::Group(child.group()), ProcessSignal::Kill);
         return write_event(writer, &BrokerEvent::DetachFailed { generation }).await;
     }
     generations.remove(&generation);
@@ -1202,7 +1248,7 @@ async fn handle_spawn<W>(
     readiness_timeout: Option<Duration>,
     lifetime_tracking: bool,
     writer: &mut W,
-    state: BrokerSpawnState<'_>,
+    mut state: BrokerSpawnState<'_>,
 ) -> Result<(), ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
@@ -1237,56 +1283,30 @@ where
                 .await;
             }
         };
-    let spawn_result = if prepared.descriptors.is_empty() {
-        spawn(prepared.command, startup_timeout)
-    } else {
-        spawn_with_descriptors(prepared.command, startup_timeout, prepared.descriptors)
-    };
+    let PreparedServiceSpawn {
+        command,
+        descriptors,
+        lifetime_waiter,
+        readiness_waiter,
+    } = prepared;
+    let spawn_result = spawn_guarded(command, startup_timeout, descriptors);
     match spawn_result {
-        Ok(child) => {
-            if let Some((mut broker_stream, timeout)) = prepared.readiness_waiter {
-                let sender = state.readiness_sender.clone();
-                tokio::spawn(async move {
-                    let result = wait_for_readiness(&mut broker_stream, timeout).await;
-                    let _ = sender
-                        .send(ReadinessObservation { generation, result })
-                        .await;
-                });
-            }
-            if let Some(mut broker_stream) = prepared.lifetime_waiter {
-                let sender = state.lifetime_sender.clone();
-                tokio::spawn(async move {
-                    let result = wait_for_lifetime_close(&mut broker_stream).await;
-                    let _ = sender
-                        .send(LifetimeObservation { generation, result })
-                        .await;
-                });
-            }
-            state.processes.insert(child.process(), generation);
-            state.generations.insert(
+        Ok(guarded) => {
+            let event = register_spawned_service(
                 generation,
-                BrokerGeneration {
-                    child: Some(child),
-                    lifetime: if lifetime_tracking {
-                        LifetimeState::Tracking
-                    } else {
-                        LifetimeState::Foreground
-                    },
-                },
+                guarded,
+                lifetime_waiter,
+                lifetime_tracking,
+                readiness_waiter,
+                &mut state,
             );
-            write_event(
-                writer,
-                &BrokerEvent::Started {
-                    generation,
-                    process: child.process(),
-                    group: child.group(),
-                },
-            )
-            .await
+            write_event(writer, &event).await
         }
         Err(error) => {
             if let Some(process) = error.cleanup_pending() {
-                state.processes.insert(process, generation);
+                state
+                    .processes
+                    .insert(process, BrokerOwnedProcess::Generation(generation));
             }
             write_event(
                 writer,
@@ -1303,11 +1323,102 @@ where
     }
 }
 
+fn register_spawned_service(
+    generation: Generation,
+    guarded: GuardedSpawn,
+    lifetime_waiter: Option<UnixStream>,
+    lifetime_tracking: bool,
+    readiness_waiter: Option<(UnixStream, Duration)>,
+    state: &mut BrokerSpawnState<'_>,
+) -> BrokerEvent {
+    let child = guarded.child;
+    if let Some((mut broker_stream, timeout)) = readiness_waiter {
+        let sender = state.readiness_sender.clone();
+        tokio::spawn(async move {
+            let result = wait_for_readiness(&mut broker_stream, timeout).await;
+            let _ = sender
+                .send(ReadinessObservation { generation, result })
+                .await;
+        });
+    }
+    if let Some(mut broker_stream) = lifetime_waiter {
+        let sender = state.lifetime_sender.clone();
+        tokio::spawn(async move {
+            let result = wait_for_lifetime_close(&mut broker_stream).await;
+            let _ = sender
+                .send(LifetimeObservation { generation, result })
+                .await;
+        });
+    }
+    state
+        .processes
+        .insert(child.process(), BrokerOwnedProcess::Generation(generation));
+    state
+        .processes
+        .insert(guarded.guard_process, BrokerOwnedProcess::Guard(generation));
+    state.generations.insert(
+        generation,
+        BrokerGeneration {
+            child: Some(child),
+            group: child.group(),
+            guard: Some(guarded.guard),
+            lifetime: if lifetime_tracking {
+                LifetimeState::Tracking
+            } else {
+                LifetimeState::Foreground
+            },
+        },
+    );
+    BrokerEvent::Started {
+        generation,
+        process: child.process(),
+        group: child.group(),
+    }
+}
+
 struct PreparedServiceSpawn {
     command: ProcessCommand,
     descriptors: Vec<ProcessDescriptor>,
     lifetime_waiter: Option<UnixStream>,
     readiness_waiter: Option<(UnixStream, Duration)>,
+}
+
+struct GuardedSpawn {
+    child: SpawnedProcess,
+    guard: ProcessGroupGuard,
+    guard_process: ProcessId,
+}
+
+fn spawn_guarded(
+    command: ProcessCommand,
+    startup_timeout: Duration,
+    descriptors: impl IntoIterator<Item = ProcessDescriptor>,
+) -> Result<GuardedSpawn, super::SpawnError> {
+    let mut guard = ProcessGroupGuard::new().map_err(|error| guard_spawn_error(error, None))?;
+    let group = guard
+        .group()
+        .map_err(|error| guard_spawn_error(error, None))?;
+    let child = spawn_with_descriptors_in_group(command, startup_timeout, descriptors, group)?;
+    guard
+        .activate(GROUP_GUARD_CLEANUP_TIMEOUT)
+        .map_err(|error| guard_spawn_error(error, Some(child.process())))?;
+    let guard_process = guard
+        .process()
+        .map_err(|error| guard_spawn_error(error, Some(child.process())))?;
+    Ok(GuardedSpawn {
+        child,
+        guard,
+        guard_process,
+    })
+}
+
+fn guard_spawn_error(error: io::Error, cleanup_pending: Option<ProcessId>) -> super::SpawnError {
+    super::SpawnError {
+        stage: SpawnStage::ProcessGroup,
+        failure: SpawnFailure::OperatingSystem,
+        cleanup_pending,
+        source: Some(error),
+    }
 }
 
 fn prepare_service_spawn(
@@ -1345,7 +1456,7 @@ async fn handle_logger_spawn<W>(
     startup_timeout: Duration,
     writer: &mut W,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
 ) -> Result<(), ProcessBrokerError>
 where
@@ -1380,14 +1491,18 @@ where
             .await;
         }
     };
-    match spawn_with_descriptors(command, startup_timeout, descriptors) {
-        Ok(child) => {
+    match spawn_guarded(command, startup_timeout, descriptors) {
+        Ok(guarded) => {
+            let child = guarded.child;
             logging.register(logger, generation)?;
-            processes.insert(child.process(), generation);
+            processes.insert(child.process(), BrokerOwnedProcess::Generation(generation));
+            processes.insert(guarded.guard_process, BrokerOwnedProcess::Guard(generation));
             generations.insert(
                 generation,
                 BrokerGeneration {
                     child: Some(child),
+                    group: child.group(),
+                    guard: Some(guarded.guard),
                     lifetime: LifetimeState::Foreground,
                 },
             );
@@ -1403,7 +1518,7 @@ where
         }
         Err(error) => {
             if let Some(process) = error.cleanup_pending() {
-                processes.insert(process, generation);
+                processes.insert(process, BrokerOwnedProcess::Generation(generation));
             }
             write_event(
                 writer,
@@ -1488,11 +1603,12 @@ async fn handle_lifetime_observation<W>(
     observation: LifetimeObservation,
     writer: &mut W,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
 ) -> Result<(), ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
 {
-    if let Some(event) = record_lifetime_observation(&observation, generations) {
+    if let Some(event) = record_lifetime_observation(&observation, generations, processes)? {
         write_event(writer, &event).await?;
     }
     Ok(())
@@ -1501,10 +1617,13 @@ where
 fn record_lifetime_observation(
     observation: &LifetimeObservation,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-) -> Option<BrokerEvent> {
-    let entry = generations.get_mut(&observation.generation)?;
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
+) -> Result<Option<BrokerEvent>, ProcessBrokerError> {
+    let Some(entry) = generations.get_mut(&observation.generation) else {
+        return Ok(None);
+    };
     if entry.lifetime != LifetimeState::Tracking {
-        return None;
+        return Ok(None);
     }
     let event = if observation.result.is_ok() {
         entry.lifetime = LifetimeState::Closed;
@@ -1519,9 +1638,10 @@ fn record_lifetime_observation(
     };
     let generation_finished = entry.child.is_none();
     if generation_finished {
+        disarm_generation_guard(observation.generation, generations, processes)?;
         generations.remove(&observation.generation);
     }
-    Some(event)
+    Ok(Some(event))
 }
 
 async fn handle_signal<W>(
@@ -1565,7 +1685,7 @@ where
 async fn forward_child_events<W>(
     writer: &mut W,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
 ) -> Result<(), ProcessBrokerError>
 where
@@ -1579,7 +1699,7 @@ where
 
 fn collect_child_events(
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
 ) -> Result<Vec<BrokerEvent>, ProcessBrokerError> {
     let mut events = Vec::new();
@@ -1591,42 +1711,81 @@ fn collect_child_events(
             break;
         };
         let process = event.pid();
-        let generation = processes.get(&process).copied().ok_or(ProcessBrokerError(
+        let owned = processes.get(&process).copied().ok_or(ProcessBrokerError(
             ProcessBrokerErrorKind::UnownedChild(process),
         ))?;
         if event.is_terminal() {
             processes.remove(&process);
-            let remove_generation = if let Some(entry) = generations.get_mut(&generation) {
-                if entry.lifetime == LifetimeState::Foreground {
-                    if let Some(child) = entry.child {
-                        let _ = signal(SignalTarget::Group(child.group()), ProcessSignal::Kill);
+        }
+        match owned {
+            BrokerOwnedProcess::Generation(generation) => {
+                if event.is_terminal() {
+                    let remove_generation = if let Some(entry) = generations.get_mut(&generation) {
+                        if entry.lifetime == LifetimeState::Foreground {
+                            let _ = signal(SignalTarget::Group(entry.group), ProcessSignal::Kill);
+                            true
+                        } else {
+                            entry.child = None;
+                            matches!(
+                                entry.lifetime,
+                                LifetimeState::Closed | LifetimeState::Failed
+                            )
+                        }
+                    } else {
+                        false
+                    };
+                    if remove_generation {
+                        disarm_generation_guard(generation, generations, processes)?;
+                        generations.remove(&generation);
+                        logging.child_reaped(generation);
                     }
-                    true
-                } else {
-                    entry.child = None;
-                    matches!(
-                        entry.lifetime,
-                        LifetimeState::Closed | LifetimeState::Failed
-                    )
                 }
-            } else {
-                false
-            };
-            if remove_generation {
-                generations.remove(&generation);
-                logging.child_reaped(generation);
+                events.push(BrokerEvent::Child { generation, event });
+            }
+            BrokerOwnedProcess::Guard(generation) => {
+                processes.remove(&process);
+                let group = generations.get_mut(&generation).map(|entry| {
+                    drop(entry.guard.take());
+                    entry.group
+                });
+                if let Some(group) = group {
+                    let _ = signal(SignalTarget::Group(group), ProcessSignal::Kill);
+                }
+                events.push(BrokerEvent::ContainmentFailed { generation });
             }
         }
-        events.push(BrokerEvent::Child { generation, event });
     }
     Ok(events)
+}
+
+fn disarm_generation_guard(
+    generation: Generation,
+    generations: &mut BTreeMap<Generation, BrokerGeneration>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
+) -> Result<(), ProcessBrokerError> {
+    let Some(guard) = generations
+        .get_mut(&generation)
+        .and_then(|entry| entry.guard.take())
+    else {
+        return Ok(());
+    };
+    let process = guard.process()?;
+    if processes.remove(&process) != Some(BrokerOwnedProcess::Guard(generation)) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process-group guard ownership is inconsistent",
+        )
+        .into());
+    }
+    guard.disarm(GROUP_GUARD_CLEANUP_TIMEOUT)?;
+    Ok(())
 }
 
 async fn shutdown_owned<W>(
     child_signal: &mut ChildSignal,
     writer: &mut W,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
 ) -> Result<bool, ProcessBrokerError>
 where
@@ -1662,14 +1821,14 @@ async fn reap_until<W>(
     child_signal: &mut ChildSignal,
     writer: &mut W,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
 ) -> Result<bool, ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
 {
     forward_child_events(writer, generations, processes, logging).await?;
-    while !processes.is_empty() {
+    while has_workload_processes(processes) {
         match timeout_at(deadline, child_signal.recv()).await {
             Ok(Some(())) => {
                 forward_child_events(writer, generations, processes, logging).await?;
@@ -1694,10 +1853,16 @@ fn signal_every_group(
     }
 }
 
+fn has_workload_processes(processes: &BTreeMap<ProcessId, BrokerOwnedProcess>) -> bool {
+    processes
+        .values()
+        .any(|owned| matches!(owned, BrokerOwnedProcess::Generation(_)))
+}
+
 async fn cleanup_after_supervisor_loss(
     child_signal: &mut ChildSignal,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
     lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
     lifetime_cleanup: Option<BrokerLifetimePlan>,
@@ -1762,7 +1927,7 @@ async fn run_supervisor_loss_hook(
     cleanup: BrokerLifetimePlan,
     child_signal: &mut ChildSignal,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
     lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
 ) -> Result<bool, ProcessBrokerError> {
@@ -1773,12 +1938,12 @@ async fn run_supervisor_loss_hook(
     } = cleanup;
     let hook = match spawn(stop, SHUTDOWN_GRACE) {
         Ok(hook) => {
-            processes.insert(hook.process(), generation);
+            processes.insert(hook.process(), BrokerOwnedProcess::Generation(generation));
             Some(hook)
         }
         Err(error) => {
             if let Some(process) = error.cleanup_pending() {
-                processes.insert(process, generation);
+                processes.insert(process, BrokerOwnedProcess::Generation(generation));
             }
             None
         }
@@ -1811,6 +1976,7 @@ async fn run_supervisor_loss_hook(
         generation,
         Instant::now() + lifetime_timeout,
         generations,
+        processes,
         lifetime_events,
     )
     .await?;
@@ -1821,11 +1987,11 @@ async fn reap_without_events(
     deadline: Instant,
     child_signal: &mut ChildSignal,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, Generation>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
 ) -> Result<bool, ProcessBrokerError> {
     let _ = collect_child_events(generations, processes, logging)?;
-    while !processes.is_empty() {
+    while has_workload_processes(processes) {
         match timeout_at(deadline, child_signal.recv()).await {
             Ok(Some(())) => {
                 let _ = collect_child_events(generations, processes, logging)?;
@@ -1845,6 +2011,7 @@ async fn wait_for_cleanup_lifetime(
     generation: Generation,
     deadline: Instant,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
+    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
 ) -> Result<bool, ProcessBrokerError> {
     if !generations.contains_key(&generation) {
@@ -1864,7 +2031,7 @@ async fn wait_for_cleanup_lifetime(
         };
         let observed_generation = observation.generation;
         let closed = observation.result.is_ok();
-        let _ = record_lifetime_observation(&observation, generations);
+        let _ = record_lifetime_observation(&observation, generations, processes)?;
         if observed_generation == generation {
             return Ok(closed && !generations.contains_key(&generation));
         }
@@ -1930,4 +2097,31 @@ where
     }
     let _ = reader.read_exact(payload).await?;
     Ok(frame)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn containment_event_preserves_service_and_task_identity() -> Result<(), Box<dyn Error>> {
+        let generation = Generation::FIRST;
+        assert_eq!(
+            ProcessBrokerEvent::from(BrokerEvent::ContainmentFailed { generation }),
+            ProcessBrokerEvent::ContainmentFailed { generation }
+        );
+
+        let task = BrokerTaskId::new(7)
+            .ok_or_else(|| io::Error::other("test task identifier must be valid"))?;
+        let task_generation = task
+            .generation()
+            .ok_or_else(|| io::Error::other("test task must map to a generation"))?;
+        assert_eq!(
+            ProcessBrokerEvent::from(BrokerEvent::ContainmentFailed {
+                generation: task_generation,
+            }),
+            ProcessBrokerEvent::TaskContainmentFailed { task }
+        );
+        Ok(())
+    }
 }

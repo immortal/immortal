@@ -16,9 +16,13 @@ workflow definition or an unreviewed local measurement is not sufficient.
 
 These gates cannot be checked by elapsed time, intention, or generated text.
 
-The process-library gate was completed on 2026-07-13: `fork` 0.9.0 is
-published, Immortal requires that exact registry version, and `Cargo.lock`
-records its crates.io source and checksum.
+The base process-library gate was completed on 2026-07-13 with published
+`fork` 0.9.0. Broker-death containment adds a second gate: Immortal currently
+pins the `fork` 0.9.1 candidate commit `883798b189829871947fd3f34e84938cc294f426`
+for integration testing. Release eligibility remains blocked until its native
+CI passes, 0.9.1 is published, the Git dependency is replaced by the crates.io
+release, its temporary `deny.toml` source exception is removed, and
+`Cargo.lock` records the registry source and checksum.
 
 ## Candidate validation
 

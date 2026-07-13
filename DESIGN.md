@@ -134,6 +134,36 @@ supervisor in a terminal failure state; it must never spawn an untracked
 replacement path. Daemon startup is reported to the invoking process only after
 the broker, service lock, runtime directory, and control socket are ready.
 
+Every broker-created service, logger, and hook group has a fail-closed lifetime
+capability supplied by `fork`. Creation follows one ordered transaction:
+
+1. a short-lived anchor reserves a fresh group before any workload exists;
+2. an out-of-group helper starts with only its owner-lifetime socket;
+3. the prepared workload joins the reserved group and completes exec startup;
+4. the broker activates the guard by disarming and reaping the anchor; and
+5. normal group cleanup disarms and reaps the persistent helper.
+
+The broker exclusively owns the write endpoint and the typed guard value.
+Prepared child descriptor closure prevents the service, logger, control IPC,
+locks, and readiness channels from retaining that endpoint. If the broker is
+forcibly killed, kernel descriptor closure wakes the helper, which sends
+`SIGKILL` to the complete group even when that group is stopped. Unexpected
+helper exit is a typed containment failure: the live broker kills the affected
+group and the supervisor enters a terminal error instead of restarting through
+an untracked path. Startup uses two helper forks and retains one sleeping helper
+and one socket endpoint per active group. It introduces no `Arc`, mutex, shared
+configuration copy, or asynchronous task; registration, lookup, and cleanup
+remain logarithmic in the broker's existing ordered ownership maps.
+
+This is process-group containment, not a portable cgroup or FreeBSD process
+reaper. A workload which deliberately calls `setsid`, changes process group, or
+otherwise escapes the reserved group has left the contract. Descriptor tracking
+can intentionally support such self-daemonizing software through lifetime
+capabilities and stop/reload hooks, but the group guard must not be represented
+as containing the escaped daemon after forced broker death. Platform-specific
+stronger containment remains future work and cannot silently change this
+portable guarantee.
+
 The implemented initial broker channel never accepts a PID from the supervisor.
 Spawn and signal requests carry the supervisor's monotonic generation, and the
 broker resolves that generation against its live child and process-group table.
@@ -277,6 +307,10 @@ action tracks its latest v1 release and runs the same suite on its current
 default FreeBSD guest, while the Linux-hosted FreeBSD target check remains only
 a fast compile gate. The benchmark metadata records the actual guest release;
 a native job is not considered complete until its remote execution is green.
+The harness-free resource contract additionally drives a bounded signal storm
+through one broker and isolates descriptor exhaustion in a reduced-limit
+subprocess, so neither fault can contaminate the test runner or leave ownership
+to asynchronous cleanup.
 
 Milestone 2 is implemented for foreground and checked daemon launches. The CLI
 builds or loads the strict service model and resolves account data before any

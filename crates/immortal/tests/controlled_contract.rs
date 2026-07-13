@@ -21,7 +21,7 @@ use immortal_core::{
         read_response, write_request,
     },
     exit::ExitClass,
-    process::{ProcessGroupId, ProcessSignal, SignalTarget, signal as deliver_signal},
+    process::{ProcessId, ProcessSignal, SignalTarget, signal as deliver_signal},
     status::{LoggerStatus, ServiceState},
     supervisor::Generation,
 };
@@ -454,9 +454,9 @@ fn prove_explicit_exit_leaves_the_child(binary: &Path) -> Result<(), Box<dyn Err
     )?;
 
     let pid: i32 = fs::read_to_string(&pid_file)?.trim().parse()?;
-    let group = ProcessGroupId::try_from(pid)?;
-    let mut cleanup = DetachedGroupGuard::new(group);
-    deliver_signal(SignalTarget::Group(group), ProcessSignal::Continue)?;
+    let process = ProcessId::try_from(pid)?;
+    let mut cleanup = DetachedProcessGuard::new(process);
+    deliver_signal(SignalTarget::Process(process), ProcessSignal::Continue)?;
     cleanup.kill();
     Ok(())
 }
@@ -1030,29 +1030,29 @@ impl Drop for ChildGuard {
     }
 }
 
-struct DetachedGroupGuard {
-    group: ProcessGroupId,
+struct DetachedProcessGuard {
     killed: bool,
+    process: ProcessId,
 }
 
-impl DetachedGroupGuard {
-    const fn new(group: ProcessGroupId) -> Self {
+impl DetachedProcessGuard {
+    const fn new(process: ProcessId) -> Self {
         Self {
-            group,
             killed: false,
+            process,
         }
     }
 
     fn kill(&mut self) {
-        let _ = deliver_signal(SignalTarget::Group(self.group), ProcessSignal::Kill);
+        let _ = deliver_signal(SignalTarget::Process(self.process), ProcessSignal::Kill);
         self.killed = true;
     }
 }
 
-impl Drop for DetachedGroupGuard {
+impl Drop for DetachedProcessGuard {
     fn drop(&mut self) {
         if !self.killed {
-            let _ = deliver_signal(SignalTarget::Group(self.group), ProcessSignal::Kill);
+            let _ = deliver_signal(SignalTarget::Process(self.process), ProcessSignal::Kill);
         }
     }
 }

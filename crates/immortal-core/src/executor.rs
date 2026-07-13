@@ -101,6 +101,7 @@ pub enum ExecutorError {
     Broker(ProcessBrokerError),
     Transition(TransitionError),
     BrokerTimedOut(&'static str),
+    ContainmentFailed(ProcessBrokerEvent),
     UnexpectedBrokerEvent(ProcessBrokerEvent),
     UnexpectedChildEvent(ChildEvent),
     BrokerExited(ChildEvent),
@@ -122,6 +123,9 @@ impl Display for ExecutorError {
             Self::Transition(error) => Display::fmt(error, formatter),
             Self::BrokerTimedOut(operation) => {
                 write!(formatter, "process broker timed out during {operation}")
+            }
+            Self::ContainmentFailed(event) => {
+                write!(formatter, "process-group containment failed: {event:?}")
             }
             Self::UnexpectedBrokerEvent(event) => {
                 write!(formatter, "unexpected process broker event: {event:?}")
@@ -148,6 +152,7 @@ impl Error for ExecutorError {
             Self::Transition(error) => Some(error),
             Self::Unsupported(_)
             | Self::BrokerTimedOut(_)
+            | Self::ContainmentFailed(_)
             | Self::UnexpectedBrokerEvent(_)
             | Self::UnexpectedChildEvent(_)
             | Self::BrokerExited(_)
@@ -2151,6 +2156,13 @@ async fn handle_broker_event(
     config: &ServiceConfig,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
+    if matches!(
+        event,
+        ProcessBrokerEvent::ContainmentFailed { .. }
+            | ProcessBrokerEvent::TaskContainmentFailed { .. }
+    ) {
+        return Err(ExecutorError::ContainmentFailed(event));
+    }
     if matches!(event, ProcessBrokerEvent::LoggerInputsClosed)
         && matches!(
             execution.logger_shutdown,
@@ -2533,7 +2545,8 @@ const fn task_id(event: &ProcessBrokerEvent) -> Option<BrokerTaskId> {
         | ProcessBrokerEvent::TaskSpawnFailed { task, .. }
         | ProcessBrokerEvent::TaskChild { task, .. }
         | ProcessBrokerEvent::TaskSignalDelivered { task }
-        | ProcessBrokerEvent::TaskSignalFailed { task, .. } => Some(*task),
+        | ProcessBrokerEvent::TaskSignalFailed { task, .. }
+        | ProcessBrokerEvent::TaskContainmentFailed { task } => Some(*task),
         ProcessBrokerEvent::Ready
         | ProcessBrokerEvent::Started { .. }
         | ProcessBrokerEvent::SpawnFailed { .. }
@@ -2546,6 +2559,7 @@ const fn task_id(event: &ProcessBrokerEvent) -> Option<BrokerTaskId> {
         | ProcessBrokerEvent::ReadinessFailed { .. }
         | ProcessBrokerEvent::LifetimeClosed { .. }
         | ProcessBrokerEvent::LifetimeFailed { .. }
+        | ProcessBrokerEvent::ContainmentFailed { .. }
         | ProcessBrokerEvent::LoggerInputsClosed
         | ProcessBrokerEvent::ShutdownComplete
         | ProcessBrokerEvent::ShutdownFailed { .. } => None,

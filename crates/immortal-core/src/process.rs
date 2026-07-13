@@ -780,6 +780,41 @@ pub struct SpawnedProcess {
     group: ProcessGroupId,
 }
 
+#[derive(Debug)]
+pub(crate) struct ProcessGroupGuard(fork::ProcessGroupGuard);
+
+impl ProcessGroupGuard {
+    pub(crate) fn new() -> io::Result<Self> {
+        fork::ProcessGroupGuard::new().map(Self)
+    }
+
+    pub(crate) fn group(&self) -> io::Result<ProcessGroupId> {
+        ProcessGroupId::new(self.0.process_group().get()).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "fork returned an invalid guarded process group",
+            )
+        })
+    }
+
+    pub(crate) fn process(&self) -> io::Result<ProcessId> {
+        ProcessId::new(self.0.guard_process().get()).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "fork returned an invalid process-group guard",
+            )
+        })
+    }
+
+    pub(crate) fn activate(&mut self, timeout: Duration) -> io::Result<()> {
+        self.0.activate(timeout)
+    }
+
+    pub(crate) fn disarm(self, timeout: Duration) -> io::Result<()> {
+        self.0.disarm(timeout)
+    }
+}
+
 /// One owned descriptor explicitly permitted to survive child execution.
 ///
 /// Descriptors not present in this plan are closed by the canonical `fork`
@@ -947,7 +982,7 @@ pub fn spawn(
     command: ProcessCommand,
     startup_timeout: Duration,
 ) -> Result<SpawnedProcess, SpawnError> {
-    spawn_with_descriptors(command, startup_timeout, [])
+    spawn_prepared(command, startup_timeout, [], fork::ProcessGroup::New)
 }
 
 /// Prepare and execute one command with an explicit descriptor allow-list.
@@ -963,6 +998,40 @@ pub fn spawn_with_descriptors(
     command: ProcessCommand,
     startup_timeout: Duration,
     descriptors: impl IntoIterator<Item = ProcessDescriptor>,
+) -> Result<SpawnedProcess, SpawnError> {
+    spawn_prepared(
+        command,
+        startup_timeout,
+        descriptors,
+        fork::ProcessGroup::New,
+    )
+}
+
+fn spawn_with_descriptors_in_group(
+    command: ProcessCommand,
+    startup_timeout: Duration,
+    descriptors: impl IntoIterator<Item = ProcessDescriptor>,
+    group: ProcessGroupId,
+) -> Result<SpawnedProcess, SpawnError> {
+    let group = fork::ProcessGroupId::new(group.get()).ok_or(SpawnError {
+        stage: SpawnStage::ProcessGroup,
+        failure: SpawnFailure::InvalidForkContract,
+        cleanup_pending: None,
+        source: None,
+    })?;
+    spawn_prepared(
+        command,
+        startup_timeout,
+        descriptors,
+        fork::ProcessGroup::Join(group),
+    )
+}
+
+fn spawn_prepared(
+    command: ProcessCommand,
+    startup_timeout: Duration,
+    descriptors: impl IntoIterator<Item = ProcessDescriptor>,
+    group: fork::ProcessGroup,
 ) -> Result<SpawnedProcess, SpawnError> {
     let mut prepared = fork::PreparedCommand::new(&command.program).map_err(specification_error)?;
     for argument in command.arguments {
@@ -995,7 +1064,7 @@ pub fn spawn_with_descriptors(
             .map_descriptor(descriptor.source, descriptor.target)
             .map_err(specification_error)?;
     }
-    prepared.process_group(fork::ProcessGroup::New);
+    prepared.process_group(group);
     let child = prepared
         .spawn(startup_timeout)
         .map_err(spawn_error_from_fork)?;

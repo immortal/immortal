@@ -32,18 +32,34 @@ earlier artifact is not an independent sample.
 | COR-002 | Stop, restart, and halt clean the owned process group before generation reuse. | Fork-backed process and controlled lifecycle contracts | All | Proven |
 | COR-003 | Exec failure is distinct from successful execution and never publishes Ready. | Broker and executor contracts | All | Proven |
 | COR-004 | Configuration, control, broker, and status inputs are bounded and fail closed. | Unit mutation corpora, fuzz workflows, and protocol contracts | All | Proven |
-| COR-005 | Unexpected broker death cannot create a duplicate replacement or leave an unmanaged live service. | Dedicated broker-death fault campaign | All | Pending |
+| COR-005 | Unexpected broker death cannot create a duplicate replacement or leave a live member in an owned process group. | `broker_death_contract` plus `fork` group-guard contracts | All | Pending |
 | COR-006 | Deliberate process-group or session escape is never misrepresented as portable containment. | Documented limitation and escape fixture | All | Pending |
 | RES-001 | Supervisor loss makes the broker stop and clean every owned group. | Broker supervisor-loss contract | All | Proven |
 | RES-002 | Lost or coalesced child notifications cannot leave an owned zombie. | Delayed reap sweep and native lifecycle contracts | All | Proven |
 | RES-003 | Logger failure, backpressure, and shutdown preserve the configured lossless contract. | Logger restart, file-adapter, drain, and foreground contracts | All | Proven |
 | RES-004 | Interrupted reconciliation retains last-known-good state and retries independent failures. | Reconcile unit and operational contracts | All | Proven |
-| RES-005 | Signal storms, control-client saturation, descriptor exhaustion, and interrupted system calls remain bounded. | Adversarial resource campaign | All | Pending |
+| RES-005 | Signal storms, control-client saturation, descriptor exhaustion, and interrupted system calls remain bounded. | `resource_fault_contract`, bounded control-listener and `fork` EINTR contracts, plus the adversarial resource campaign | All | Pending |
 | SEC-001 | Runtime discovery and control authenticate ownership without following unsafe filesystem entries. | Runtime and control contracts | All | Proven |
 | SEC-002 | Dependencies pass audit, license, source, and duplicate-version policy. | `cargo audit` and `cargo deny --all-features check` | All | Proven |
 
 `Proven` describes repository contracts, not production readiness. A candidate
 must still pass the real-host gates below for its exact commit.
+
+COR-005 is deliberately bounded by COR-006. A process which creates a new
+session or joins another process group has escaped the portable ownership unit;
+the project must expose that limitation rather than claiming cgroup- or
+subreaper-equivalent containment. The pinned `fork#17` candidate passes its
+running, stopped, empty-startup, descriptor-isolation, and cleanup contracts on
+native Linux, macOS, and FreeBSD. COR-005 remains Pending until the combined
+Immortal candidate passes those native jobs at its exact commit; publishing the
+locked `fork` release remains a separate release gate.
+
+RES-005 has deterministic contracts for a bounded stop/continue storm,
+descriptor exhaustion before broker creation, active control-client limits,
+and interrupted waits. It remains Pending until those contracts pass natively
+on all three platforms and the retained resource campaign confirms bounded
+descriptor, process, memory, scheduling, and cleanup behavior under sustained
+load.
 
 ## Comparative reference set
 

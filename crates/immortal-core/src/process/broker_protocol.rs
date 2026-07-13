@@ -19,7 +19,7 @@ use super::{
 
 const MAGIC: [u8; 4] = *b"IMBR";
 pub(super) const HEADER_BYTES: usize = 10;
-const VERSION: u8 = 5;
+const VERSION: u8 = 6;
 const REQUEST_SPAWN: u8 = 1;
 const REQUEST_SIGNAL: u8 = 2;
 const REQUEST_SHUTDOWN: u8 = 3;
@@ -41,6 +41,7 @@ const EVENT_READINESS_FAILED: u8 = 12;
 const EVENT_LOGGER_INPUTS_CLOSED: u8 = 13;
 const EVENT_LIFETIME_CLOSED: u8 = 14;
 const EVENT_LIFETIME_FAILED: u8 = 15;
+const EVENT_CONTAINMENT_FAILED: u8 = 16;
 const CHILD_EXITED: u8 = 1;
 const CHILD_SIGNALED: u8 = 2;
 const CHILD_STOPPED: u8 = 3;
@@ -239,6 +240,9 @@ pub(super) enum BrokerEvent {
     LifetimeFailed {
         generation: Generation,
     },
+    ContainmentFailed {
+        generation: Generation,
+    },
     LoggerInputsClosed,
     ShutdownComplete,
     ShutdownFailed {
@@ -324,6 +328,10 @@ impl BrokerEvent {
                 encode_generation(*generation, &mut payload);
                 EVENT_LIFETIME_FAILED
             }
+            Self::ContainmentFailed { generation } => {
+                encode_generation(*generation, &mut payload);
+                EVENT_CONTAINMENT_FAILED
+            }
             Self::LoggerInputsClosed => EVENT_LOGGER_INPUTS_CLOSED,
             Self::ShutdownComplete => EVENT_SHUTDOWN_COMPLETE,
             Self::ShutdownFailed { os_error } => {
@@ -384,6 +392,9 @@ impl BrokerEvent {
                 generation: decode_generation(&mut cursor)?,
             },
             EVENT_LIFETIME_FAILED => Self::LifetimeFailed {
+                generation: decode_generation(&mut cursor)?,
+            },
+            EVENT_CONTAINMENT_FAILED => Self::ContainmentFailed {
                 generation: decode_generation(&mut cursor)?,
             },
             EVENT_LOGGER_INPUTS_CLOSED => Self::LoggerInputsClosed,
@@ -1109,6 +1120,7 @@ mod tests {
             },
             BrokerEvent::LifetimeClosed { generation },
             BrokerEvent::LifetimeFailed { generation },
+            BrokerEvent::ContainmentFailed { generation },
             BrokerEvent::LoggerInputsClosed,
             BrokerEvent::ShutdownComplete,
             BrokerEvent::ShutdownFailed { os_error: None },
