@@ -314,6 +314,7 @@ fn prove_controlled_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
     require_ok(&once, "once")?;
     let once_generation =
         wait_for_state(runtime.socket(), ServiceState::Ready, None, COMMAND_TIMEOUT)?;
+    wait_for_occurrences(&marker, "start", 2, COMMAND_TIMEOUT)?;
     let finish_once = request(
         runtime.socket(),
         &Request {
@@ -326,7 +327,6 @@ fn prove_controlled_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
     )?;
     require_ok(&finish_once, "once termination")?;
     wait_for_state(runtime.socket(), ServiceState::Down, None, COMMAND_TIMEOUT)?;
-    wait_for_occurrences(&marker, "start", 2, COMMAND_TIMEOUT)?;
 
     let start = request(
         runtime.socket(),
