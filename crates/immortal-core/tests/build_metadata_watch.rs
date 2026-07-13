@@ -22,7 +22,7 @@ impl TestDirectory {
             fs::remove_dir_all(&path)?;
         }
         fs::create_dir(&path)?;
-        Ok(Self(path))
+        Ok(Self(fs::canonicalize(path)?))
     }
 
     fn path(&self) -> &Path {
