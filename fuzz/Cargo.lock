@@ -144,7 +144,8 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 [[package]]
 name = "fork"
 version = "0.9.0"
-source = "git+https://github.com/immortal/fork?rev=5f495c56437d6c43a5fa61d1727ed6e2014ce573#5f495c56437d6c43a5fa61d1727ed6e2014ce573"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a084a371f15d80d66c2f7c4788738d4aefc68b24e07e8c3672e8dc81470f027c"
 dependencies = [
  "libc",
 ]

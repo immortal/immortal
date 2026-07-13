@@ -55,9 +55,9 @@ and the design documentation for
 
 ### Canonical fork-library gate
 
-Immortal currently pins the reviewed candidate from
-[`immortal/fork#16`](https://github.com/immortal/fork/issues/16) by commit so
-local, DevPod, and CI builds use the same process contract. That candidate adds
+Immortal pins the reviewed `fork` 0.9.0 registry release developed under
+[`immortal/fork#16`](https://github.com/immortal/fork/issues/16) so local,
+DevPod, and CI builds use the same process contract. That release adds
 checked process and process-group identifiers, full nonblocking child events,
 explicit signal targets, prepared direct execution, descriptor allow-lists,
 and checked daemon startup.
@@ -103,14 +103,11 @@ live-child detachment.
 Immortal will not add direct `libc` calls or a second process library to work
 around this boundary. `fork` owns the safety-sensitive Unix mechanisms;
 Immortal owns the broker protocol, lifecycle generations, supervision policy,
-readiness, logging, control, status, and reconciliation. The candidate has
-passed Immortal's native Linux, macOS, and FreeBSD lifecycle matrix, but issue
-#16 remains open and `fork` 0.9.0 is not yet a registry dependency. The commit
-pin remains mandatory until the maintainer merges and publishes the reviewed
-candidate. Migration then requires replacing the pin with the exact released
-version, regenerating `Cargo.lock`, verifying the registry package source, and
-rerunning the complete native, fuzzing, security, audit, and FreeBSD validation
-before an Immortal release candidate is tagged.
+readiness, logging, control, status, and reconciliation. The release has passed
+Immortal's native Linux, macOS, and FreeBSD lifecycle matrix. Immortal consumes
+the exact registry version, and `Cargo.lock` records its crates.io source and
+checksum. Complete native, fuzzing, security, audit, and FreeBSD validation
+remains mandatory for every Immortal release candidate.
 
 Dependency planning is deterministic and portable. Enabled services are
 topologically sorted into start waves, and the next wave waits for its

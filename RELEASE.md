@@ -6,16 +6,16 @@ workflow definition or an unreviewed local measurement is not sufficient.
 
 ## External gates
 
-- `immortal/fork#16` is reviewed, merged by its maintainer, and released as the
-  expected registry version.
-- The Git revision dependency is replaced by that exact registry version and
-  `Cargo.lock` records the registry source and checksum.
 - Linux, macOS, and FreeBSD each have at least ten retained lifecycle benchmark
   runs across three days at one commit, with reviewed per-platform ceilings.
 - Installation and shutdown have been exercised on real target hosts using the
   examples in [INSTALL.md](INSTALL.md).
 
 These gates cannot be checked by elapsed time, intention, or generated text.
+
+The process-library gate was completed on 2026-07-13: `fork` 0.9.0 is
+published, Immortal requires that exact registry version, and `Cargo.lock`
+records its crates.io source and checksum.
 
 ## Candidate validation
 

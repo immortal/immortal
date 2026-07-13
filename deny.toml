@@ -20,6 +20,3 @@ wildcards = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# Temporary while immortal/fork#16 is integrated by immutable commit. Remove
-# this exception when the reviewed API is released to crates.io.
-allow-git = ["https://github.com/immortal/fork"]

@@ -21,7 +21,7 @@ publish = false
 [workspace.dependencies]
 built = { version = "0.8.1", features = ["git2"] }
 clap = { version = "4.6", features = ["env"] }
-fork = { git = "https://github.com/immortal/fork", rev = "5f495c56437d6c43a5fa61d1727ed6e2014ce573" }
+fork = "=0.9.0"
 immortal-core = { path = "crates/immortal-core" }
 libc = "0.2"
 nix = { version = "0.31.3", features = ["user"] }
