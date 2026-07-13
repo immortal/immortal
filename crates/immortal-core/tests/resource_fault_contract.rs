@@ -36,7 +36,9 @@ const CHILD_MODE: &str = "IMMORTAL_DESCRIPTOR_EXHAUSTION_CHILD";
 const EVENT_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
-const STORM_CYCLES: u16 = 128;
+// Some kernels surface stopped and continued state through the broker's
+// periodic reap sweep rather than one notification per transition.
+const STORM_CYCLES: u16 = 32;
 const STORM_TIMEOUT: Duration = Duration::from_secs(30);
 const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(5);
 
