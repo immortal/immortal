@@ -32,8 +32,8 @@ earlier artifact is not an independent sample.
 | COR-002 | Stop, restart, and halt clean the owned process group before generation reuse. | Fork-backed process and controlled lifecycle contracts | All | Proven |
 | COR-003 | Exec failure is distinct from successful execution and never publishes Ready. | Broker and executor contracts | All | Proven |
 | COR-004 | Configuration, control, broker, and status inputs are bounded and fail closed. | Unit mutation corpora, fuzz workflows, and protocol contracts | All | Proven |
-| COR-005 | Unexpected broker death cannot create a duplicate replacement or leave a live member in an owned process group. | `broker_death_contract` plus `fork` group-guard contracts | All | Pending |
-| COR-006 | Deliberate process-group or session escape is never misrepresented as portable containment. | Documented limitation and escape fixture | All | Pending |
+| COR-005 | Unexpected broker death cannot create a duplicate replacement or leave a live member in an owned process group. | `broker_death_contract` plus `fork` group-guard contracts | All | Proven |
+| COR-006 | Deliberate process-group or session escape is never misrepresented as portable containment. | Documented limitation and `fork` escape fixture | All | Proven |
 | RES-001 | Supervisor loss makes the broker stop and clean every owned group. | Broker supervisor-loss contract | All | Proven |
 | RES-002 | Lost or coalesced child notifications cannot leave an owned zombie. | Delayed reap sweep and native lifecycle contracts | All | Proven |
 | RES-003 | Logger failure, backpressure, and shutdown preserve the configured lossless contract. | Logger restart, file-adapter, drain, and foreground contracts | All | Proven |
@@ -50,16 +50,40 @@ session or joins another process group has escaped the portable ownership unit;
 the project must expose that limitation rather than claiming cgroup- or
 subreaper-equivalent containment. The pinned `fork#17` candidate passes its
 running, stopped, empty-startup, descriptor-isolation, and cleanup contracts on
-native Linux, macOS, and FreeBSD. COR-005 remains Pending until the combined
-Immortal candidate passes those native jobs at its exact commit; publishing the
-locked `fork` release remains a separate release gate.
+native Linux, macOS, and FreeBSD, including an explicit session-escape fixture.
+The combined Immortal candidate passes its broker-death and complete workspace
+contracts on the same three native platforms. Publishing the locked `fork`
+release remains a separate release gate and does not weaken either contract.
 
 RES-005 has deterministic contracts for a bounded stop/continue storm,
 descriptor exhaustion before broker creation, active control-client limits,
-and interrupted waits. It remains Pending until those contracts pass natively
-on all three platforms and the retained resource campaign confirms bounded
+and interrupted waits. Those contracts pass natively on all three platforms.
+RES-005 remains Pending until the retained resource campaign confirms bounded
 descriptor, process, memory, scheduling, and cleanup behavior under sustained
 load.
+
+### Current candidate evidence
+
+The 2026-07-13 review binds the process-containment claims to exact revisions:
+
+- `fork` commit `883798b189829871947fd3f34e84938cc294f426` passed its complete
+  native Linux, macOS, and FreeBSD matrix in
+  [`fork` run 29280073678](https://github.com/immortal/fork/actions/runs/29280073678).
+- Immortal commit `e735120c4fca7686d3f8b758b9e81fe54232ac87`, locked to that
+  `fork` revision, passed its complete native Linux, macOS, and FreeBSD matrix,
+  lifecycle benchmarks, version checks, and FreeBSD cross-check in
+  [Rust CI run 29281646376](https://github.com/immortal/immortal/actions/runs/29281646376).
+  Its security workflow passed in
+  [run 29281646367](https://github.com/immortal/immortal/actions/runs/29281646367),
+  and the latest code-changing predecessor passed both fuzz targets in
+  [run 29281376286](https://github.com/immortal/immortal/actions/runs/29281376286).
+- An independent amd64 FreeBSD 15.1-RELEASE-p1 host ran the locked workspace
+  suite twice at the exact Immortal commit with clean outcomes in 43 and 42
+  seconds. The schema-validated records and SHA-256 manifest are retained in
+  [`validation/evidence/freebsd-15.1-e735120`](validation/evidence/freebsd-15.1-e735120).
+
+This evidence proves the repository contracts above. It does not replace the
+24-hour campaigns, seven-day canary, comparative runs, or release drills.
 
 ## Comparative reference set
 

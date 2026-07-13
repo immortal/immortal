@@ -19,9 +19,10 @@ These gates cannot be checked by elapsed time, intention, or generated text.
 The base process-library gate was completed on 2026-07-13 with published
 `fork` 0.9.0. Broker-death containment adds a second gate: Immortal currently
 pins the `fork` 0.9.1 candidate commit `883798b189829871947fd3f34e84938cc294f426`
-for integration testing. Release eligibility remains blocked until its native
-CI passes, 0.9.1 is published, the Git dependency is replaced by the crates.io
-release, its temporary `deny.toml` source exception is removed, and
+for integration testing. That revision and the combined Immortal candidate pass
+their native Linux, macOS, and FreeBSD matrices. Release eligibility remains
+blocked until 0.9.1 is published, the Git dependency is replaced by the
+crates.io release, its temporary `deny.toml` source exception is removed, and
 `Cargo.lock` records the registry source and checksum.
 
 ## Candidate validation

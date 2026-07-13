@@ -1,0 +1,3 @@
+schema_version	commit	platform	kernel	cpu	toolchain	supervisor	supervisor_version	scenario	sample	metric	value	unit	outcome	cleanup
+1	e735120c4fca7686d3f8b758b9e81fe54232ac87	FreeBSD	15.1-RELEASE-p1	amd64	rustc 1.98.0-nightly (8b6558a02 2026-06-20) (built from a source tarball)	immortal	path+file:///tmp/immortal-e735120.dSiBej/repo/crates/immortal#0.1.0	workspace-contract-suite	1	elapsed	43	seconds	pass	clean
+1	e735120c4fca7686d3f8b758b9e81fe54232ac87	FreeBSD	15.1-RELEASE-p1	amd64	rustc 1.98.0-nightly (8b6558a02 2026-06-20) (built from a source tarball)	immortal	path+file:///tmp/immortal-e735120.dSiBej/repo/crates/immortal#0.1.0	workspace-contract-suite	2	elapsed	42	seconds	pass	clean

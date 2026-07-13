@@ -120,11 +120,13 @@ live-child detachment.
 Immortal will not add direct `libc` calls or a second process library to work
 around this boundary. `fork` owns the safety-sensitive Unix mechanisms;
 Immortal owns the broker protocol, lifecycle generations, supervision policy,
-readiness, logging, control, status, and reconciliation. The release has passed
-Immortal's native Linux, macOS, and FreeBSD lifecycle matrix. Immortal consumes
-the exact registry version, and `Cargo.lock` records its crates.io source and
-checksum. Complete native, fuzzing, security, audit, and FreeBSD validation
-remains mandatory for every Immortal release candidate.
+readiness, logging, control, status, and reconciliation. The current candidate
+has passed Immortal's native Linux, macOS, and FreeBSD lifecycle matrix. Until
+the reviewed `fork` 0.9.1 candidate is published, Immortal pins its exact Git
+revision and `Cargo.lock` records that immutable source. The release gate then
+requires the exact registry version and checksum. Complete native, fuzzing,
+security, audit, and FreeBSD validation remains mandatory for every Immortal
+release candidate.
 
 Dependency planning is deterministic and portable. Enabled services are
 topologically sorted into start waves, and the next wave waits for its
@@ -680,9 +682,9 @@ failure tests, and required CI pass.
 - [x] Drain all child wait events after each coalesced `SIGCHLD`.
 - [x] Recover missed child notifications with an ownership-checked delayed reap sweep.
 - [x] Clean remaining process-group members before generation reuse.
-- [ ] Contain running and stopped owned groups after forced broker death on all
-  three native platforms (`fork#17` release and native CI still required).
-- [ ] Prove and document deliberate session/process-group escape as outside the
+- [x] Contain running and stopped owned groups after forced broker death on all
+  three native platforms.
+- [x] Prove and document deliberate session/process-group escape as outside the
   portable containment contract.
 - [x] Write and invalidate configured parent/child PID files atomically.
 - [x] Never use signal 0 or PID files to identify an owned service.
@@ -988,6 +990,15 @@ because GitHub-hosted and self-hosted runner support is limited to Linux,
 Windows, and macOS. Every native job runs the workspace tests, fork-backed
 lifecycle benchmark, and executable version smoke checks; the separate FreeBSD
 cross-check remains a fast compile gate.
+
+The guarded-group candidate at commit `e735120`, pinned to `fork` commit
+`883798b`, passed the complete native matrix in
+[Rust CI run 29281646376](https://github.com/immortal/immortal/actions/runs/29281646376).
+The same exact revision also passed two clean workspace-suite samples on an
+independent amd64 FreeBSD 15.1 host. The reviewed records and checksum manifest
+are linked from [VALIDATION.md](VALIDATION.md#current-candidate-evidence). These
+results prove the current containment contracts but do not replace the longer
+release-candidate campaigns.
 
 Run project commands inside DevPod:
 

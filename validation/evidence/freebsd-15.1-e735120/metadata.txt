@@ -1,0 +1,11 @@
+commit	e735120c4fca7686d3f8b758b9e81fe54232ac87
+duration_seconds	60
+platform	FreeBSD
+kernel	15.1-RELEASE-p1
+cpu	amd64
+toolchain	rustc 1.98.0-nightly (8b6558a02 2026-06-20) (built from a source tarball)
+command	cargo test --workspace --locked
+configuration	repository workspace at the recorded commit
+FreeBSD immortal 15.1-RELEASE-p1 FreeBSD 15.1-RELEASE-p1 releng/15.1-n283582-0f691888dc56 GENERIC amd64
+cargo 1.98.0-nightly (a595d0da2 2026-06-20) (built from a source tarball)
+completed_samples	2
