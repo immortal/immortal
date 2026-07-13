@@ -269,6 +269,7 @@ fn prove_controlled_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
     )?;
     require_ok(&signal, "USR1 delivery")?;
     wait_for_occurrences(&marker, "usr1", 1, COMMAND_TIMEOUT)?;
+    prove_signal_burst_remains_generation_bound(runtime.socket(), runtime.service_name(), first)?;
 
     let stop = lifecycle_request(
         runtime.socket(),
@@ -398,6 +399,29 @@ fn prove_controlled_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
         return Err("control socket remained after supervisor exit".into());
     }
 
+    Ok(())
+}
+
+fn prove_signal_burst_remains_generation_bound(
+    socket: &Path,
+    service: &str,
+    generation: Generation,
+) -> Result<(), Box<dyn Error>> {
+    let signal = Request {
+        operation: Operation::Signal,
+        service: service.to_owned(),
+        expected_generation: GenerationMatch::Exact(generation),
+        scope: SignalScope::Main,
+        signal: Some(Signal::WindowChange),
+    };
+    for _request in 0..32 {
+        let response = request(socket, &signal)?;
+        require_ok(&response, "generation-bound signal burst")?;
+    }
+    let response = status(socket)?;
+    if require_state(&response, ServiceState::Ready)? != generation {
+        return Err("signal burst changed the live generation".into());
+    }
     Ok(())
 }
 

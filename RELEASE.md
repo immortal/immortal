@@ -10,6 +10,9 @@ workflow definition or an unreviewed local measurement is not sufficient.
   runs across three days at one commit, with reviewed per-platform ceilings.
 - Installation and shutdown have been exercised on real target hosts using the
   examples in [INSTALL.md](INSTALL.md).
+- The exact candidate has completed the 24-hour Linux, macOS, and FreeBSD fault
+  campaigns plus the seven-day FreeBSD canary defined in
+  [VALIDATION.md](VALIDATION.md), with reviewed cleanup and trend evidence.
 
 These gates cannot be checked by elapsed time, intention, or generated text.
 

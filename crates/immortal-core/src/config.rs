@@ -387,7 +387,7 @@ impl Display for ConfigError {
             Self::Io(error) => write!(formatter, "unable to read configuration: {error}"),
             Self::Parse(error) => write!(formatter, "invalid YAML configuration: {error}"),
             Self::MissingVersion => formatter.write_str(
-                "configuration must declare `version: 2`; unversioned Go configuration is not supported",
+                "configuration must declare `version: 2`; unversioned Go configuration is intentionally unsupported; see INSTALL.md#definition-migration",
             ),
             Self::UnsupportedVersion(version) => {
                 write!(
@@ -1057,10 +1057,30 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unversioned_go_configuration_and_unknown_fields() {
+    fn schema_selection_requires_explicit_version_two() {
+        for legacy in [
+            "cmd: /bin/true\n",
+            "cmd: /bin/true\npid:\n  follow: /run/service.pid\n",
+            "command: [/bin/true]\nrestart:\n  policy: never\n",
+            "cmd: /bin/true\ncommand: [/bin/false]\n",
+        ] {
+            assert!(matches!(
+                parse_str(legacy),
+                Err(ConfigError::MissingVersion)
+            ));
+        }
+        assert!(parse_str("cmd: /bin/true\n").is_err_and(|error| {
+            error
+                .to_string()
+                .contains("INSTALL.md#definition-migration")
+        }));
         assert!(matches!(
-            parse_str("cmd: /bin/true\n"),
-            Err(ConfigError::MissingVersion)
+            parse_str("version: 1\ncmd: /bin/true\n"),
+            Err(ConfigError::UnsupportedVersion(1))
+        ));
+        assert!(matches!(
+            parse_str("version: 3\ncommand: [/bin/true]\n"),
+            Err(ConfigError::UnsupportedVersion(3))
         ));
         assert!(matches!(
             parse_str("version: 2\ncommand: [/bin/true]\nfuture: value\n"),
@@ -1188,10 +1208,6 @@ logging:
 
     #[test]
     fn rejects_unsupported_versions_and_multiple_documents() {
-        assert!(matches!(
-            parse_str("version: 3\ncommand: [/bin/true]\n"),
-            Err(ConfigError::UnsupportedVersion(3))
-        ));
         assert!(
             parse_str("version: 2\ncommand: [/bin/true]\n---\nversion: 2\ncommand: [/bin/false]\n")
                 .is_err()

@@ -27,8 +27,6 @@ pub enum ActionError {
     Output(io::Error),
     /// Foreground process execution failed.
     Executor(ExecutorError),
-    /// Parsed CLI behavior has not yet been connected to the executor.
-    UnsupportedOptions(Vec<&'static str>),
     /// Supervision stopped in a configured terminal failure state.
     ServiceFailed(SupervisionOutcome),
 }
@@ -39,13 +37,6 @@ impl Display for ActionError {
             Self::Config(error) => Display::fmt(error, formatter),
             Self::Output(error) => write!(formatter, "unable to write output: {error}"),
             Self::Executor(error) => Display::fmt(error, formatter),
-            Self::UnsupportedOptions(options) => {
-                write!(
-                    formatter,
-                    "options are parsed but not operational yet: {}",
-                    options.join(", ")
-                )
-            }
             Self::ServiceFailed(outcome) => write!(
                 formatter,
                 "service supervision stopped in {:?} after {} start(s); last result {:?}",
@@ -61,7 +52,7 @@ impl Error for ActionError {
             Self::Config(error) => Some(error),
             Self::Output(error) => Some(error),
             Self::Executor(error) => Some(error),
-            Self::UnsupportedOptions(_) | Self::ServiceFailed(_) => None,
+            Self::ServiceFailed(_) => None,
         }
     }
 }
@@ -91,9 +82,7 @@ impl ActionError {
         match self {
             Self::Config(_) => ExitClass::Configuration,
             Self::Output(_) => ExitClass::IoError,
-            Self::Executor(ExecutorError::Unsupported(_)) | Self::UnsupportedOptions(_) => {
-                ExitClass::Unavailable
-            }
+            Self::Executor(ExecutorError::Unsupported(_)) => ExitClass::Unavailable,
             Self::Executor(ExecutorError::OperatingSystem(_) | ExecutorError::Daemon(_)) => {
                 ExitClass::OsError
             }
@@ -121,18 +110,11 @@ pub fn execute(action: Action) -> Result<(), ActionError> {
             control_directory,
             path,
             foreground,
-            unsupported_options,
         } => {
-            if !unsupported_options.is_empty() {
-                return Err(ActionError::UnsupportedOptions(unsupported_options));
-            }
             let config = parse_file(&path)?;
             supervise(&config, control_directory.as_deref(), foreground)
         }
         Action::SuperviseCommand(service) => {
-            if !service.unsupported_options.is_empty() {
-                return Err(ActionError::UnsupportedOptions(service.unsupported_options));
-            }
             let foreground = service.foreground;
             let control_directory = service.control_directory.clone();
             let config = direct_config(service)?;

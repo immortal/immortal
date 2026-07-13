@@ -212,6 +212,10 @@ fn prove_operational_lifecycle() -> Result<(), Box<dyn Error>> {
         definitions.join("api.yml"),
         "version: 2\ncommand: [/bin/sleep, '30']\n",
     )?;
+    fs::write(
+        definitions.join("legacy.yml"),
+        "cmd: /bin/sleep 30\npid:\n  follow: /run/legacy.pid\n",
+    )?;
     write_parallel_definitions(&definitions)?;
     prepare_broken_supervisor(&definitions, &runtime)?;
     let definition = definitions.join("api.yml");
@@ -420,6 +424,7 @@ async fn exercise_reconciliation(
     locked_owner: RuntimeOwner,
 ) -> Result<(), Box<dyn Error>> {
     wait_for_ready_command(runtime, "api", "30").await?;
+    prove_unversioned_definition_rejected(runtime)?;
     wait_for_ready_command(runtime, "parallel-a", "-c").await?;
     wait_for_ready_command(runtime, "parallel-b", "-c").await?;
     wait_for_service_state(
@@ -518,6 +523,13 @@ async fn exercise_reconciliation(
     wait_for_service_absence(runtime, "locked").await?;
     wait_for_service_absence(runtime, "conditioned").await?;
     wait_for_failed_retries(failed_attempts).await?;
+    Ok(())
+}
+
+fn prove_unversioned_definition_rejected(runtime: &Path) -> Result<(), Box<dyn Error>> {
+    if discover(runtime)?.services.contains_key("legacy") || runtime.join("legacy").exists() {
+        return Err("unversioned definition created runtime state".into());
+    }
     Ok(())
 }
 

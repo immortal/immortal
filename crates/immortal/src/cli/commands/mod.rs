@@ -7,14 +7,9 @@ use clap::{
     builder::styling::{AnsiColor, Effects, Styles},
 };
 
-const CONFIG_CONFLICTS: [&str; 11] = [
+const CONFIG_CONFLICTS: [&str; 6] = [
     "retries",
     "child-pid",
-    "env-dir",
-    "follow-pid",
-    "log-file",
-    "logger",
-    "name",
     "supervisor-pid",
     "user",
     "working-dir",
@@ -32,8 +27,7 @@ pub fn new() -> Command {
         .long_about(
             "Run a command detached from its controlling terminal, supervise it, and restart it \
              when it exits. Foreground, checked daemon startup, and authenticated control are \
-             backed by process contracts. Options whose lifecycle is not implemented fail \
-             explicitly.",
+             backed by process contracts.",
         )
         .override_usage("immortal [OPTIONS] <COMMAND> [ARGUMENTS]...")
         .after_help(
@@ -58,11 +52,6 @@ pub fn new() -> Command {
         .arg(arg_child_pid())
         .arg(arg_config())
         .arg(arg_control_dir())
-        .arg(arg_env_dir())
-        .arg(arg_follow_pid())
-        .arg(arg_log_file())
-        .arg(arg_logger())
-        .arg(arg_name())
         .arg(arg_supervisor_pid())
         .arg(arg_user())
         .arg(arg_working_dir())
@@ -118,16 +107,6 @@ fn takes_value(argument: &OsStr) -> bool {
                 | "--config"
                 | "-ctl"
                 | "--control-dir"
-                | "-e"
-                | "--env-dir"
-                | "-f"
-                | "--follow-pid"
-                | "-l"
-                | "--log-file"
-                | "-logger"
-                | "--logger"
-                | "-name"
-                | "--name"
                 | "-P"
                 | "--supervisor-pid"
                 | "-u"
@@ -144,8 +123,6 @@ fn normalize_legacy_option(argument: OsString) -> OsString {
     match argument.to_str() {
         Some("-cc") => OsString::from("--check-config"),
         Some("-ctl") => OsString::from("--control-dir"),
-        Some("-logger") => OsString::from("--logger"),
-        Some("-name") => OsString::from("--name"),
         Some("-v") => OsString::from("--version"),
         Some(_) | None => argument,
     }
@@ -213,54 +190,6 @@ fn arg_control_dir() -> Arg {
         .value_name("DIR")
         .value_hint(ValueHint::DirPath)
         .help("Own DIR as this service's runtime directory and serve its control socket")
-        .conflicts_with("name")
-}
-
-fn arg_env_dir() -> Arg {
-    Arg::new("env-dir")
-        .short('e')
-        .long("env-dir")
-        .value_name("DIR")
-        .value_hint(ValueHint::DirPath)
-        .help("Set environment variables from files in DIR")
-        .conflicts_with("config")
-}
-
-fn arg_follow_pid() -> Arg {
-    Arg::new("follow-pid")
-        .short('f')
-        .long("follow-pid")
-        .value_name("PIDFILE")
-        .value_hint(ValueHint::FilePath)
-        .help("Follow the PID written by a daemonizing child to PIDFILE")
-        .conflicts_with("config")
-}
-
-fn arg_log_file() -> Arg {
-    Arg::new("log-file")
-        .short('l')
-        .long("log-file")
-        .value_name("FILE")
-        .value_hint(ValueHint::FilePath)
-        .help("Write combined stdout and stderr to FILE")
-        .conflicts_with("config")
-}
-
-fn arg_logger() -> Arg {
-    Arg::new("logger")
-        .long("logger")
-        .value_name("COMMAND")
-        .value_hint(ValueHint::CommandString)
-        .help("Pipe combined stdout and stderr to COMMAND")
-        .conflicts_with("config")
-}
-
-fn arg_name() -> Arg {
-    Arg::new("name")
-        .long("name")
-        .value_name("SERVICE")
-        .help("Use SERVICE instead of the supervisor PID under $HOME/.immortal")
-        .conflicts_with_all(["config", "control-dir"])
 }
 
 fn arg_supervisor_pid() -> Arg {
@@ -309,7 +238,6 @@ fn arg_command() -> Arg {
         .value_hint(ValueHint::CommandWithArguments)
         .help("Command and arguments to supervise")
         .num_args(1..)
-        .allow_hyphen_values(true)
 }
 
 #[cfg(test)]
@@ -402,12 +330,6 @@ mod tests {
             "2",
             "-p",
             "/tmp/child.pid",
-            "-e",
-            "/tmp/env",
-            "-f",
-            "/tmp/follow.pid",
-            "-l",
-            "/tmp/service.log",
             "-P",
             "/tmp/supervisor.pid",
             "-u",
@@ -429,10 +351,8 @@ mod tests {
             "--foreground",
             "--retries",
             "2",
-            "--logger",
-            "logger -t service",
-            "--name",
-            "service",
+            "--control-dir",
+            "/tmp/service",
             "--wait",
             "3",
             "sleep",
@@ -447,8 +367,8 @@ mod tests {
         assert_eq!(matches.get_one::<i32>("retries"), Some(&2));
         assert_eq!(matches.get_one::<u64>("wait"), Some(&3));
         assert_eq!(
-            matches.get_one::<String>("name").map(String::as_str),
-            Some("service")
+            matches.get_one::<String>("control-dir").map(String::as_str),
+            Some("/tmp/service")
         );
     }
 
@@ -469,17 +389,30 @@ mod tests {
     fn released_multi_character_flags_are_accepted() {
         let check = try_get_matches_from(["immortal", "-c", "run.yml", "-cc"]);
         assert!(check.is_ok());
-        let control = try_get_matches_from([
-            "immortal",
-            "-ctl",
-            "/tmp/control",
-            "-logger",
-            "logger -t api",
-            "/bin/true",
-        ]);
+        let control = try_get_matches_from(["immortal", "-ctl", "/tmp/control", "/bin/true"]);
         assert!(control.is_ok());
-        let name = try_get_matches_from(["immortal", "-name", "api", "/bin/true"]);
-        assert!(name.is_ok());
+    }
+
+    #[test]
+    fn removed_nonoperational_options_are_rejected() {
+        for option in [
+            "-e",
+            "-f",
+            "-l",
+            "-logger",
+            "-name",
+            "--env-dir",
+            "--follow-pid",
+            "--log-file",
+            "--logger",
+            "--name",
+        ] {
+            let result = try_get_matches_from(["immortal", option, "value", "/bin/true"]);
+            assert_eq!(
+                result.err().map(|error| error.kind()),
+                Some(ErrorKind::UnknownArgument)
+            );
+        }
     }
 
     #[test]

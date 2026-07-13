@@ -22,6 +22,21 @@ const TRUE_PROGRAM: &str = "/usr/bin/true";
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
     let binary = Path::new(env!("CARGO_BIN_EXE_immortal"));
+    let legacy = ConfigFile::new("legacy-check", "cmd: /bin/true\n")?;
+    assert_status(
+        run(binary, ["--config", legacy.path_str()?, "--check-config"])?,
+        ExitClass::Configuration,
+        "unversioned configuration check",
+    )?;
+    let canonical = ConfigFile::new("canonical-check", "version: 2\ncommand: [/bin/true]\n")?;
+    assert_status(
+        run(
+            binary,
+            ["--config", canonical.path_str()?, "--check-config"],
+        )?,
+        ExitClass::Success,
+        "strict version two configuration check",
+    )?;
     let success = ConfigFile::new(
         "success",
         "version: 2\ncommand: [/bin/sh, -c, 'exit 0']\nrestart:\n  policy: never\n  exit_when_done: true\n",
@@ -133,17 +148,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         "checked daemon initialization failure",
     )?;
     assert_status(
-        run(
-            binary,
-            [
-                "--foreground",
-                "--log-file",
-                "/tmp/immortal-unimplemented.log",
-                TRUE_PROGRAM,
-            ],
-        )?,
-        ExitClass::Unavailable,
-        "gated logger option",
+        run(binary, ["--log-file", "/tmp/removed.log", TRUE_PROGRAM])?,
+        ExitClass::Usage,
+        "removed nonoperational option",
     )?;
 
     let supervisor_pid = MarkerFile::new("supervisor-pid");

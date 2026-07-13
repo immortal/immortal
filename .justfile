@@ -21,10 +21,18 @@ test:
 soak iterations="10":
     scripts/soak "{{ iterations }}"
 
+validation-campaign duration report_directory:
+    sh scripts/validation-campaign "{{ duration }}" "{{ report_directory }}"
+
+validation-evidence report:
+    awk -f scripts/validate-evidence.awk "{{ report }}"
+
 install-check:
-    sh -n scripts/rehearse-upgrade scripts/soak scripts/summarize-lifecycle-benchmarks contrib/freebsd/immortaldir
+    sh -n scripts/rehearse-upgrade scripts/soak scripts/summarize-lifecycle-benchmarks scripts/test-validation-evidence scripts/validation-campaign contrib/freebsd/immortaldir
     scripts/rehearse-upgrade
     awk -f scripts/summarize-lifecycle-benchmarks.awk /dev/null > /dev/null
+    sh scripts/test-validation-evidence
+    if sh scripts/validation-campaign 0 /tmp/immortal-invalid-campaign > /dev/null 2>&1; then echo "zero validation duration was accepted" >&2; exit 1; fi
 
 audit:
     cargo audit

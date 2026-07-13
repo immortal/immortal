@@ -195,16 +195,26 @@ Selected Go CLI spellings remain aliases where they are unambiguous and safe.
 This convenience does not imply configuration, control-protocol, process, or
 behavioral compatibility. Intentional changes are documented and tested.
 
+The evidence required for resilience, comparative performance, and release
+claims is tracked in [VALIDATION.md](VALIDATION.md). A checked implementation
+item is not by itself production or superiority evidence.
+
 | Contract | Rust policy |
 |---|---|
-| Go CLI flags and signal aliases | Preserve as aliases and contract fixtures |
+| Go CLI spellings | Preserve only unambiguous operational aliases; reject removed behavior |
 | Unversioned Go `.yml` definitions | Reject; rewrite explicitly as `version: 2` |
 | Runtime paths and service names | Use platform-native system roots plus `$HOME/.immortal`; validate ownership |
 | PID output files | Preserve as output-only metadata |
-| Go `pid.follow` configuration | Reject; use explicit descriptor tracking and lifecycle hooks |
+| Go `pid.follow` configuration | Reject; use explicit descriptor tracking and lifecycle hooks documented in the [migration guide](INSTALL.md#definition-migration) |
 | HTTP-over-Unix-socket control | Replace with a bounded versioned protocol |
 | Go status JSON | Preserve equivalent information in `immortalctl --output json` |
 | Exact internal Go architecture | Do not preserve |
+
+The [definition migration guide](INSTALL.md#definition-migration) maps the
+historical fields to their v2 decisions and explains why numeric PID adoption
+cannot preserve the new ownership guarantees. In particular, a PID-file value
+does not prove which generation created it and may name an unrelated process
+after PID reuse; foreground ownership or an inherited lifetime descriptor does.
 
 `immortalctl` output consumers must account for the explicit discovery scope:
 the table begins with `SCOPE`, and JSON records include a `scope` field. This
@@ -428,12 +438,12 @@ the input. Without `--config`, CLI defaults are resolved first and
 explicit CLI values override only those defaults. Arguments after the child
 command begins are always child argv, even when they look like Immortal flags.
 
-The released `--env-dir`, `--follow-pid`, `--log-file`, `--logger`, and `--name`
-flags remain visible to inventory old invocations but deliberately return the
-Unavailable exit class when used. Migrate environment and logging behavior to
-strict version 2 fields. Replace PID-following with foreground execution or the
-documented descriptor-tracking contract; runtime identity never comes from a
-PID file.
+The nonoperational Go direct-command flags `--env-dir`, `--follow-pid`,
+`--log-file`, `--logger`, and `--name` are not accepted by the Rust CLI. Migrate
+environment and logging behavior to strict version 2 fields, and select a
+managed runtime with `immortaldir` or an explicit `--control-dir`. Replace PID
+following with foreground execution or the descriptor-tracking contract;
+runtime identity never comes from a PID file.
 
 ### Runtime and control boundary
 
@@ -609,13 +619,19 @@ failure tests, and required CI pass.
 - [x] Add continuous coverage-guided configuration and protocol fuzzing.
 - [x] Add release baselines for configuration and control codecs.
 - [x] Add a bounded repeatable soak runner over the complete contract suite.
+- [x] Define an evidence-based validation charter and comparative scope.
+- [ ] Complete the public-contract-to-test traceability audit.
+- [ ] Close every P0 adversarial ownership and cleanup finding.
 - [ ] Add cross-platform lifecycle benchmarks and reviewed regression budgets.
+- [ ] Retain 30 comparative runs across three days on dedicated hosts.
+- [ ] Pass 24-hour Linux, macOS, and FreeBSD fault campaigns.
+- [ ] Pass the seven-day FreeBSD release-candidate canary.
 
 ### immortal
 
 #### CLI and configuration
 
-- [x] Accept every released Go short flag and modern long alias.
+- [x] Remove Go flags which advertised behavior that was never operational in Rust.
 - [x] Preserve option-looking child arguments after the command begins.
 - [x] Define configuration versus CLI precedence explicitly.
 - [x] Implement `--check-config` / `-cc` success and failure behavior.

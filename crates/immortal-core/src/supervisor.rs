@@ -784,7 +784,7 @@ mod tests {
 
     use super::{
         ChildResult, ConditionTracker, DesiredState, FailureReason, Generation, RestartDecision,
-        RestartTracker, StateMachine, SupervisorState,
+        RestartTracker, StateMachine, SupervisorState, TransitionError,
     };
     use crate::config::{
         ConditionBackoffConfig, RestartBurstLimit, RestartConfig, RestartLimits, RestartPolicy,
@@ -805,6 +805,49 @@ mod tests {
         machine.child_reaped(generation, RestartDecision::StayDown)?;
         assert_eq!(machine.state(), SupervisorState::Down);
         Ok(())
+    }
+
+    #[test]
+    fn rejected_events_preserve_entire_lifecycle() -> Result<(), Box<dyn Error>> {
+        let mut machine = StateMachine::default();
+        assert_rejected_without_mutation(&mut machine, StateMachine::preconditions_ready);
+        assert_rejected_without_mutation(&mut machine, |current| {
+            current.child_started(Generation::FIRST)
+        });
+        assert_rejected_without_mutation(&mut machine, |current| {
+            current.child_reaped(Generation::FIRST, RestartDecision::StayDown)
+        });
+
+        machine.begin_start()?;
+        let generation = machine.preconditions_ready()?;
+        machine.child_started(generation)?;
+        machine.child_ready(generation)?;
+        let stale = Generation(generation.get().saturating_add(1));
+
+        assert_rejected_without_mutation(&mut machine, StateMachine::begin_start);
+        assert_rejected_without_mutation(&mut machine, StateMachine::preconditions_ready);
+        assert_rejected_without_mutation(&mut machine, |current| current.child_started(stale));
+        assert_rejected_without_mutation(&mut machine, |current| current.child_ready(stale));
+        assert_rejected_without_mutation(&mut machine, |current| current.child_paused(stale));
+        assert_rejected_without_mutation(&mut machine, |current| {
+            current.child_continued(generation)
+        });
+        assert_rejected_without_mutation(&mut machine, |current| current.begin_stop(stale));
+        assert_rejected_without_mutation(&mut machine, |current| {
+            current.child_reaped(stale, RestartDecision::StayDown)
+        });
+        assert_rejected_without_mutation(&mut machine, |current| current.child_completed(stale));
+        assert_rejected_without_mutation(&mut machine, |current| current.backoff_elapsed(stale));
+        Ok(())
+    }
+
+    fn assert_rejected_without_mutation<T>(
+        machine: &mut StateMachine,
+        operation: impl FnOnce(&mut StateMachine) -> Result<T, TransitionError>,
+    ) {
+        let before = machine.clone();
+        assert!(operation(machine).is_err());
+        assert_eq!(*machine, before);
     }
 
     #[test]

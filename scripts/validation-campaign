@@ -1,0 +1,117 @@
+#!/bin/sh
+set -eu
+
+usage() {
+    echo "usage: sh scripts/validation-campaign DURATION_SECONDS REPORT_DIRECTORY" >&2
+    exit 64
+}
+
+[ "$#" -eq 2 ] || usage
+duration=$1
+report_directory=$2
+
+case "$duration" in
+    ''|*[!0-9]*) usage ;;
+esac
+if [ "$duration" -lt 1 ] || [ "$duration" -gt 604800 ]; then
+    usage
+fi
+if [ -e "$report_directory" ]; then
+    echo "validation report directory already exists: $report_directory" >&2
+    exit 73
+fi
+if [ -n "$(git status --porcelain)" ]; then
+    echo "validation campaigns require a clean worktree" >&2
+    exit 65
+fi
+
+mkdir -p "$report_directory"
+results=$report_directory/results.tsv
+metadata=$report_directory/metadata.txt
+
+commit=$(git rev-parse HEAD)
+platform=$(uname -s)
+kernel=$(uname -r)
+cpu=$(uname -m)
+toolchain=$(rustc --version)
+supervisor_version=$(cargo pkgid -p immortal | awk -F@ '{ print $NF }')
+
+finalize_evidence() {
+    printf 'completed_samples\t%s\n' "$completed_samples" >> "$metadata"
+
+    manifest=$report_directory/SHA256SUMS
+    if command -v sha256sum > /dev/null 2>&1; then
+        (
+            cd "$report_directory"
+            sha256sum metadata.txt results.tsv
+        ) > "$manifest"
+    elif command -v shasum > /dev/null 2>&1; then
+        (
+            cd "$report_directory"
+            shasum -a 256 metadata.txt results.tsv
+        ) > "$manifest"
+    elif command -v sha256 > /dev/null 2>&1; then
+        for artifact in metadata.txt results.tsv; do
+            digest=$(sha256 -q "$report_directory/$artifact")
+            printf '%s  %s\n' "$digest" "$artifact"
+        done > "$manifest"
+    else
+        echo "a SHA-256 utility is required to finalize validation evidence" >&2
+        exit 69
+    fi
+}
+
+{
+    printf 'commit\t%s\n' "$commit"
+    printf 'duration_seconds\t%s\n' "$duration"
+    printf 'platform\t%s\n' "$platform"
+    printf 'kernel\t%s\n' "$kernel"
+    printf 'cpu\t%s\n' "$cpu"
+    printf 'toolchain\t%s\n' "$toolchain"
+    printf 'command\tcargo test --workspace --locked\n'
+    printf 'configuration\trepository workspace at the recorded commit\n'
+    uname -a
+    cargo --version
+} > "$metadata"
+
+printf 'schema_version\tcommit\tplatform\tkernel\tcpu\ttoolchain\tsupervisor\tsupervisor_version\tscenario\tsample\tmetric\tvalue\tunit\toutcome\tcleanup\n' > "$results"
+
+started=$(date +%s)
+deadline=$((started + duration))
+sample=1
+completed_samples=0
+finish_interrupted() {
+    trap - HUP INT TERM
+    finalize_evidence
+    exit 130
+}
+trap finish_interrupted HUP INT TERM
+while :; do
+    sample_started=$(date +%s)
+    if cargo test --workspace --locked; then
+        outcome=pass
+        cleanup=clean
+    else
+        outcome=fail
+        cleanup=unverified-after-contract-failure
+    fi
+    sample_finished=$(date +%s)
+    elapsed=$((sample_finished - sample_started))
+    printf '1\t%s\t%s\t%s\t%s\t%s\timmortal\t%s\tworkspace-contract-suite\t%s\telapsed\t%s\tseconds\t%s\t%s\n' \
+        "$commit" "$platform" "$kernel" "$cpu" "$toolchain" \
+        "$supervisor_version" "$sample" "$elapsed" "$outcome" "$cleanup" \
+        >> "$results"
+    completed_samples=$sample
+    awk -f scripts/validate-evidence.awk "$results"
+    if [ "$outcome" != pass ]; then
+        finalize_evidence
+        exit 1
+    fi
+    if [ "$sample_finished" -ge "$deadline" ]; then
+        break
+    fi
+    sample=$((sample + 1))
+done
+
+trap - HUP INT TERM
+finalize_evidence

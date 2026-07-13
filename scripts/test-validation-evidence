@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+validator=scripts/validate-evidence.awk
+header='schema_version\tcommit\tplatform\tkernel\tcpu\ttoolchain\tsupervisor\tsupervisor_version\tscenario\tsample\tmetric\tvalue\tunit\toutcome\tcleanup\n'
+
+expect_valid() {
+    if ! printf '%b' "$header$1" | awk -f "$validator" > /dev/null; then
+        echo "valid evidence fixture was rejected" >&2
+        exit 1
+    fi
+}
+
+expect_invalid() {
+    if printf '%b' "$header$1" | awk -f "$validator" > /dev/null 2>&1; then
+        echo "invalid evidence fixture was accepted: $2" >&2
+        exit 1
+    fi
+}
+
+expect_valid '1\tcommit\tFreeBSD\tkernel\tamd64\trustc\timmortal\t0.1.0\tcontract\t1\telapsed\t1\tseconds\tpass\tclean\n'
+expect_invalid '' 'missing rows'
+expect_invalid '2\tcommit\tFreeBSD\tkernel\tamd64\trustc\timmortal\t0.1.0\tcontract\t1\telapsed\t1\tseconds\tpass\tclean\n' 'schema'
+expect_invalid '1\tcommit\tFreeBSD\tkernel\tamd64\trustc\timmortal\t0.1.0\tcontract\t0\telapsed\t1\tseconds\tpass\tclean\n' 'sample'
+expect_invalid '1\tcommit\tFreeBSD\tkernel\tamd64\trustc\timmortal\t0.1.0\tcontract\t1\telapsed\tnan\tseconds\tpass\tclean\n' 'value'
+expect_invalid '1\tcommit\tFreeBSD\tkernel\tamd64\trustc\timmortal\t0.1.0\tcontract\t1\telapsed\t1\tseconds\tunknown\tclean\n' 'outcome'
+expect_invalid '1\tcommit\tFreeBSD\tkernel\tamd64\trustc\timmortal\t0.1.0\tcontract\t1\telapsed\t1\tseconds\tpass\t\n' 'cleanup'
+expect_invalid '1\tcommit\tFreeBSD\tkernel\tamd64\trustc\timmortal\t0.1.0\tcontract\t1\telapsed\t1\tseconds\tpass\n' 'field count'

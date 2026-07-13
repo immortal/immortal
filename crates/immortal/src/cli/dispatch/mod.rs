@@ -20,7 +20,6 @@ pub struct DirectService {
     pub supervisor_pid: Option<PathBuf>,
     pub user: Option<String>,
     pub working_directory: Option<PathBuf>,
-    pub unsupported_options: Vec<&'static str>,
 }
 
 /// Typed operation selected by the command line.
@@ -33,7 +32,6 @@ pub enum Action {
         control_directory: Option<PathBuf>,
         path: PathBuf,
         foreground: bool,
-        unsupported_options: Vec<&'static str>,
     },
     /// Supervise a direct argv command.
     SuperviseCommand(DirectService),
@@ -66,7 +64,6 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
                 control_directory: matches.get_one::<String>("control-dir").map(PathBuf::from),
                 path,
                 foreground: matches.get_flag("foreground"),
-                unsupported_options: Vec::new(),
             })
         };
     }
@@ -76,16 +73,6 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         .ok_or(DispatchError("missing service command"))?
         .cloned()
         .collect();
-    let unsupported_options = [
-        ("env-dir", "--env-dir"),
-        ("follow-pid", "--follow-pid"),
-        ("log-file", "--log-file"),
-        ("logger", "--logger"),
-        ("name", "--name"),
-    ]
-    .into_iter()
-    .filter_map(|(id, display)| matches.contains_id(id).then_some(display))
-    .collect();
     Ok(Action::SuperviseCommand(DirectService {
         child_pid: matches.get_one::<String>("child-pid").map(PathBuf::from),
         command,
@@ -98,7 +85,6 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
             .map(PathBuf::from),
         user: matches.get_one::<String>("user").cloned(),
         working_directory: matches.get_one::<String>("working-dir").map(PathBuf::from),
-        unsupported_options,
     }))
 }
 
@@ -150,14 +136,13 @@ mod tests {
                 supervisor_pid: None,
                 user: None,
                 working_directory: None,
-                unsupported_options: Vec::new(),
             })
         );
         Ok(())
     }
 
     #[test]
-    fn captures_supported_and_gates_unimplemented_direct_options() -> Result<(), Box<dyn Error>> {
+    fn captures_supported_direct_options() -> Result<(), Box<dyn Error>> {
         let matches = commands::new().try_get_matches_from([
             "immortal",
             "--foreground",
@@ -173,8 +158,6 @@ mod tests {
             "/tmp/supervisor.pid",
             "--user",
             "service-account",
-            "--log-file",
-            "/tmp/run.log",
             "/bin/true",
         ])?;
         assert_eq!(
@@ -189,7 +172,6 @@ mod tests {
                 supervisor_pid: Some(PathBuf::from("/tmp/supervisor.pid")),
                 user: Some("service-account".to_owned()),
                 working_directory: Some(PathBuf::from("/tmp")),
-                unsupported_options: vec!["--log-file"],
             })
         );
         Ok(())
@@ -210,8 +192,6 @@ mod tests {
             command.control_directory,
             Some(PathBuf::from("/run/immortal/api"))
         );
-        assert!(command.unsupported_options.is_empty());
-
         let config = commands::new().try_get_matches_from([
             "immortal",
             "--config",
@@ -225,7 +205,6 @@ mod tests {
                 control_directory: Some(PathBuf::from("/run/immortal/api")),
                 path: PathBuf::from("run.yml"),
                 foreground: false,
-                unsupported_options: Vec::new(),
             }
         );
         Ok(())

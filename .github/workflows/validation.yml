@@ -1,0 +1,46 @@
+name: Extended validation
+
+on:
+  schedule:
+    - cron: "43 3 * * 3"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Bounded Linux campaign duration in seconds (1-3600)
+        required: true
+        default: "3600"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extended-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-campaign:
+    name: Linux contract soak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+      - name: Run bounded validation campaign
+        env:
+          DURATION_SECONDS: ${{ inputs.duration_seconds || '3600' }}
+        run: sh scripts/validation-campaign "$DURATION_SECONDS" validation-results
+      - name: Validate evidence
+        run: |
+          awk -f scripts/validate-evidence.awk validation-results/results.tsv
+          cd validation-results
+          sha256sum --check SHA256SUMS
+      - name: Upload complete evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: extended-validation-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: validation-results
+          if-no-files-found: error
+          retention-days: 90
