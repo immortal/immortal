@@ -29,7 +29,7 @@ audit:
     cargo audit
 
 deny:
-    cargo deny check
+    cargo deny --all-features check
 
 lint-policy:
     @matches="$(rg -n '#!?\[(allow|expect)\(' crates --glob '*.rs' --glob '!**/tests/**' || true)"; \
