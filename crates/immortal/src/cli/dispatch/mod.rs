@@ -13,13 +13,23 @@ use clap::ArgMatches;
 pub struct DirectService {
     pub child_pid: Option<PathBuf>,
     pub command: Vec<String>,
-    pub control_directory: Option<PathBuf>,
+    pub environment_directory: Option<PathBuf>,
     pub foreground: bool,
     pub retries: i32,
+    pub runtime_identity: RuntimeIdentity,
     pub start_delay_seconds: u64,
     pub supervisor_pid: Option<PathBuf>,
     pub user: Option<String>,
     pub working_directory: Option<PathBuf>,
+}
+
+/// Exclusive runtime identity selected for one direct command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeIdentity {
+    /// Service name resolved below the effective user's runtime root.
+    Name(String),
+    /// Exact absolute runtime service directory.
+    ControlDirectory(PathBuf),
 }
 
 /// Typed operation selected by the command line.
@@ -73,12 +83,23 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         .ok_or(DispatchError("missing service command"))?
         .cloned()
         .collect();
+    let runtime_identity = if let Some(directory) = matches.get_one::<String>("control-dir") {
+        RuntimeIdentity::ControlDirectory(PathBuf::from(directory))
+    } else {
+        RuntimeIdentity::Name(
+            matches
+                .get_one::<String>("name")
+                .ok_or(DispatchError("missing direct-command service name"))?
+                .clone(),
+        )
+    };
     Ok(Action::SuperviseCommand(DirectService {
         child_pid: matches.get_one::<String>("child-pid").map(PathBuf::from),
         command,
-        control_directory: matches.get_one::<String>("control-dir").map(PathBuf::from),
+        environment_directory: matches.get_one::<String>("env-dir").map(PathBuf::from),
         foreground: matches.get_flag("foreground"),
         retries: matches.get_one::<i32>("retries").copied().unwrap_or(-1),
+        runtime_identity,
         start_delay_seconds: matches.get_one::<u64>("wait").copied().unwrap_or(0),
         supervisor_pid: matches
             .get_one::<String>("supervisor-pid")
@@ -92,7 +113,7 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
 mod tests {
     use std::{error::Error, path::PathBuf};
 
-    use super::{Action, DirectService, action};
+    use super::{Action, DirectService, RuntimeIdentity, action};
     use crate::cli::commands;
 
     #[test]
@@ -114,6 +135,8 @@ mod tests {
     fn preserves_direct_argv() -> Result<(), Box<dyn Error>> {
         let matches = commands::new().try_get_matches_from([
             "immortal",
+            "--name",
+            "shell",
             "/bin/sh",
             "-c",
             "echo ready",
@@ -129,9 +152,10 @@ mod tests {
                     "echo ready".to_owned(),
                     "--child-option".to_owned(),
                 ],
-                control_directory: None,
+                environment_directory: None,
                 foreground: false,
                 retries: -1,
+                runtime_identity: RuntimeIdentity::Name("shell".to_owned()),
                 start_delay_seconds: 0,
                 supervisor_pid: None,
                 user: None,
@@ -146,6 +170,8 @@ mod tests {
         let matches = commands::new().try_get_matches_from([
             "immortal",
             "--foreground",
+            "--name",
+            "true-test",
             "--retries",
             "3",
             "--wait",
@@ -156,6 +182,8 @@ mod tests {
             "/tmp/child.pid",
             "--supervisor-pid",
             "/tmp/supervisor.pid",
+            "--env-dir",
+            "/tmp/environment",
             "--user",
             "service-account",
             "/bin/true",
@@ -165,9 +193,10 @@ mod tests {
             Action::SuperviseCommand(DirectService {
                 child_pid: Some(PathBuf::from("/tmp/child.pid")),
                 command: vec!["/bin/true".to_owned()],
-                control_directory: None,
+                environment_directory: Some(PathBuf::from("/tmp/environment")),
                 foreground: true,
                 retries: 3,
+                runtime_identity: RuntimeIdentity::Name("true-test".to_owned()),
                 start_delay_seconds: 2,
                 supervisor_pid: Some(PathBuf::from("/tmp/supervisor.pid")),
                 user: Some("service-account".to_owned()),
@@ -189,8 +218,8 @@ mod tests {
             return Err("expected a direct command action".into());
         };
         assert_eq!(
-            command.control_directory,
-            Some(PathBuf::from("/run/immortal/api"))
+            command.runtime_identity,
+            RuntimeIdentity::ControlDirectory(PathBuf::from("/run/immortal/api"))
         );
         let config = commands::new().try_get_matches_from([
             "immortal",

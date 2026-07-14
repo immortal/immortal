@@ -1,4 +1,12 @@
-//! Safe runtime-directory discovery shared by control and reconciliation.
+//! Runtime-root preparation, exclusive service ownership, and safe discovery.
+//!
+//! Direct and config launches first resolve a bounded service identity, then
+//! prepare the effective user's owner-only root before daemonization. Execution
+//! acquires the service lock before removing a proven stale socket and retains
+//! that ownership through broker cleanup. Control and reconciliation perform
+//! read-only bounded discovery through the same canonical-path, ownership,
+//! permission, and no-symlink contract; malformed entries are isolated rather
+//! than mutated.
 
 use std::{
     collections::BTreeMap,
@@ -6,11 +14,16 @@ use std::{
     fmt::{self, Display, Formatter},
     fs::{self, DirBuilder, File, Metadata, OpenOptions, TryLockError},
     io,
-    os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
 };
 
 use nix::unistd::{Uid, User};
+
+use crate::service_name::is_safe_service_name;
 
 /// Control socket filename inside each service runtime directory.
 pub const CONTROL_SOCKET_NAME: &str = "immortal.sock";
@@ -18,6 +31,8 @@ pub const CONTROL_SOCKET_NAME: &str = "immortal.sock";
 pub const SUPERVISOR_LOCK_NAME: &str = "supervisor.lock";
 /// Maximum safely discoverable services in one runtime root.
 pub const MAX_RUNTIME_SERVICES: usize = 4096;
+/// Portable maximum pathname bytes for a Unix control socket, excluding NUL.
+pub const MAX_CONTROL_SOCKET_PATH_BYTES: usize = 103;
 
 #[cfg(target_os = "linux")]
 const SYSTEM_RUNTIME_ROOT: &str = "/run/immortal";
@@ -33,17 +48,20 @@ pub fn system_runtime_root() -> &'static Path {
 /// Resolve the effective user's portable supervisor discovery root.
 ///
 /// An absolute nonempty `HOME` is preferred. If it is unavailable, the
-/// effective account database entry supplies the home directory. Discovery
-/// separately verifies that the resulting root belongs to the effective UID.
+/// effective account database entry supplies the home directory. Existing home
+/// aliases are canonicalized before `.immortal` is appended. The resolved home
+/// must belong to the effective UID and not be group/world writable, while the
+/// runtime root entry itself remains subject to the no-symlink contract.
 ///
 /// # Errors
 ///
-/// Returns an error when neither source provides an absolute home directory.
+/// Returns an error when neither source provides an absolute, canonicalizable,
+/// effective-UID-owned home directory with safe write permissions.
 pub fn user_runtime_root() -> io::Result<PathBuf> {
     if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
         let home = PathBuf::from(home);
         if home.is_absolute() {
-            return Ok(home.join(".immortal"));
+            return runtime_root_from_home(&home);
         }
     }
     let user = User::from_uid(Uid::effective())?.ok_or_else(|| {
@@ -58,7 +76,95 @@ pub fn user_runtime_root() -> io::Result<PathBuf> {
             "effective user home directory is not absolute",
         ));
     }
-    Ok(user.dir.join(".immortal"))
+    runtime_root_from_home(&user.dir)
+}
+
+fn runtime_root_from_home(home: &Path) -> io::Result<PathBuf> {
+    runtime_root_from_home_for_owner(home, Uid::effective().as_raw())
+}
+
+fn runtime_root_from_home_for_owner(home: &Path, expected_owner: u32) -> io::Result<PathBuf> {
+    let home = fs::canonicalize(home)?;
+    let metadata = fs::symlink_metadata(&home)?;
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "effective user home must be a directory",
+        ));
+    }
+    if metadata.uid() != expected_owner {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "effective user home owner differs from the effective user",
+        ));
+    }
+    if metadata.mode() & 0o022 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "effective user home must not be group or world writable",
+        ));
+    }
+    Ok(home.join(".immortal"))
+}
+
+/// Prepare the effective user's runtime root and resolve one service directory.
+///
+/// The `$HOME/.immortal` root is created with mode `0700` when absent. Existing
+/// roots must be canonical real directories owned by the effective UID with
+/// exactly that mode. The returned service path is not created until runtime
+/// ownership is acquired.
+///
+/// # Errors
+///
+/// Returns an error for an unsafe service name or control-socket pathname,
+/// unavailable or untrusted home directory, symlinked or noncanonical root,
+/// ownership or mode mismatch, or creation failure.
+pub fn prepare_user_service_directory(service_name: &str) -> io::Result<PathBuf> {
+    let root = user_runtime_root()?;
+    prepare_user_service_directory_at(&root, service_name)
+}
+
+fn prepare_user_service_directory_at(root: &Path, service_name: &str) -> io::Result<PathBuf> {
+    if !is_safe_service_name(service_name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unsafe service name",
+        ));
+    }
+    let directory = root.join(service_name);
+    validate_control_socket_path(&directory)?;
+    create_user_runtime_root(root)?;
+    Ok(directory)
+}
+
+fn create_user_runtime_root(root: &Path) -> io::Result<()> {
+    if !root.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "user runtime root must be absolute",
+        ));
+    }
+    let mut builder = DirBuilder::new();
+    builder.mode(0o700);
+    match builder.create(root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let metadata = validate_root(root)?;
+    if metadata.uid() != Uid::effective().as_raw() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "user runtime root owner differs from the effective user",
+        ));
+    }
+    if metadata.mode() & 0o777 != 0o700 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "user runtime root mode must be 0700",
+        ));
+    }
+    Ok(())
 }
 
 /// Exclusive ownership of one service runtime directory.
@@ -79,10 +185,12 @@ impl RuntimeOwner {
     ///
     /// # Errors
     ///
-    /// Returns an error for unsafe paths, ownership/mode mismatches, another
-    /// live lock holder, or stale entries which cannot be proven safe to remove.
+    /// Returns an error for unsafe or non-portable socket paths, ownership/mode
+    /// mismatches, another live lock holder, or stale entries which cannot be
+    /// proven safe to remove.
     pub fn acquire(directory: &Path) -> io::Result<Self> {
         let (root, _name) = validate_service_path(directory)?;
+        validate_control_socket_path(directory)?;
         let root_metadata = validate_root(root)?;
         create_service_directory(directory)?;
         let directory_metadata = validate_service_directory(directory, &root_metadata)?;
@@ -109,6 +217,23 @@ impl RuntimeOwner {
     }
 }
 
+fn validate_control_socket_path(directory: &Path) -> io::Result<()> {
+    let length = directory
+        .join(CONTROL_SOCKET_NAME)
+        .as_os_str()
+        .as_bytes()
+        .len();
+    if length > MAX_CONTROL_SOCKET_PATH_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "control socket path is {length} bytes; portable maximum is {MAX_CONTROL_SOCKET_PATH_BYTES}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_service_path(directory: &Path) -> io::Result<(&Path, &str)> {
     if !directory.is_absolute() {
         return Err(io::Error::new(
@@ -125,7 +250,7 @@ fn validate_service_path(directory: &Path) -> io::Result<(&Path, &str)> {
     let name = directory
         .file_name()
         .and_then(|name| name.to_str())
-        .filter(|name| safe_service_name(name) && !name.starts_with('.'))
+        .filter(|name| is_safe_service_name(name))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unsafe service name"))?;
     Ok((root, name))
 }
@@ -452,7 +577,7 @@ fn inspect_entry(path: &Path, root: &Metadata, result: &mut DiscoveryResult) {
     if name.starts_with('.') {
         return;
     }
-    if !safe_service_name(name) {
+    if !is_safe_service_name(name) {
         problem(result, path, DiscoveryProblemKind::UnsafeName);
         return;
     }
@@ -519,15 +644,6 @@ fn inspect_entry(path: &Path, root: &Metadata, result: &mut DiscoveryResult) {
     );
 }
 
-fn safe_service_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-}
-
 fn problem(result: &mut DiscoveryResult, path: &Path, kind: DiscoveryProblemKind) {
     result.problems.push(DiscoveryProblem {
         path: path.to_owned(),
@@ -549,8 +665,10 @@ mod tests {
     use tokio::net::UnixListener;
 
     use super::{
-        CONTROL_SOCKET_NAME, DiscoveryProblemKind, RuntimeOwner, SUPERVISOR_LOCK_NAME, discover,
-        discover_user, discover_with_owner, supervisor_is_active, system_runtime_root,
+        CONTROL_SOCKET_NAME, DiscoveryProblemKind, MAX_CONTROL_SOCKET_PATH_BYTES, RuntimeOwner,
+        SUPERVISOR_LOCK_NAME, discover, discover_user, discover_with_owner,
+        prepare_user_service_directory_at, runtime_root_from_home,
+        runtime_root_from_home_for_owner, supervisor_is_active, system_runtime_root,
     };
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -562,6 +680,101 @@ mod tests {
         assert_eq!(system_runtime_root(), Path::new("/run/immortal"));
         #[cfg(any(target_os = "freebsd", target_os = "macos"))]
         assert_eq!(system_runtime_root(), Path::new("/var/run/immortal"));
+    }
+
+    #[test]
+    fn prepares_owner_only_user_runtime_root_and_safe_service_path() -> Result<(), Box<dyn Error>> {
+        let home = TestDirectory::new()?;
+        let root = home.path().join(".immortal");
+        let service = prepare_user_service_directory_at(&root, "sleep.30")?;
+        assert_eq!(service, root.join("sleep.30"));
+        let metadata = fs::symlink_metadata(&root)?;
+        assert!(metadata.is_dir());
+        assert_eq!(metadata.uid(), nix::unistd::Uid::effective().as_raw());
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            prepare_user_service_directory_at(&root, "sleep.30")?,
+            service
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn user_runtime_root_canonicalizes_symlinked_home_ancestors() -> Result<(), Box<dyn Error>> {
+        let directory = TestDirectory::new()?;
+        let actual_parent = directory.path().join("actual");
+        let actual_home = actual_parent.join("user");
+        fs::create_dir(&actual_parent)?;
+        fs::create_dir(&actual_home)?;
+        fs::set_permissions(&actual_home, fs::Permissions::from_mode(0o700))?;
+        let alias_parent = directory.path().join("home");
+        symlink(&actual_parent, &alias_parent)?;
+
+        assert_eq!(
+            runtime_root_from_home(&alias_parent.join("user"))?,
+            actual_home.join(".immortal")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn user_runtime_root_rejects_untrusted_home_directory() -> Result<(), Box<dyn Error>> {
+        let directory = TestDirectory::new()?;
+        let owner = fs::symlink_metadata(directory.path())?.uid();
+        let mismatched = owner.checked_add(1).unwrap_or(owner.saturating_sub(1));
+        let owner_error = runtime_root_from_home_for_owner(directory.path(), mismatched)
+            .err()
+            .ok_or("home owned by another UID was accepted")?;
+        assert_eq!(owner_error.kind(), io::ErrorKind::PermissionDenied);
+
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o777))?;
+        let error = runtime_root_from_home(directory.path())
+            .err()
+            .ok_or("world-writable home directory was accepted")?;
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        Ok(())
+    }
+
+    #[test]
+    fn user_runtime_preparation_rejects_unsafe_names_and_roots() -> Result<(), Box<dyn Error>> {
+        let home = TestDirectory::new()?;
+        let root = home.path().join(".immortal");
+        for name in ["", ".", "..", ".hidden", "bad/name", "bad name"] {
+            let error = prepare_user_service_directory_at(&root, name)
+                .err()
+                .ok_or("unsafe service name was accepted")?;
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+        assert!(!root.exists());
+        let long_name = "a".repeat(255);
+        let path_error = prepare_user_service_directory_at(&root, &long_name)
+            .err()
+            .ok_or("overlong control socket path was accepted")?;
+        assert_eq!(path_error.kind(), io::ErrorKind::InvalidInput);
+        assert!(
+            path_error
+                .to_string()
+                .contains(&MAX_CONTROL_SOCKET_PATH_BYTES.to_string())
+        );
+        assert!(!root.exists());
+
+        fs::create_dir(&root)?;
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755))?;
+        let mode_error = prepare_user_service_directory_at(&root, "api")
+            .err()
+            .ok_or("unsafe user runtime mode was accepted")?;
+        assert_eq!(mode_error.kind(), io::ErrorKind::PermissionDenied);
+        fs::remove_dir(&root)?;
+
+        let target = home.path().join("runtime-target");
+        fs::create_dir(&target)?;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700))?;
+        symlink(&target, &root)?;
+        let symlink_error = prepare_user_service_directory_at(&root, "api")
+            .err()
+            .ok_or("symlinked user runtime root was accepted")?;
+        assert_eq!(symlink_error.kind(), io::ErrorKind::InvalidInput);
+        Ok(())
     }
 
     struct TestDirectory(PathBuf);
@@ -712,6 +925,19 @@ mod tests {
         fs::write(service.join(CONTROL_SOCKET_NAME), b"not a socket")?;
         assert!(RuntimeOwner::acquire(&service).is_err());
         assert!(service.join(CONTROL_SOCKET_NAME).is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_owner_rejects_nonportable_socket_path_before_creation() -> Result<(), Box<dyn Error>>
+    {
+        let root = TestDirectory::new()?;
+        let service = root.path().join("a".repeat(255));
+        let error = RuntimeOwner::acquire(&service)
+            .err()
+            .ok_or("non-portable control socket path was accepted")?;
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(!service.exists());
         Ok(())
     }
 }

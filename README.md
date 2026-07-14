@@ -102,18 +102,21 @@ pre-start conditions, and post-exit hooks use the same broker boundary;
 descriptor-tracking uses an independently monitored lifetime capability and
 never promotes a PID-file value into process identity.
 
-Foreground supervisors can now opt into an exact absolute service runtime
-directory with `--control-dir ROOT/SERVICE`. Immortal acquires and retains a
-mode-`0600` advisory lock before broker creation, removes only a proven owned
-stale socket after locking, creates a mode-`0600` authenticated control socket,
-and serializes broker events, timers, Unix shutdown signals, and control work
-through one lifecycle owner. Status, start, stop, once, restart, halt, raw
-signals, and deliberate live-child exit are operational. `exit` uses an
-explicit generation-bound broker detach; it never turns a PID file into process
-identity. A black-box contract covers exclusion of a duplicate supervisor,
-stale-generation and wrong-service rejection, status publication, USR1, the
-persistent Down state, manual starts, restart, halt, socket cleanup, and
-live-child detachment.
+Every `immortal` launch owns a service runtime. A configuration launch without
+`--control-dir` derives its service name from the configuration filename stem;
+a direct command instead requires `-n`/`--name`. Both resolve below the
+effective user's `$HOME/.immortal`, which is created safely when absent. An
+exact absolute `--control-dir ROOT/SERVICE` overrides that default. Immortal
+acquires and retains a mode-`0600` advisory lock before broker creation, removes
+only a proven owned stale socket after locking, creates a mode-`0600`
+authenticated control socket, and serializes broker events, timers, Unix
+shutdown signals, and control work through one lifecycle owner. Status, start,
+stop, once, restart, halt, raw signals, and deliberate live-child exit are
+operational. `exit` uses an explicit generation-bound broker detach; it never
+turns a PID file into process identity. A black-box contract covers exclusion
+of a duplicate supervisor, stale-generation and wrong-service rejection,
+status publication, USR1, the persistent Down state, manual starts, restart,
+halt, socket cleanup, and live-child detachment.
 
 Immortal will not add direct `libc` calls or a second process library to work
 around this boundary. `fork` owns the safety-sensitive Unix mechanisms;
@@ -247,8 +250,10 @@ Two historical requests are explicit contracts:
 
 The only accepted schema is `version: 2`. The version marker is mandatory,
 unknown fields fail validation, commands are argv arrays, durations state their
-unit, and every nested policy is typed. The complete currently implemented
-shape is:
+unit, and every nested policy is typed. `environment` is the canonical
+environment-map field; `env` is an accepted input alias, but a document cannot
+contain both and canonical output always uses `environment`. The complete
+currently implemented shape is:
 
 ```yaml
 version: 2
@@ -357,6 +362,25 @@ The repository includes a minimal portable definition at
 `immortal --config examples/services/sleep.yml --check-config`, or exercise
 directory planning without creating runtime state with
 `immortaldir --once --dry-run examples/services`.
+For an interactive DevPod run, start the controlled example in one terminal and
+inspect or halt it from another:
+
+```sh
+scripts/dev-ssh examples/run-immortal.sh
+scripts/dev-ssh examples/run-immortal.sh --daemon
+scripts/dev-ssh examples/run-immortalctl.sh
+scripts/dev-ssh examples/run-immortalctl.sh halt sleep
+```
+
+The start helper relies on `immortal` to create the owner-only
+`$HOME/.immortal` root and derive `sleep` from `sleep.yml`. It runs in the
+foreground by default; `--daemon` omits `-f` to exercise checked double-fork
+daemonization. The control helper shows JSON status, owner and process
+identifiers, the supervisor tree, and every member of the service process group
+when called without arguments; supplied arguments are forwarded to
+`immortalctl`. Both helpers accept `IMMORTAL_EXAMPLE_RUNTIME_DIR` and
+`IMMORTAL_EXAMPLE_SERVICE`; setting either makes the start helper use an exact
+control directory. The start helper also accepts `IMMORTAL_EXAMPLE_CONFIG`.
 `start_condition` runs before a generation is allocated and has its own retry
 history, so a failing dependency check cannot consume service restart limits.
 `post_exit` runs after the service generation has ended and before the
@@ -408,7 +432,22 @@ directory; the service executable is relative to its resolved working
 directory. Bare executable names remain unresolved for the process executor's
 `PATH` lookup. `environment_mode: inherit` defines overrides after the
 supervisor environment; `clear` defines an empty base with only configured
-values.
+values. Environment map values may be strings, numbers, or booleans and are
+normalized to their textual form; null and structured values are rejected.
+
+Direct commands also accept `-e DIR` or `--env-dir DIR`. The path is resolved
+from the invoking working directory and read once before daemonization. Each
+regular file contributes its UTF-8 filename as the key and its first UTF-8 line
+as the value; CRLF is stripped, a physically empty file contributes nothing,
+and an empty first line sets an empty value. Symlinks and non-regular entries
+are not followed and contribute nothing. The real directory and each regular
+file must remain stable and readable for the complete snapshot.
+
+The scan is limited to 4,096 directory entries, 256 KiB per first line, and
+1 MiB across loaded keys and values. Environment-directory values override the
+inherited supervisor environment and remain fixed across service restarts.
+`--env-dir` is a direct-command option and conflicts with `--config`; definitions
+use `environment` or its `env` input alias instead.
 
 Logging routes are process chains, not in-supervisor multiwriters. For example,
 a file plus an external logger is normalized to `service -> immortallog ->
@@ -445,19 +484,26 @@ TERM to KILL before the broker is reaped. Logger stages which have already
 failed or entered backoff own no drainable child and normalize to Down so
 shutdown does not spend grace periods waiting for nonexistent work.
 
-Exactly one service source is accepted. With `--config`, direct command options
-are rejected instead of being silently merged; change the definition directly.
-`--check-config` validates and emits the same canonical schema without modifying
-the input. Without `--config`, CLI defaults are resolved first and
-explicit CLI values override only those defaults. Arguments after the child
-command begins are always child argv, even when they look like Immortal flags.
+Exactly one service source is accepted. With `--config`, direct service-policy
+options are rejected instead of overriding or silently merging with definition
+fields; change the definition directly. The launch-only `-f`/`--foreground` and
+`--control-dir` options remain valid with either source. `-n`/`--name` is
+direct-command-only and conflicts with both `--config` and `--control-dir`.
+`--check-config` validates and emits the same canonical schema without creating
+runtime state or modifying the input. Without `--config`, either a service name
+or an exact control directory is required; CLI defaults are then resolved first
+and explicit CLI values override only those defaults. Place every Immortal
+option before the child command. Arguments after the command begins are always
+child argv, even when they look like Immortal flags.
 
-The nonoperational Go direct-command flags `--env-dir`, `--follow-pid`,
-`--log-file`, `--logger`, and `--name` are not accepted by the Rust CLI. Migrate
-environment and logging behavior to strict version 2 fields, and select a
-managed runtime with `immortaldir` or an explicit `--control-dir`. Replace PID
-following with foreground execution or the descriptor-tracking contract;
-runtime identity never comes from a PID file.
+The nonoperational Go direct-command flags `--follow-pid`, `--log-file`,
+and `--logger` are not accepted by the Rust CLI. Migrate logging behavior to
+strict version 2 fields. The historical `-name` form becomes `-n`/`--name`;
+the exact `-name` token is rejected so it cannot be misread as attached short
+value `-n ame`. The historical foreground shorthand `-n` becomes
+`-f`/`--foreground`. Replace PID following with foreground execution or the
+descriptor-tracking contract; runtime identity never comes from a PID file or
+transient process identifier.
 
 ### Runtime and control boundary
 
@@ -470,17 +516,40 @@ system|user` narrows automatic discovery and an explicit `--runtime-dir` or
 `IMMORTAL_SDIR` selects exactly one custom root.
 [FHS `/run`](https://specifications.freedesktop.org/fhs/latest/run.html)
 
+System runtime roots are ephemeral state and must be recreated by the platform
+service manager after boot. Use canonical `/run/immortal` on Linux rather than
+its commonly symlinked `/var/run` alias; FreeBSD and macOS use
+`/var/run/immortal`. An ordinary config or named direct launch instead creates
+`$HOME/.immortal` with mode `0700` when absent. Existing automatic user roots
+must be real directories owned by the effective UID with exactly that mode.
+Immortal resolves an existing home-directory alias such as
+`/home -> /var/home`, provided the resolved home belongs to the effective UID
+and is not group/world writable; the `.immortal` entry itself may not be a
+symlink. `--control-dir` is exact and does not create or reinterpret its parent
+root.
+
+Without an exact control directory, `run.yml` selects service `run`, while
+`immortal -n sleeper sleep 30` selects service `sleeper`. Names contain 1-255
+ASCII bytes drawn from letters, digits, `_`, `-`, or `.`, may not begin with
+`.`, and are never silently sanitized. The complete
+`ROOT/SERVICE/immortal.sock` pathname may not exceed the portable 103-byte Unix
+socket limit, and this is checked before creating runtime artifacts. An unsafe
+configuration filename stem is rejected; a direct command without `--name` is
+a usage error.
+
 Each service is discovered only at `ROOT/SERVICE/immortal.sock`. The root must
 be absolute, canonical, a real directory, and not group/world writable. The
-automatic user root must also belong to the effective UID. Service directories
-must grant no group/other bits (normally `0700`); sockets must be mode `0600`;
-root, service directory, and socket ownership must agree. Hidden, unsafe,
-symlinked, wrongly owned, or wrongly typed entries are reported and ignored
-without mutation.
+automatic user root has the stricter ownership and mode contract above. Service
+directories must grant no group/other bits (normally `0700`); sockets must be
+mode `0600`; root, service directory, and socket ownership must agree. Hidden,
+unsafe, symlinked, wrongly owned, or wrongly typed entries are reported and
+ignored without mutation.
 
 Automatic discovery has one global 4096-service bound. A missing automatic root
 is treated as empty; an unsafe automatic root is isolated, reported, and makes
 the overall result partial without hiding valid services from the other root.
+Failure to resolve an optional user home is isolated in the same way, so system
+discovery still proceeds.
 Status output includes `system`, `user`, or `custom` scope. Identical names from
 both automatic roots remain visible for all-status output, but a named mutation
 is rejected as ambiguous until `--runtime-scope` selects one root.
@@ -649,13 +718,17 @@ failure tests, and required CI pass.
 - [x] Remove Go flags which advertised behavior that was never operational in Rust.
 - [x] Preserve option-looking child arguments after the command begins.
 - [x] Define configuration versus CLI precedence explicitly.
-- [x] Implement `--check-config` / `-cc` success and failure behavior.
+- [x] Implement `--check-config` success and failure behavior.
 - [x] Emit the canonical supported schema without modifying the input file.
 - [x] Validate command, cwd, environment, PID outputs, logger, hooks, readiness,
   restart policy, and start conditions.
 - [x] Resolve configured users against the target OS account database.
 - [x] Resolve absolute paths before daemonization changes cwd.
 - [x] Make environment inheritance, clearing, and override order deterministic.
+- [x] Load bounded direct-command `-e` / `--env-dir` snapshots before daemonization.
+- [x] Accept `env` as a scalar-map alias and emit canonical `environment`.
+- [x] Derive config identities, require direct `-n`/`--name`, and safely create
+  the effective user's owner-only runtime root.
 - [x] Reject empty commands, invalid durations, duplicate keys, conflicting
   options, oversized files, and excessive YAML nesting/aliases.
 - [x] Reject unknown users and enforce UID/GID transition policy.

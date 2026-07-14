@@ -1,22 +1,32 @@
-//! Coordination of application operations selected by CLI dispatch.
+//! Coordination of fully typed `immortal` application operations.
+//!
+//! Configuration is parsed and direct inputs are materialized before runtime
+//! identity is resolved. Exact control directories are preserved, while config
+//! stems and direct names prepare the effective user's runtime root through
+//! `immortal-core`. Only then may foreground execution or checked daemonization
+//! acquire service ownership and start process infrastructure.
 
 use std::{
     error::Error,
     fmt::{self, Display, Formatter},
     io::{self, Write},
+    path::{Path, PathBuf},
 };
 
 use immortal_core::{
-    config::{ConfigError, ServiceConfig, emit_config, parse_file, resolve_paths},
+    config::{
+        ConfigError, ServiceConfig, emit_config, load_environment_directory, parse_file,
+        resolve_paths,
+    },
     executor::{
-        DaemonRunOutcome, ExecutorError, SupervisionOutcome, run_daemon, run_foreground,
-        run_foreground_controlled,
+        DaemonRunOutcome, ExecutorError, SupervisionOutcome, run_daemon, run_foreground_controlled,
     },
     exit::ExitClass,
+    runtime::prepare_user_service_directory,
     supervisor::SupervisorState,
 };
 
-use crate::cli::dispatch::{Action, DirectService};
+use crate::cli::dispatch::{Action, DirectService, RuntimeIdentity};
 
 /// Failure while coordinating an application action.
 #[derive(Debug)]
@@ -25,6 +35,8 @@ pub enum ActionError {
     Config(ConfigError),
     /// Normalized output could not be written.
     Output(io::Error),
+    /// Automatic user runtime identity could not be prepared safely.
+    Runtime(io::Error),
     /// Foreground process execution failed.
     Executor(ExecutorError),
     /// Supervision stopped in a configured terminal failure state.
@@ -36,6 +48,7 @@ impl Display for ActionError {
         match self {
             Self::Config(error) => Display::fmt(error, formatter),
             Self::Output(error) => write!(formatter, "unable to write output: {error}"),
+            Self::Runtime(error) => write!(formatter, "unable to prepare service runtime: {error}"),
             Self::Executor(error) => Display::fmt(error, formatter),
             Self::ServiceFailed(outcome) => write!(
                 formatter,
@@ -50,7 +63,7 @@ impl Error for ActionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Config(error) => Some(error),
-            Self::Output(error) => Some(error),
+            Self::Output(error) | Self::Runtime(error) => Some(error),
             Self::Executor(error) => Some(error),
             Self::ServiceFailed(_) => None,
         }
@@ -78,10 +91,17 @@ impl From<ExecutorError> for ActionError {
 impl ActionError {
     /// Stable process exit classification for this failure.
     #[must_use]
-    pub const fn exit_class(&self) -> ExitClass {
+    pub fn exit_class(&self) -> ExitClass {
         match self {
             Self::Config(_) => ExitClass::Configuration,
             Self::Output(_) => ExitClass::IoError,
+            Self::Runtime(error) if error.kind() == io::ErrorKind::InvalidInput => {
+                ExitClass::Configuration
+            }
+            Self::Runtime(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                ExitClass::Permission
+            }
+            Self::Runtime(_) => ExitClass::CantCreate,
             Self::Executor(ExecutorError::Unsupported(_)) => ExitClass::Unavailable,
             Self::Executor(ExecutorError::OperatingSystem(_) | ExecutorError::Daemon(_)) => {
                 ExitClass::OsError
@@ -112,53 +132,88 @@ pub fn execute(action: Action) -> Result<(), ActionError> {
             foreground,
         } => {
             let config = parse_file(&path)?;
-            supervise(&config, control_directory.as_deref(), foreground)
+            let control_directory = match control_directory {
+                Some(directory) => directory,
+                None => config_runtime_directory(&path)?,
+            };
+            supervise(&config, &control_directory, foreground)
         }
         Action::SuperviseCommand(service) => {
-            let foreground = service.foreground;
-            let control_directory = service.control_directory.clone();
-            let config = direct_config(service)?;
-            supervise(&config, control_directory.as_deref(), foreground)
+            let (config, runtime_identity, foreground) = direct_config(service)?;
+            let control_directory = match runtime_identity {
+                RuntimeIdentity::Name(name) => {
+                    prepare_user_service_directory(&name).map_err(ActionError::Runtime)?
+                }
+                RuntimeIdentity::ControlDirectory(directory) => directory,
+            };
+            supervise(&config, &control_directory, foreground)
         }
     }
 }
 
 fn supervise(
     config: &ServiceConfig,
-    control_directory: Option<&std::path::Path>,
+    control_directory: &Path,
     foreground: bool,
 ) -> Result<(), ActionError> {
     if foreground {
-        let outcome = control_directory.map_or_else(
-            || run_foreground(config),
-            |directory| run_foreground_controlled(config, directory),
-        )?;
+        let outcome = run_foreground_controlled(config, control_directory)?;
         finish_supervision(outcome)
     } else {
-        match run_daemon(config, control_directory)? {
+        match run_daemon(config, Some(control_directory))? {
             DaemonRunOutcome::Parent => Ok(()),
             DaemonRunOutcome::Daemon(outcome) => finish_supervision(outcome),
         }
     }
 }
 
-fn direct_config(service: DirectService) -> Result<ServiceConfig, ActionError> {
-    let mut config = ServiceConfig::for_command(service.command)?;
-    config.restart.limits.max_retries = if service.retries < 0 {
+fn config_runtime_directory(path: &Path) -> Result<PathBuf, ActionError> {
+    let name = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            ActionError::Runtime(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "configuration filename has no UTF-8 service stem",
+            ))
+        })?;
+    prepare_user_service_directory(name).map_err(ActionError::Runtime)
+}
+
+fn direct_config(
+    service: DirectService,
+) -> Result<(ServiceConfig, RuntimeIdentity, bool), ActionError> {
+    let DirectService {
+        child_pid,
+        command,
+        environment_directory,
+        foreground,
+        retries,
+        runtime_identity,
+        start_delay_seconds,
+        supervisor_pid,
+        user,
+        working_directory,
+    } = service;
+    let mut config = ServiceConfig::for_command(command)?;
+    config.restart.limits.max_retries = if retries < 0 {
         None
     } else {
-        Some(u32::try_from(service.retries).map_err(|_| {
+        Some(u32::try_from(retries).map_err(|_| {
             ConfigError::Validation(vec!["retries must be -1 or a nonnegative count".to_owned()])
         })?)
     };
-    config.start_delay_seconds = service.start_delay_seconds;
-    config.pid_files.main = service.child_pid;
-    config.pid_files.supervisor = service.supervisor_pid;
-    config.user = service.user;
-    config.working_directory = service.working_directory;
+    config.start_delay_seconds = start_delay_seconds;
+    config.pid_files.main = child_pid;
+    config.pid_files.supervisor = supervisor_pid;
+    if let Some(directory) = environment_directory {
+        config.environment = load_environment_directory(&directory)?;
+    }
+    config.user = user;
+    config.working_directory = working_directory;
     let base = std::env::current_dir().map_err(ActionError::Output)?;
     resolve_paths(&mut config, &base)?;
-    Ok(config)
+    Ok((config, runtime_identity, foreground))
 }
 
 fn finish_supervision(outcome: SupervisionOutcome) -> Result<(), ActionError> {

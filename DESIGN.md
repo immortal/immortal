@@ -61,7 +61,8 @@ dispatch and actions with contract tests.
 
 ## Core boundaries
 
-- `config`: typed service definitions, validation, and resolved defaults.
+- `config`: typed service definitions, validation, resolved defaults, and
+  bounded pre-daemonization environment-directory snapshots.
 - `process`: wraps the `fork` crate for Unix child creation, daemonization,
   waiting, sessions, process groups, environment, identity, and signals.
 - `supervisor`: desired state, retries, transitions, and shutdown coordination.
@@ -184,12 +185,12 @@ supervisor converts those signals into an ordered service/logger shutdown;
 `immortaldir` observes them only between complete reconciliation operations and
 then shuts down and reaps its launcher broker without cancelling a partial
 mutation.
-The controlled foreground executor acquires exclusive runtime ownership before
-the broker fork and binds its authenticated socket only after the Tokio runtime
-exists. The supervisor event loop remains the sole lifecycle owner. Explicit
-`Exit` sends a generation-bound detach request to the broker; only a successful
-detach transitions the supervisor to `Exited`, after which the empty broker is
-shut down and reaped while the service is deliberately reparented to the OS.
+The controlled executor acquires exclusive runtime ownership before the broker
+fork and binds its authenticated socket only after the Tokio runtime exists.
+The supervisor event loop remains the sole lifecycle owner. Explicit `Exit`
+sends a generation-bound detach request to the broker; only a successful detach
+transitions the supervisor to `Exited`, after which the empty broker is shut
+down and reaped while the service is deliberately reparented to the OS.
 
 Pre-start conditions and post-exit hooks use broker task identities rather than
 service generations, but retain the same bounded IPC, process-group isolation,
@@ -321,24 +322,36 @@ Immediate readiness, restart/backoff decisions, bounded retry termination,
 successful exit, failed exec, atomic PID publication, and final broker reaping
 have black-box contracts.
 
-Milestone 4 is implemented for the controlled foreground path. Runtime locking,
-stale-socket safety, peer-authenticated bounded serving, optimistic generation
-matching, all lifecycle operations, raw signal delivery, live-child detach, and
-complete status publication share the same serialized executor. Logger
-Starting, Ready, Backoff, and Failed health is published from the same owner;
-bounded exhaustion and explicit operator recovery are contract-tested. Once
-the authenticated socket is bound, the controlled state machine remains
+Milestone 4 is implemented for controlled foreground and daemon paths. Runtime
+locking, stale-socket safety, peer-authenticated bounded serving, optimistic
+generation matching, all lifecycle operations, raw signal delivery, live-child
+detach, and complete status publication share the same serialized executor.
+Logger Starting, Ready, Backoff, and Failed health is published from the same
+owner; bounded exhaustion and explicit operator recovery are contract-tested.
+Once the authenticated socket is bound, the controlled state machine remains
 `Initializing` while required logger stages start or back off. It publishes no
 service generation during that interval, then transitions exactly once to
 normal start processing or to bounded logger failure.
+
+`immortal` resolves runtime identity before daemonization. An exact
+`--control-dir` is preserved unchanged; otherwise config launches derive a safe
+filename stem and direct launches require a safe `-n`/`--name`. The owning
+`immortal-core` boundary creates `$HOME/.immortal` only as a canonical
+effective-UID-owned mode-`0700` directory below a trusted effective-UID-owned
+home. It rejects symlinks, unsafe existing modes, hidden names, unbounded
+identities, and control-socket paths beyond the portable Unix limit before
+creating service artifacts. No PID-derived fallback exists. `immortaldir`
+continues to pass exact service directories below the platform-native
+ephemeral system root.
 
 `immortalctl` treats runtime discovery as a bounded multi-root trust boundary.
 Automatic mode scans the native system root and the effective user's
 `$HOME/.immortal`; exact `--runtime-dir` and `IMMORTAL_SDIR` inputs disable that
 aggregation. Root failures are isolated, user ownership is checked against the
-effective UID, and one global service bound covers both scans. Scope remains in
-status output, and duplicate names require an explicit system or user scope for
-mutation rather than relying on precedence.
+effective UID, and one global service bound covers both scans. User-home
+resolution failure is also isolated so system discovery continues. Scope
+remains in status output, and duplicate names require an explicit system or
+user scope for mutation rather than relying on precedence.
 
 The readiness, lifecycle-hook, and descriptor-tracking portions of milestone 3
 are implemented. For each

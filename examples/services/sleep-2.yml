@@ -1,0 +1,8 @@
+---
+version: 2
+command:
+  - /bin/sleep
+  - 30
+restart:
+  policy: never
+  exit_when_done: true

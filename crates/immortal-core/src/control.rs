@@ -31,12 +31,15 @@ use tokio::{
 };
 
 use crate::{
+    service_name::is_safe_service_name,
     status::{
         LastResult, LoggerStatus, MAX_STATUS_ARGUMENTS, ReadinessStatus, ServiceState,
         StatusSnapshot, desired_state_code, desired_state_from_code,
     },
     supervisor::{DesiredState, Generation, StateMachine, SupervisorState},
 };
+
+pub use crate::service_name::MAX_SERVICE_NAME_BYTES;
 
 const MAGIC: [u8; 4] = *b"IMMO";
 const HEADER_BYTES: usize = 18;
@@ -59,8 +62,6 @@ const STATUS_KNOWN_FLAGS: u16 = STATUS_SUPERVISOR_PID
 pub const PROTOCOL_VERSION: u8 = 1;
 /// Hard upper bound for any request or response frame.
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
-/// Hard upper bound for a UTF-8 service name.
-pub const MAX_SERVICE_NAME_BYTES: usize = 255;
 /// Maximum idle time for one control-frame read or write.
 pub const CONTROL_IO_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default number of concurrently handled control connections.
@@ -977,13 +978,7 @@ fn validate_service_name(name: &str) -> Result<(), ProtocolError> {
     if name.len() > MAX_SERVICE_NAME_BYTES {
         return Err(ProtocolError::NameTooLong);
     }
-    let safe = !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'));
-    if safe {
+    if is_safe_service_name(name) {
         Ok(())
     } else {
         Err(ProtocolError::UnsafeServiceName)

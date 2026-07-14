@@ -3,7 +3,7 @@
 use std::{
     error::Error,
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -11,9 +11,16 @@ use std::{
 };
 
 use immortal_core::{
+    control::{
+        GenerationMatch, Operation, Request, Response, ResponseCode, SignalScope, read_response,
+        write_request,
+    },
     exit::ExitClass,
     process::{ProcessId, ProcessSignal, SignalTarget, signal as deliver_signal},
+    runtime::{CONTROL_SOCKET_NAME, SUPERVISOR_LOCK_NAME},
+    status::ServiceState,
 };
+use tokio::{net::UnixStream, runtime::Builder};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -22,6 +29,8 @@ const TRUE_PROGRAM: &str = "/usr/bin/true";
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
     let binary = Path::new(env!("CARGO_BIN_EXE_immortal"));
+    let home = TemporaryDirectory::new("real")?;
+    let _home_alias = HomeAlias::new(&home.0)?;
     let legacy = ConfigFile::new("legacy-check", "cmd: /bin/true\n")?;
     assert_status(
         run(binary, ["--config", legacy.path_str()?, "--check-config"])?,
@@ -45,6 +54,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         run(binary, ["--foreground", "--config", success.path_str()?])?,
         ExitClass::Success,
         "successful foreground configuration",
+    )?;
+    let runtime_root = home.join(".immortal");
+    let runtime_metadata = fs::symlink_metadata(&runtime_root)?;
+    if runtime_metadata.permissions().mode() & 0o777 != 0o700 {
+        return Err("automatic user runtime root was not created with mode 0700".into());
+    }
+    let automatic_service = runtime_root.join(success.service_name()?);
+    if !automatic_service.join(SUPERVISOR_LOCK_NAME).is_file() {
+        return Err("config filename stem did not select the automatic service runtime".into());
+    }
+    let env_alias = ConfigFile::new(
+        "env-alias",
+        "version: 2\ncommand: [/bin/sh, -c, 'test \"$DEBUG\" = 1 && test \"$ENVIRONMENT\" = production']\nenv:\n  DEBUG: 1\n  ENVIRONMENT: production\nrestart:\n  policy: never\n  exit_when_done: true\n",
+    )?;
+    assert_status(
+        run(binary, ["--foreground", "--config", env_alias.path_str()?])?,
+        ExitClass::Success,
+        "version two env alias",
     )?;
 
     let failed_exec = ConfigFile::new(
@@ -96,10 +123,49 @@ fn main() -> Result<(), Box<dyn Error>> {
         "descriptor readiness timeout",
     )?;
 
+    let retry_service = runtime_root.join("retry-limit");
+    let retry_supervisor = ChildGuard::new(spawn_immortal(
+        binary,
+        [
+            "--foreground",
+            "--name",
+            "retry-limit",
+            "--retries",
+            "0",
+            TRUE_PROGRAM,
+        ],
+    )?);
+    let retry_socket = retry_service.join(CONTROL_SOCKET_NAME);
+    wait_for_childless_state_and_halt(&retry_socket, "retry-limit", ServiceState::Failed)?;
     assert_status(
-        run(binary, ["--foreground", "--retries", "0", TRUE_PROGRAM])?,
-        ExitClass::TemporaryFailure,
-        "retry limit",
+        retry_supervisor.wait(COMMAND_TIMEOUT).map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("retry-limited supervisor did not halt: {error}"),
+            )
+        })?,
+        ExitClass::Success,
+        "retry-limited supervisor halt",
+    )?;
+    if !retry_service.join(SUPERVISOR_LOCK_NAME).is_file() {
+        return Err("direct service name did not select the automatic service runtime".into());
+    }
+    assert_status(
+        run(binary, ["--foreground", "--name", ".hidden", TRUE_PROGRAM])?,
+        ExitClass::Configuration,
+        "unsafe direct service name",
+    )?;
+    let unsafe_stem = ConfigFile::new(
+        "unsafe stem",
+        "version: 2\ncommand: [/bin/true]\nrestart:\n  policy: never\n  exit_when_done: true\n",
+    )?;
+    assert_status(
+        run(
+            binary,
+            ["--foreground", "--config", unsafe_stem.path_str()?],
+        )?,
+        ExitClass::Configuration,
+        "unsafe configuration filename stem",
     )?;
     let effective = nix::unistd::geteuid();
     let account = nix::unistd::User::from_uid(effective)?
@@ -151,6 +217,71 @@ fn main() -> Result<(), Box<dyn Error>> {
         run(binary, ["--log-file", "/tmp/removed.log", TRUE_PROGRAM])?,
         ExitClass::Usage,
         "removed nonoperational option",
+    )?;
+
+    let environment = TemporaryDirectory::new("environment")?;
+    let environment_marker = MarkerFile::new("environment-loaded");
+    fs::write(environment.join("FROM_FILE"), "first\nignored\n")?;
+    fs::write(environment.join("EMPTY_VALUE"), "\nignored\n")?;
+    fs::write(
+        environment.join("MARKER"),
+        format!("{}\n", environment_marker.path_str()?),
+    )?;
+    let environment_supervisor = ChildGuard::new(spawn_immortal(
+        binary,
+        [
+            "--foreground",
+            "--name",
+            "environment-directory",
+            "--retries",
+            "0",
+            "--env-dir",
+            environment.path_str()?,
+            "/bin/sh",
+            "-c",
+            "test \"$FROM_FILE\" = first && test -z \"$EMPTY_VALUE\" && : > \"$MARKER\"",
+        ],
+    )?);
+    if !environment_marker.0.exists() {
+        environment_marker.wait(COMMAND_TIMEOUT)?;
+    }
+    wait_for_childless_state_and_halt(
+        &runtime_root
+            .join("environment-directory")
+            .join(CONTROL_SOCKET_NAME),
+        "environment-directory",
+        ServiceState::Failed,
+    )?;
+    assert_status(
+        environment_supervisor
+            .wait(COMMAND_TIMEOUT)
+            .map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!("environment-directory supervisor did not halt: {error}"),
+                )
+            })?,
+        ExitClass::Success,
+        "environment-directory supervisor halt",
+    )?;
+    let missing_environment = environment.join("missing");
+    let missing_environment = missing_environment
+        .to_str()
+        .ok_or("temporary environment path is not UTF-8")?;
+    assert_status(
+        run(
+            binary,
+            [
+                "--foreground",
+                "--name",
+                "missing-environment-directory",
+                "--env-dir",
+                missing_environment,
+                TRUE_PROGRAM,
+            ],
+        )?,
+        ExitClass::Configuration,
+        "missing direct environment directory",
     )?;
 
     let supervisor_pid = MarkerFile::new("supervisor-pid");
@@ -231,7 +362,86 @@ fn main() -> Result<(), Box<dyn Error>> {
     prove_logger_exec_permission_denial(binary)?;
     prove_lossless_pipe_backpressure(binary)?;
     prove_logger_drain_timeout_escalates(binary)?;
+    prove_unsafe_user_runtime_root_is_rejected(binary)?;
     Ok(())
+}
+
+fn prove_unsafe_user_runtime_root_is_rejected(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let home = TemporaryDirectory::new("bad")?;
+    let root = home.join(".immortal");
+    fs::create_dir(&root)?;
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o755))?;
+    let config = ConfigFile::new(
+        "bad-root",
+        "version: 2\ncommand: [/bin/true]\nrestart:\n  policy: never\n  exit_when_done: true\n",
+    )?;
+    assert_status(
+        run_with_home(
+            binary,
+            ["--foreground", "--config", config.path_str()?],
+            &home.0,
+        )?,
+        ExitClass::Permission,
+        "unsafe automatic user runtime root",
+    )
+}
+
+fn wait_for_childless_state_and_halt(
+    socket: &Path,
+    service: &str,
+    expected: ServiceState,
+) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + COMMAND_TIMEOUT;
+    loop {
+        if socket.exists() {
+            let status = control_request(
+                socket,
+                &Request {
+                    operation: Operation::Status,
+                    service: service.to_owned(),
+                    expected_generation: GenerationMatch::Any,
+                    scope: SignalScope::Main,
+                    signal: None,
+                },
+            )?;
+            if status.code == ResponseCode::Ok
+                && status.status.as_ref().is_some_and(|snapshot| {
+                    snapshot.state == expected && snapshot.main_pid.is_none()
+                })
+            {
+                let halt = control_request(
+                    socket,
+                    &Request {
+                        operation: Operation::Halt,
+                        service: service.to_owned(),
+                        expected_generation: GenerationMatch::NoChild,
+                        scope: SignalScope::Main,
+                        signal: None,
+                    },
+                )?;
+                if halt.code == ResponseCode::Ok {
+                    return Ok(());
+                }
+                return Err(format!("halt returned {}: {}", halt.code.name(), halt.message).into());
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("service `{service}` did not reach {expected:?}").into());
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn control_request(socket: &Path, request: &Request) -> Result<Response, Box<dyn Error>> {
+    let runtime = Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    runtime.block_on(async {
+        let mut stream = UnixStream::connect(socket).await?;
+        write_request(&mut stream, request).await?;
+        read_response(&mut stream).await.map_err(Into::into)
+    })
 }
 
 fn prove_logger_exec_permission_denial(binary: &Path) -> Result<(), Box<dyn Error>> {
@@ -247,10 +457,19 @@ fn prove_logger_exec_permission_denial(binary: &Path) -> Result<(), Box<dyn Erro
             logger.path_str()?
         ),
     )?;
+    let supervisor = ChildGuard::new(spawn_immortal(
+        binary,
+        ["--foreground", "--config", config.path_str()?],
+    )?);
+    let socket = TemporaryDirectory::test_home_path()
+        .join(".immortal")
+        .join(config.service_name()?)
+        .join(CONTROL_SOCKET_NAME);
+    wait_for_childless_state_and_halt(&socket, config.service_name()?, ServiceState::Failed)?;
     assert_status(
-        run(binary, ["--foreground", "--config", config.path_str()?])?,
-        ExitClass::TemporaryFailure,
-        "non-executable logger",
+        supervisor.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "non-executable logger supervisor halt",
     )?;
     if service.0.exists() {
         return Err("service started after logger execute permission denial".into());
@@ -317,11 +536,34 @@ fn prove_logger_drain_timeout_escalates(binary: &Path) -> Result<(), Box<dyn Err
     Ok(())
 }
 
+#[track_caller]
 fn run<'argument>(
     binary: &Path,
     arguments: impl IntoIterator<Item = &'argument str>,
 ) -> Result<ExitStatus, Box<dyn Error>> {
+    let caller = std::panic::Location::caller();
     let child = spawn_immortal(binary, arguments)?;
+    ChildGuard::new(child)
+        .wait(COMMAND_TIMEOUT)
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "immortal invocation at {}:{} did not finish: {error}",
+                    caller.file(),
+                    caller.line()
+                ),
+            )
+            .into()
+        })
+}
+
+fn run_with_home<'argument>(
+    binary: &Path,
+    arguments: impl IntoIterator<Item = &'argument str>,
+    home: &Path,
+) -> Result<ExitStatus, Box<dyn Error>> {
+    let child = spawn_immortal_with_home(binary, arguments, home)?;
     ChildGuard::new(child)
         .wait(COMMAND_TIMEOUT)
         .map_err(Into::into)
@@ -331,8 +573,17 @@ fn spawn_immortal<'argument>(
     binary: &Path,
     arguments: impl IntoIterator<Item = &'argument str>,
 ) -> std::io::Result<Child> {
+    spawn_immortal_with_home(binary, arguments, &TemporaryDirectory::test_home_path())
+}
+
+fn spawn_immortal_with_home<'argument>(
+    binary: &Path,
+    arguments: impl IntoIterator<Item = &'argument str>,
+    home: &Path,
+) -> std::io::Result<Child> {
     Command::new(binary)
         .args(arguments)
+        .env("HOME", home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -421,9 +672,66 @@ impl ConfigFile {
             .to_str()
             .ok_or_else(|| "temporary configuration path is not UTF-8".into())
     }
+
+    fn service_name(&self) -> Result<&str, Box<dyn Error>> {
+        self.0
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "temporary configuration stem is not UTF-8".into())
+    }
 }
 
 impl Drop for ConfigFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+struct TemporaryDirectory(PathBuf);
+
+impl TemporaryDirectory {
+    fn new(name: &str) -> std::io::Result<Self> {
+        let path = std::env::temp_dir().join(format!("im-fg-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir(&path)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+        Ok(Self(path))
+    }
+
+    fn test_home_path() -> PathBuf {
+        std::env::temp_dir().join(format!("im-fg-home-{}", std::process::id()))
+    }
+
+    fn path_str(&self) -> Result<&str, Box<dyn Error>> {
+        self.0
+            .to_str()
+            .ok_or_else(|| "temporary directory path is not UTF-8".into())
+    }
+
+    fn join(&self, path: impl AsRef<Path>) -> PathBuf {
+        self.0.join(path)
+    }
+}
+
+impl Drop for TemporaryDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+struct HomeAlias(PathBuf);
+
+impl HomeAlias {
+    fn new(target: &Path) -> std::io::Result<Self> {
+        let path = TemporaryDirectory::test_home_path();
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&path);
+        symlink(target, &path)?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for HomeAlias {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }

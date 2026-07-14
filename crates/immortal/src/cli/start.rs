@@ -38,6 +38,7 @@ pub fn start() -> ExitCode {
         .and_then(|action| {
             actions::execute(action).map_err(|error| (error.exit_class(), error.to_string()))
         });
+
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err((class, error)) => {

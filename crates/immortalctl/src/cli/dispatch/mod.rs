@@ -168,18 +168,7 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
             "control operation requires a target".to_owned(),
         ));
     };
-    let signal = subcommand
-        .get_one::<String>("signal")
-        .map(String::as_str)
-        .map(|name| {
-            Signal::from_name(name).ok_or_else(|| DispatchError(format!("unknown signal `{name}`")))
-        })
-        .transpose()?;
-    let scope = match subcommand.get_one::<String>("scope").map(String::as_str) {
-        Some("group") => SignalScope::Group,
-        Some("main") | None => SignalScope::Main,
-        Some(value) => return Err(DispatchError(format!("unknown signal scope `{value}`"))),
-    };
+    let (signal, scope) = signal_fields(operation, subcommand)?;
     Ok(Action {
         discovery,
         output,
@@ -191,6 +180,32 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         scope,
         signal,
     })
+}
+
+fn signal_fields(
+    operation: Operation,
+    subcommand: &ArgMatches,
+) -> Result<(Option<Signal>, SignalScope), DispatchError> {
+    if operation != Operation::Signal {
+        return Ok((None, SignalScope::Main));
+    }
+    let name = subcommand
+        .get_one::<String>("signal")
+        .map(String::as_str)
+        .ok_or_else(|| DispatchError("signal operation requires a signal".to_owned()))?;
+    let signal =
+        Signal::from_name(name).ok_or_else(|| DispatchError(format!("unknown signal `{name}`")))?;
+    let scope = match subcommand.get_one::<String>("scope").map(String::as_str) {
+        Some("group") => SignalScope::Group,
+        Some("main") => SignalScope::Main,
+        Some(value) => return Err(DispatchError(format!("unknown signal scope `{value}`"))),
+        None => {
+            return Err(DispatchError(
+                "signal operation requires a scope".to_owned(),
+            ));
+        }
+    };
+    Ok((Some(signal), scope))
 }
 
 fn automatic_discovery(matches: &ArgMatches) -> Result<RuntimeDiscovery, DispatchError> {
@@ -271,6 +286,17 @@ mod tests {
         assert_eq!(action.signal, Some(Signal::User2));
         assert_eq!(action.scope, SignalScope::Group);
         assert_eq!(action.target, Target::Service("api".to_owned()));
+        Ok(())
+    }
+
+    #[test]
+    fn non_signal_subcommands_do_not_access_signal_arguments() -> Result<(), Box<dyn Error>> {
+        for operation in ["status", "start", "stop", "restart", "once", "exit", "halt"] {
+            let matches = commands::try_get_matches_from(["immortalctl", operation, "api"])?;
+            let action = action(&matches)?;
+            assert_eq!(action.signal, None);
+            assert_eq!(action.scope, SignalScope::Main);
+        }
         Ok(())
     }
 

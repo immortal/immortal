@@ -5,9 +5,12 @@ use std::ffi::{OsStr, OsString};
 use clap::{
     Arg, ArgAction, ArgGroup, ArgMatches, ColorChoice, Command, Error, ValueHint,
     builder::styling::{AnsiColor, Effects, Styles},
+    error::ErrorKind,
 };
 
-const CONFIG_CONFLICTS: [&str; 6] = [
+const CONFIG_CONFLICTS: [&str; 8] = [
+    "env-dir",
+    "name",
     "retries",
     "child-pid",
     "supervisor-pid",
@@ -29,10 +32,13 @@ pub fn new() -> Command {
              when it exits. Foreground, checked daemon startup, and authenticated control are \
              backed by process contracts.",
         )
-        .override_usage("immortal [OPTIONS] <COMMAND> [ARGUMENTS]...")
+        .override_usage(
+            "immortal [OPTIONS] (-n <SERVICE> | --control-dir <DIR>) <COMMAND> [ARGUMENTS]...\n       \
+             immortal [OPTIONS] --config <FILE>",
+        )
         .after_help(
             "Examples:
-  immortal --foreground --retries 0 /bin/true
+  immortal --foreground --name probe --retries 0 /bin/true
   immortal --foreground --config /usr/local/etc/immortal/run.yml
   immortal --config run.yml --check-config",
         )
@@ -47,11 +53,13 @@ pub fn new() -> Command {
                 .required(true),
         )
         .arg(arg_foreground())
+        .arg(arg_name())
         .arg(arg_retries())
         .arg(arg_check_config())
         .arg(arg_child_pid())
         .arg(arg_config())
         .arg(arg_control_dir())
+        .arg(arg_environment_directory())
         .arg(arg_supervisor_pid())
         .arg(arg_user())
         .arg(arg_working_dir())
@@ -59,10 +67,10 @@ pub fn new() -> Command {
         .arg(arg_command())
 }
 
-/// Parse arguments after translating released multi-character single-dash flags.
+/// Parse arguments while rejecting the ambiguous historical `-name` spelling.
 ///
-/// Translation stops at the child command so option-looking child arguments
-/// remain byte-for-byte unchanged.
+/// The check stops before the trailing child argv, whose bytes remain under the
+/// child's ownership even when an argument is exactly `-name`.
 ///
 /// # Errors
 ///
@@ -70,62 +78,26 @@ pub fn new() -> Command {
 pub fn try_get_matches_from<I, T>(arguments: I) -> Result<ArgMatches, Error>
 where
     I: IntoIterator<Item = T>,
-    T: Into<OsString> + Clone,
+    T: Into<OsString>,
 {
     let arguments: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
-    let mut normalized = Vec::with_capacity(arguments.len());
-    let mut expects_value = false;
-    let mut command_started = false;
-    for (position, argument) in arguments.into_iter().enumerate() {
-        if position == 0 || command_started {
-            normalized.push(argument);
-            continue;
-        }
-        if expects_value {
-            expects_value = false;
-            normalized.push(argument);
-            continue;
-        }
-        if takes_value(&argument) {
-            expects_value = true;
-        } else if !argument.as_encoded_bytes().starts_with(b"-") {
-            command_started = true;
-        }
-        normalized.push(normalize_legacy_option(argument));
+    let matches = new().try_get_matches_from(arguments.clone())?;
+    let command_arguments = matches
+        .get_many::<String>("command")
+        .map_or(0, Iterator::count);
+    let option_end = arguments.len().saturating_sub(command_arguments);
+    if arguments
+        .iter()
+        .take(option_end)
+        .skip(1)
+        .any(|argument| argument == OsStr::new("-name"))
+    {
+        return Err(new().error(
+            ErrorKind::UnknownArgument,
+            "the historical `-name` spelling is unsupported; use `-n SERVICE` or `--name SERVICE`",
+        ));
     }
-    new().try_get_matches_from(normalized)
-}
-
-fn takes_value(argument: &OsStr) -> bool {
-    matches!(
-        argument.to_str(),
-        Some(
-            "-r" | "--retries"
-                | "-p"
-                | "--child-pid"
-                | "-c"
-                | "--config"
-                | "-ctl"
-                | "--control-dir"
-                | "-P"
-                | "--supervisor-pid"
-                | "-u"
-                | "--user"
-                | "-d"
-                | "--working-dir"
-                | "-w"
-                | "--wait"
-        )
-    )
-}
-
-fn normalize_legacy_option(argument: OsString) -> OsString {
-    match argument.to_str() {
-        Some("-cc") => OsString::from("--check-config"),
-        Some("-ctl") => OsString::from("--control-dir"),
-        Some("-v") => OsString::from("--version"),
-        Some(_) | None => argument,
-    }
+    Ok(matches)
 }
 
 fn styles() -> Styles {
@@ -138,10 +110,20 @@ fn styles() -> Styles {
 
 fn arg_foreground() -> Arg {
     Arg::new("foreground")
-        .short('n')
+        .short('f')
         .long("foreground")
         .help("Stay in the foreground instead of daemonizing")
         .action(ArgAction::SetTrue)
+}
+
+fn arg_name() -> Arg {
+    Arg::new("name")
+        .short('n')
+        .long("name")
+        .value_name("SERVICE")
+        .help("Use SERVICE below the effective user's .immortal runtime root")
+        .required_unless_present_any(["config", "control-dir"])
+        .conflicts_with_all(["config", "control-dir"])
 }
 
 fn arg_retries() -> Arg {
@@ -190,6 +172,16 @@ fn arg_control_dir() -> Arg {
         .value_name("DIR")
         .value_hint(ValueHint::DirPath)
         .help("Own DIR as this service's runtime directory and serve its control socket")
+}
+
+fn arg_environment_directory() -> Arg {
+    Arg::new("env-dir")
+        .short('e')
+        .long("env-dir")
+        .value_name("DIR")
+        .value_hint(ValueHint::DirPath)
+        .help("Set environment variables specified by files in the dir")
+        .conflicts_with("config")
 }
 
 fn arg_supervisor_pid() -> Arg {
@@ -275,6 +267,12 @@ mod tests {
     }
 
     #[test]
+    fn env_dir_preserves_released_help_text() {
+        let help = new().render_long_help().to_string();
+        assert!(help.contains("Set environment variables specified by files in the dir"));
+    }
+
+    #[test]
     fn help_is_available() {
         let result = new().try_get_matches_from(["immortal", "--help"]);
         assert_eq!(
@@ -285,7 +283,8 @@ mod tests {
 
     #[test]
     fn version_is_available() {
-        let short = try_get_matches_from(["immortal", "-V"])
+        let short = new()
+            .try_get_matches_from(["immortal", "-V"])
             .err()
             .map(|error| error.to_string());
         assert_eq!(
@@ -297,7 +296,8 @@ mod tests {
             ))
         );
 
-        let long = try_get_matches_from(["immortal", "--version"])
+        let long = new()
+            .try_get_matches_from(["immortal", "--version"])
             .err()
             .map(|error| error.to_string());
         assert_eq!(
@@ -312,8 +312,8 @@ mod tests {
             new().get_long_version(),
             Some(immortal_core::build_info::long_version())
         );
-        for option in ["-v", "-V", "--version"] {
-            let result = try_get_matches_from(["immortal", option]);
+        for option in ["-V", "--version"] {
+            let result = new().try_get_matches_from(["immortal", option]);
             assert_eq!(
                 result.err().map(|error| error.kind()),
                 Some(ErrorKind::DisplayVersion)
@@ -325,7 +325,9 @@ mod tests {
     fn useful_short_options_are_accepted() {
         let result = new().try_get_matches_from([
             "immortal",
+            "-f",
             "-n",
+            "sleeper",
             "-r",
             "2",
             "-p",
@@ -336,6 +338,8 @@ mod tests {
             "www",
             "-d",
             "/tmp",
+            "-e",
+            "/tmp/env",
             "-w",
             "3",
             "sleep",
@@ -353,6 +357,8 @@ mod tests {
             "2",
             "--control-dir",
             "/tmp/service",
+            "--env-dir",
+            "/tmp/env",
             "--wait",
             "3",
             "sleep",
@@ -370,12 +376,15 @@ mod tests {
             matches.get_one::<String>("control-dir").map(String::as_str),
             Some("/tmp/service")
         );
+        assert_eq!(
+            matches.get_one::<String>("env-dir").map(String::as_str),
+            Some("/tmp/env")
+        );
     }
 
     #[test]
     fn config_check_requires_config() {
-        let valid =
-            new().try_get_matches_from(["immortal", "--config", "run.yml", "--check-config"]);
+        let valid = new().try_get_matches_from(["immortal", "-c", "run.yml", "--check-config"]);
         assert!(valid.is_ok());
 
         let invalid = new().try_get_matches_from(["immortal", "--check-config"]);
@@ -386,28 +395,9 @@ mod tests {
     }
 
     #[test]
-    fn released_multi_character_flags_are_accepted() {
-        let check = try_get_matches_from(["immortal", "-c", "run.yml", "-cc"]);
-        assert!(check.is_ok());
-        let control = try_get_matches_from(["immortal", "-ctl", "/tmp/control", "/bin/true"]);
-        assert!(control.is_ok());
-    }
-
-    #[test]
     fn removed_nonoperational_options_are_rejected() {
-        for option in [
-            "-e",
-            "-f",
-            "-l",
-            "-logger",
-            "-name",
-            "--env-dir",
-            "--follow-pid",
-            "--log-file",
-            "--logger",
-            "--name",
-        ] {
-            let result = try_get_matches_from(["immortal", option, "value", "/bin/true"]);
+        for option in ["-l", "-logger", "--follow-pid", "--log-file", "--logger"] {
+            let result = new().try_get_matches_from(["immortal", option, "value", "/bin/true"]);
             assert_eq!(
                 result.err().map(|error| error.kind()),
                 Some(ErrorKind::UnknownArgument)
@@ -416,36 +406,63 @@ mod tests {
     }
 
     #[test]
-    fn legacy_options_after_child_command_are_not_rewritten() {
-        let matches = try_get_matches_from(["immortal", "/bin/echo", "-logger", "child"]);
-        assert!(matches.is_ok());
-        let Some(matches) = matches.ok() else {
-            return;
-        };
-        let command = matches
-            .get_many::<String>("command")
-            .map(|values| values.map(String::as_str).collect::<Vec<_>>())
+    fn historical_name_spelling_is_rejected_before_but_preserved_after_command() {
+        let rejected = try_get_matches_from(["immortal", "-name", "sleep", "sleep", "30"]);
+        assert_eq!(
+            rejected.err().map(|error| error.kind()),
+            Some(ErrorKind::UnknownArgument)
+        );
+
+        let accepted =
+            try_get_matches_from(["immortal", "--name", "shell", "sh", "-name", "child-value"]);
+        assert!(accepted.is_ok());
+        let command = accepted
+            .ok()
+            .and_then(|matches| {
+                matches
+                    .get_many::<String>("command")
+                    .map(|values| values.cloned().collect::<Vec<_>>())
+            })
             .unwrap_or_default();
-        assert_eq!(command, ["/bin/echo", "-logger", "child"]);
+        assert_eq!(command, ["sh", "-name", "child-value"]);
     }
 
     #[test]
     fn config_rejects_ignored_command_options() {
-        let result =
-            new().try_get_matches_from(["immortal", "--config", "run.yml", "--retries", "2"]);
-        assert_eq!(
-            result.err().map(|error| error.kind()),
-            Some(ErrorKind::ArgumentConflict)
-        );
+        for (option, value) in [
+            ("--env-dir", "/tmp/env"),
+            ("--name", "api"),
+            ("--retries", "2"),
+            ("--child-pid", "/tmp/child.pid"),
+            ("--supervisor-pid", "/tmp/supervisor.pid"),
+            ("--user", "www"),
+            ("--working-dir", "/tmp"),
+            ("--wait", "2"),
+        ] {
+            let result =
+                new().try_get_matches_from(["immortal", "--config", "run.yml", option, value]);
+            assert_eq!(
+                result.err().map(|error| error.kind()),
+                Some(ErrorKind::ArgumentConflict)
+            );
+        }
     }
 
     #[test]
     fn child_options_after_command_are_preserved() {
         let result = new().try_get_matches_from([
             "immortal",
+            "--name",
+            "child-options",
             "sh",
             "-c",
             "echo ready",
+            "--check-config",
+            "-cc",
+            "-ctl",
+            "-v",
+            "-e",
+            "/tmp/env",
             "--logger",
             "child-argument",
         ]);
@@ -460,18 +477,77 @@ mod tests {
 
         assert_eq!(
             command,
-            ["sh", "-c", "echo ready", "--logger", "child-argument"]
+            [
+                "sh",
+                "-c",
+                "echo ready",
+                "--check-config",
+                "-cc",
+                "-ctl",
+                "-v",
+                "-e",
+                "/tmp/env",
+                "--logger",
+                "child-argument",
+            ]
         );
     }
 
     #[test]
     fn retries_default_matches_go_version() {
-        let result = new().try_get_matches_from(["immortal", "true"]);
+        let result = new().try_get_matches_from(["immortal", "--name", "true-test", "true"]);
         assert!(result.is_ok());
         let Some(matches) = result.ok() else {
             return;
         };
 
         assert_eq!(matches.get_one::<i32>("retries"), Some(&-1));
+    }
+
+    #[test]
+    fn direct_command_requires_name_or_control_directory() {
+        let missing = new().try_get_matches_from(["immortal", "sleep", "30"]);
+        assert_eq!(
+            missing.err().map(|error| error.kind()),
+            Some(ErrorKind::MissingRequiredArgument)
+        );
+
+        assert!(
+            new()
+                .try_get_matches_from(["immortal", "--name", "sleep", "sleep", "30"])
+                .is_ok()
+        );
+        assert!(
+            new()
+                .try_get_matches_from([
+                    "immortal",
+                    "--control-dir",
+                    "/run/immortal/sleep",
+                    "sleep",
+                    "30",
+                ])
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn name_conflicts_with_config_and_exact_control_directory() {
+        for result in [
+            new().try_get_matches_from(["immortal", "--name", "sleep", "--config", "sleep.yml"]),
+            new().try_get_matches_from([
+                "immortal",
+                "--name",
+                "sleep",
+                "--control-dir",
+                "/run/immortal/sleep",
+                "sleep",
+                "30",
+            ]),
+        ] {
+            assert_eq!(
+                result.err().map(|error| error.kind()),
+                Some(ErrorKind::ArgumentConflict)
+            );
+        }
     }
 }

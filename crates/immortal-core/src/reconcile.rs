@@ -33,6 +33,7 @@ use crate::{
         BrokerTaskId, ChildEvent, ProcessBrokerEndpoint, ProcessBrokerEvent, ProcessCommand,
         wait_for_event,
     },
+    service_name::is_safe_service_name,
 };
 
 /// Default maximum number of candidate definitions accepted in one directory.
@@ -399,7 +400,7 @@ impl DefinitionSnapshots {
                     "malformed tracker state entry",
                 ));
             };
-            if !safe_definition_name(name) || count.contains('\t') {
+            if !is_safe_service_name(name) || count.contains('\t') {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unsafe tracker state entry",
@@ -437,7 +438,7 @@ impl DefinitionSnapshots {
             let Some(name) = file_name.strip_suffix(".applied.yml") else {
                 continue;
             };
-            if !safe_definition_name(name) {
+            if !is_safe_service_name(name) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unsafe applied-state snapshot name",
@@ -553,7 +554,7 @@ impl DefinitionSnapshots {
     }
 
     fn named_path(&self, name: &str, kind: &str) -> io::Result<PathBuf> {
-        if !safe_definition_name(name) {
+        if !is_safe_service_name(name) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "unsafe snapshot service name",
@@ -561,15 +562,6 @@ impl DefinitionSnapshots {
         }
         Ok(self.directory.join(format!("{name}.{kind}.yml")))
     }
-}
-
-fn safe_definition_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
 /// Failure while launching a checked supervisor through the pre-Tokio broker.

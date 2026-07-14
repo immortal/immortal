@@ -4,15 +4,24 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt::{self, Display, Formatter},
-    fs::{self, File},
-    io::{self, Read},
+    fs::{self, File, Metadata, OpenOptions},
+    io::{self, BufRead, BufReader, Read},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize, de::IgnoredAny};
+use serde::{Deserialize, Deserializer, Serialize, de::IgnoredAny};
+
+use crate::service_name::is_safe_service_name;
 
 /// Maximum accepted size of one service definition.
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
+/// Maximum number of entries inspected in one direct-command environment directory.
+pub const MAX_ENVIRONMENT_DIRECTORY_ENTRIES: usize = 4_096;
+/// Maximum accepted byte length of one environment-file first line.
+pub const MAX_ENVIRONMENT_VALUE_BYTES: usize = 256 * 1024;
+/// Maximum aggregate byte length of loaded environment keys and values.
+pub const MAX_ENVIRONMENT_DIRECTORY_BYTES: usize = MAX_CONFIG_BYTES;
 
 const DEFAULT_BACKOFF_INITIAL_SECONDS: u64 = 1;
 const DEFAULT_BACKOFF_MAX_SECONDS: u64 = 60;
@@ -23,6 +32,7 @@ const DEFAULT_READINESS_TIMEOUT_SECONDS: u64 = 30;
 const DEFAULT_CONDITION_BACKOFF_MAX_SECONDS: u64 = 30;
 const MAX_OPERATION_SECONDS: u64 = 86_400;
 const MAX_SCHEDULE_SECONDS: u64 = 31_536_000;
+const MAX_ENVIRONMENT_VALUE_READ_BYTES: u64 = 256 * 1024 + 2;
 
 /// Validated runtime service definition.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -367,6 +377,13 @@ pub enum ConfigError {
     TooLarge { actual: u64 },
     /// The file could not be read.
     Io(io::Error),
+    /// A direct-command environment directory or one of its entries was invalid.
+    EnvironmentInput {
+        /// Path which could not be inspected or decoded.
+        path: PathBuf,
+        /// Operating-system or bounded-input failure.
+        source: io::Error,
+    },
     /// YAML was malformed or did not match the selected schema.
     Parse(String),
     /// The required configuration version marker was absent.
@@ -385,6 +402,13 @@ impl Display for ConfigError {
                 "configuration is {actual} bytes; limit is {MAX_CONFIG_BYTES} bytes"
             ),
             Self::Io(error) => write!(formatter, "unable to read configuration: {error}"),
+            Self::EnvironmentInput { path, source } => {
+                write!(
+                    formatter,
+                    "unable to load environment input `{}`: {source}",
+                    path.display()
+                )
+            }
             Self::Parse(error) => write!(formatter, "invalid YAML configuration: {error}"),
             Self::MissingVersion => formatter.write_str(
                 "configuration must declare `version: 2`; unversioned Go configuration is intentionally unsupported; see INSTALL.md#definition-migration",
@@ -410,6 +434,7 @@ impl Error for ConfigError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
+            Self::EnvironmentInput { source, .. } => Some(source),
             Self::TooLarge { .. }
             | Self::Parse(_)
             | Self::MissingVersion
@@ -423,6 +448,214 @@ impl From<io::Error> for ConfigError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
+}
+
+/// Load the Go-compatible direct-command environment-directory format.
+///
+/// Each regular file contributes its UTF-8 filename and first UTF-8 line. A
+/// physically empty file contributes nothing, while a first empty line sets an
+/// empty value. CRLF is normalized like Go's line scanner. Symlinks and other
+/// non-regular entries are never followed and do not contribute values.
+///
+/// The returned snapshot is bounded and detached from the directory, so daemon
+/// startup and every later service generation use the same materialized values.
+///
+/// # Errors
+///
+/// Returns an error when the directory is absent, symlinked, not a directory,
+/// changes during the scan, contains an unreadable or changing regular file, or
+/// exceeds the entry, first-line, aggregate-size, UTF-8, or environment bounds.
+pub fn load_environment_directory(
+    directory: &Path,
+) -> Result<BTreeMap<String, String>, ConfigError> {
+    let directory_before =
+        fs::symlink_metadata(directory).map_err(|error| environment_error(directory, error))?;
+    if directory_before.file_type().is_symlink() || !directory_before.is_dir() {
+        return Err(invalid_environment_input(
+            directory,
+            "environment path must be a real directory, not a symlink",
+        ));
+    }
+    let canonical =
+        fs::canonicalize(directory).map_err(|error| environment_error(directory, error))?;
+    let canonical_before =
+        fs::metadata(&canonical).map_err(|error| environment_error(&canonical, error))?;
+    if environment_directory_changed(&directory_before, &canonical_before) {
+        return Err(invalid_environment_input(
+            directory,
+            "environment directory changed during validation",
+        ));
+    }
+
+    let entries = fs::read_dir(&canonical).map_err(|error| environment_error(&canonical, error))?;
+    let mut environment = BTreeMap::new();
+    let mut entry_count = 0_usize;
+    let mut total_bytes = 0_usize;
+    for entry in entries {
+        entry_count = entry_count.checked_add(1).ok_or_else(|| {
+            invalid_environment_input(&canonical, "environment entry count overflowed")
+        })?;
+        if entry_count > MAX_ENVIRONMENT_DIRECTORY_ENTRIES {
+            return Err(invalid_environment_input(
+                &canonical,
+                format!(
+                    "environment directory has more than {MAX_ENVIRONMENT_DIRECTORY_ENTRIES} entries"
+                ),
+            ));
+        }
+        let entry = entry.map_err(|error| environment_error(&canonical, error))?;
+        let path = entry.path();
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|error| environment_error(&path, error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            continue;
+        }
+        let key = entry.file_name().into_string().map_err(|_| {
+            invalid_environment_input(&path, "environment filename is not valid UTF-8")
+        })?;
+        if !environment_key_is_valid(&key) {
+            return Err(invalid_environment_input(
+                &path,
+                format!("environment filename {key:?} is not a valid key"),
+            ));
+        }
+        let Some(value) = read_environment_value(&path, &metadata)? else {
+            continue;
+        };
+        let entry_bytes = key
+            .len()
+            .checked_add(value.len())
+            .ok_or_else(|| invalid_environment_input(&path, "environment entry size overflowed"))?;
+        total_bytes = total_bytes.checked_add(entry_bytes).ok_or_else(|| {
+            invalid_environment_input(&canonical, "environment aggregate size overflowed")
+        })?;
+        if total_bytes > MAX_ENVIRONMENT_DIRECTORY_BYTES {
+            return Err(invalid_environment_input(
+                &canonical,
+                format!(
+                    "environment keys and values exceed {MAX_ENVIRONMENT_DIRECTORY_BYTES} bytes"
+                ),
+            ));
+        }
+        environment.insert(key, value);
+    }
+
+    let directory_after =
+        fs::metadata(&canonical).map_err(|error| environment_error(&canonical, error))?;
+    if environment_directory_changed(&canonical_before, &directory_after) {
+        return Err(invalid_environment_input(
+            &canonical,
+            "environment directory changed during the scan",
+        ));
+    }
+    Ok(environment)
+}
+
+fn read_environment_value(
+    path: &Path,
+    path_before: &Metadata,
+) -> Result<Option<String>, ConfigError> {
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    let mut file = options
+        .open(path)
+        .map_err(|error| environment_error(path, error))?;
+    let file_before = file
+        .metadata()
+        .map_err(|error| environment_error(path, error))?;
+    if environment_file_changed(path_before, &file_before) {
+        return Err(invalid_environment_input(
+            path,
+            "environment file changed before it was opened",
+        ));
+    }
+
+    let mut bytes = Vec::new();
+    {
+        let mut reader = BufReader::new((&mut file).take(MAX_ENVIRONMENT_VALUE_READ_BYTES));
+        reader
+            .read_until(b'\n', &mut bytes)
+            .map_err(|error| environment_error(path, error))?;
+    }
+
+    let file_after = file
+        .metadata()
+        .map_err(|error| environment_error(path, error))?;
+    let path_after = fs::symlink_metadata(path).map_err(|error| environment_error(path, error))?;
+    if path_after.file_type().is_symlink()
+        || environment_file_changed(&file_before, &file_after)
+        || environment_file_changed(&file_before, &path_after)
+    {
+        return Err(invalid_environment_input(
+            path,
+            "environment file changed while it was read",
+        ));
+    }
+
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    if bytes.last() == Some(&b'\n') {
+        bytes.pop();
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+    }
+    if bytes.len() > MAX_ENVIRONMENT_VALUE_BYTES {
+        return Err(invalid_environment_input(
+            path,
+            format!(
+                "environment first line is {} bytes; limit is {MAX_ENVIRONMENT_VALUE_BYTES}",
+                bytes.len()
+            ),
+        ));
+    }
+    if bytes.contains(&0) {
+        return Err(invalid_environment_input(
+            path,
+            "environment first line contains NUL",
+        ));
+    }
+    String::from_utf8(bytes).map(Some).map_err(|error| {
+        invalid_environment_input(
+            path,
+            format!("environment first line is not valid UTF-8: {error}"),
+        )
+    })
+}
+
+fn environment_error(path: &Path, source: io::Error) -> ConfigError {
+    ConfigError::EnvironmentInput {
+        path: path.to_owned(),
+        source,
+    }
+}
+
+fn invalid_environment_input(path: &Path, message: impl Into<String>) -> ConfigError {
+    environment_error(
+        path,
+        io::Error::new(io::ErrorKind::InvalidData, message.into()),
+    )
+}
+
+fn environment_directory_changed(before: &Metadata, after: &Metadata) -> bool {
+    !same_file_identity(before, after)
+        || before.len() != after.len()
+        || before.modified().ok() != after.modified().ok()
+        || !after.is_dir()
+}
+
+fn environment_file_changed(before: &Metadata, after: &Metadata) -> bool {
+    !same_file_identity(before, after)
+        || before.len() != after.len()
+        || before.modified().ok() != after.modified().ok()
+        || !after.is_file()
+}
+
+fn same_file_identity(left: &Metadata, right: &Metadata) -> bool {
+    left.dev() == right.dev() && left.ino() == right.ino()
 }
 
 /// Read, parse, normalize, and validate a service definition.
@@ -552,7 +785,7 @@ struct ConfigDocument {
     enabled: bool,
     command: Vec<String>,
     working_directory: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default, alias = "env", deserialize_with = "deserialize_environment")]
     environment: BTreeMap<String, String>,
     #[serde(default)]
     environment_mode: EnvironmentMode,
@@ -574,6 +807,40 @@ struct ConfigDocument {
     #[serde(default)]
     process_mode: ProcessMode,
     descriptor_tracking: Option<DescriptorTrackingConfig>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum EnvironmentValue {
+    Text(String),
+    Signed(i64),
+    Unsigned(u64),
+    Float(f64),
+    Boolean(bool),
+}
+
+impl EnvironmentValue {
+    fn into_string(self) -> String {
+        match self {
+            Self::Text(value) => value,
+            Self::Signed(value) => value.to_string(),
+            Self::Unsigned(value) => value.to_string(),
+            Self::Float(value) => value.to_string(),
+            Self::Boolean(value) => value.to_string(),
+        }
+    }
+}
+
+fn deserialize_environment<'de, D>(deserializer: D) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    BTreeMap::<String, EnvironmentValue>::deserialize(deserializer).map(|environment| {
+        environment
+            .into_iter()
+            .map(|(key, value)| (key, value.into_string()))
+            .collect()
+    })
 }
 
 fn default_true() -> bool {
@@ -630,10 +897,10 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
     validate_argv(&config.command, "command", &mut errors);
     validate_optional_text(config.user.as_deref(), "user", &mut errors);
     for (key, value) in &config.environment {
-        if key.is_empty() || key.contains('=') || key.contains('\0') {
+        if !environment_key_is_valid(key) {
             errors.push(format!("environment key `{key}` is invalid"));
         }
-        if value.contains('\0') {
+        if !environment_value_is_valid(value) {
             errors.push(format!("environment value for `{key}` contains NUL"));
         }
     }
@@ -725,6 +992,14 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
     } else {
         Err(ConfigError::Validation(errors))
     }
+}
+
+fn environment_key_is_valid(key: &str) -> bool {
+    !key.is_empty() && !key.contains('=') && !key.contains('\0')
+}
+
+fn environment_value_is_valid(value: &str) -> bool {
+    !value.contains('\0')
 }
 
 fn validate_backoff(backoff: &BackoffConfig, path: &str, errors: &mut Vec<String>) {
@@ -964,13 +1239,7 @@ fn validate_optional_text(value: Option<&str>, path: &str, errors: &mut Vec<Stri
 fn validate_service_names(names: &[String], errors: &mut Vec<String>) {
     let mut seen = BTreeSet::new();
     for name in names {
-        let safe = !name.is_empty()
-            && name != "."
-            && name != ".."
-            && name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'));
-        if !safe {
+        if !is_safe_service_name(name) {
             errors.push(format!(
                 "requires entry `{name}` is not a safe service name"
             ));
@@ -992,15 +1261,19 @@ mod tests {
         collections::{BTreeMap, BTreeSet},
         error::Error,
         fs, io,
+        os::unix::fs::symlink,
         path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::{
         BackoffConfig, CommandHook, ConditionBackoffConfig, ConfigError, DescriptorTrackingConfig,
         EnvironmentMode, FileLogConfig, LoggerRestartConfig, LoggingConfig, MAX_CONFIG_BYTES,
-        OutputConfig, PidFiles, ProcessMode, ReadinessConfig, ReadinessMode, RestartBurstLimit,
-        RestartConfig, RestartLimits, RestartPolicy, ServiceConfig, StartConditionConfig,
-        emit_config, parse_bytes, parse_file, parse_str, resolve_paths,
+        MAX_ENVIRONMENT_DIRECTORY_BYTES, MAX_ENVIRONMENT_DIRECTORY_ENTRIES,
+        MAX_ENVIRONMENT_VALUE_BYTES, OutputConfig, PidFiles, ProcessMode, ReadinessConfig,
+        ReadinessMode, RestartBurstLimit, RestartConfig, RestartLimits, RestartPolicy,
+        ServiceConfig, StartConditionConfig, emit_config, load_environment_directory, parse_bytes,
+        parse_file, parse_str, resolve_paths,
     };
 
     #[test]
@@ -1015,6 +1288,140 @@ mod tests {
         assert_eq!(reparsed, config);
         assert!(emitted.contains("version: 2"));
         Ok(())
+    }
+
+    #[test]
+    fn env_alias_normalizes_scalars_and_emits_canonical_environment() -> Result<(), Box<dyn Error>>
+    {
+        let config = parse_str(
+            "version: 2\ncommand: [/bin/true]\nenv:\n  DEBUG: 1\n  ENVIRONMENT: production\n  ENABLED: true\n",
+        )?;
+        assert_eq!(
+            config.environment,
+            BTreeMap::from([
+                ("DEBUG".to_owned(), "1".to_owned()),
+                ("ENABLED".to_owned(), "true".to_owned()),
+                ("ENVIRONMENT".to_owned(), "production".to_owned()),
+            ])
+        );
+
+        let emitted = emit_config(&config)?;
+        assert!(emitted.lines().any(|line| line == "environment:"));
+        assert!(!emitted.lines().any(|line| line == "env:"));
+        Ok(())
+    }
+
+    #[test]
+    fn env_alias_rejects_duplicate_and_non_scalar_values() {
+        let duplicate = parse_str(
+            "version: 2\ncommand: [/bin/true]\nenv:\n  DEBUG: 1\nenvironment:\n  MODE: test\n",
+        );
+        assert!(duplicate.is_err());
+
+        let nested = parse_str("version: 2\ncommand: [/bin/true]\nenv:\n  DEBUG: [one, two]\n");
+        assert!(nested.is_err());
+        let null = parse_str("version: 2\ncommand: [/bin/true]\nenv:\n  DEBUG: null\n");
+        assert!(null.is_err());
+    }
+
+    #[test]
+    fn environment_directory_loads_regular_file_first_lines() -> Result<(), Box<dyn Error>> {
+        let directory = TestDirectory::new("environment-load")?;
+        fs::write(directory.join("DEBUG"), "true\nignored\n")?;
+        fs::write(directory.join("ENVIRONMENT"), "production\r\nignored\n")?;
+        fs::write(directory.join("EMPTY"), "\nignored\n")?;
+        fs::write(directory.join("ABSENT"), "")?;
+        fs::create_dir(directory.join("nested"))?;
+        symlink(directory.join("DEBUG"), directory.join("LINK"))?;
+
+        let environment = load_environment_directory(directory.path())?;
+        assert_eq!(
+            environment,
+            BTreeMap::from([
+                ("DEBUG".to_owned(), "true".to_owned()),
+                ("EMPTY".to_owned(), String::new()),
+                ("ENVIRONMENT".to_owned(), "production".to_owned()),
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn environment_directory_rejects_unsafe_or_malformed_inputs() -> Result<(), Box<dyn Error>> {
+        let parent = TestDirectory::new("environment-invalid")?;
+        let directory = parent.join("actual");
+        fs::create_dir(&directory)?;
+        let link = parent.join("link");
+        symlink(&directory, &link)?;
+        assert!(load_environment_directory(&link).is_err());
+        assert!(load_environment_directory(&parent.join("missing")).is_err());
+
+        let invalid_key = directory.join("BAD=KEY");
+        fs::write(&invalid_key, "value\n")?;
+        assert!(load_environment_directory(&directory).is_err());
+        fs::remove_file(&invalid_key)?;
+
+        let invalid_value = directory.join("INVALID_UTF8");
+        fs::write(&invalid_value, [0xff, b'\n'])?;
+        assert!(load_environment_directory(&directory).is_err());
+        fs::remove_file(&invalid_value)?;
+
+        let oversized = directory.join("OVERSIZED");
+        fs::write(&oversized, vec![b'x'; MAX_ENVIRONMENT_VALUE_BYTES + 1])?;
+        assert!(load_environment_directory(&directory).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn environment_directory_enforces_entry_and_aggregate_bounds() -> Result<(), Box<dyn Error>> {
+        let entries = TestDirectory::new("environment-entry-bound")?;
+        for index in 0..=MAX_ENVIRONMENT_DIRECTORY_ENTRIES {
+            fs::write(entries.join(format!("ENTRY_{index}")), "")?;
+        }
+        assert!(load_environment_directory(entries.path()).is_err());
+
+        let aggregate = TestDirectory::new("environment-aggregate-bound")?;
+        let value = vec![b'x'; MAX_ENVIRONMENT_VALUE_BYTES];
+        let files = MAX_ENVIRONMENT_DIRECTORY_BYTES
+            .checked_div(MAX_ENVIRONMENT_VALUE_BYTES)
+            .and_then(|count| count.checked_add(1))
+            .ok_or("environment test bound overflowed")?;
+        for index in 0..files {
+            fs::write(aggregate.join(format!("VALUE_{index}")), &value)?;
+        }
+        assert!(load_environment_directory(aggregate.path()).is_err());
+        Ok(())
+    }
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(name: &str) -> io::Result<Self> {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(io::Error::other)?
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "immortal-config-{name}-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir(&path)?;
+            Ok(Self(path))
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+
+        fn join(&self, path: impl AsRef<Path>) -> PathBuf {
+            self.0.join(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     fn complete_config() -> ServiceConfig {

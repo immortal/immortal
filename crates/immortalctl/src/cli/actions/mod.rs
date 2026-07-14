@@ -35,8 +35,6 @@ const LIFECYCLE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_m
 pub enum ActionError {
     /// Runtime root is absent or unsafe.
     Runtime(RuntimeRootError),
-    /// The effective user's automatic runtime path cannot be resolved.
-    UserRuntime(io::Error),
     /// Requested service was not safely discovered.
     ServiceNotFound(String),
     /// A service name exists in more than one selected runtime scope.
@@ -67,7 +65,6 @@ impl Display for ActionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Runtime(error) => Display::fmt(error, formatter),
-            Self::UserRuntime(error) => write!(formatter, "invalid user runtime root: {error}"),
             Self::ServiceNotFound(service) => {
                 write!(formatter, "service `{service}` was not safely discovered")
             }
@@ -101,7 +98,7 @@ impl Error for ActionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Runtime(error) => Some(error),
-            Self::UserRuntime(error) | Self::Connect(error) | Self::Output(error) => Some(error),
+            Self::Connect(error) | Self::Output(error) => Some(error),
             Self::Transport(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::ServiceNotFound(_)
@@ -133,7 +130,7 @@ impl ActionError {
     #[must_use]
     pub fn exit_class(&self) -> ExitClass {
         match self {
-            Self::Runtime(_) | Self::UserRuntime(_) => ExitClass::Configuration,
+            Self::Runtime(_) => ExitClass::Configuration,
             Self::ServiceNotFound(_) => ExitClass::NotFound,
             Self::AmbiguousService(_) | Self::ServiceLimit => ExitClass::Data,
             Self::Connect(error) => match error.kind() {
@@ -273,8 +270,13 @@ fn discover_selected(
     action: &Action,
     diagnostics: &mut impl Write,
 ) -> Result<(Vec<ScopedService>, bool), ActionError> {
-    let roots = discovery_roots(&action.discovery)?;
-    discover_from_roots(roots, diagnostics)
+    let (roots, user_error) = discovery_roots(&action.discovery);
+    let user_failed = user_error.is_some();
+    if let Some(error) = user_error {
+        writeln!(diagnostics, "ignored user runtime root: {error}").map_err(ActionError::Output)?;
+    }
+    let (services, discovery_failed) = discover_from_roots(roots, diagnostics)?;
+    Ok((services, user_failed || discovery_failed))
 }
 
 fn discover_from_roots(
@@ -332,14 +334,24 @@ fn discover_from_roots(
     Ok((services, failed))
 }
 
-fn discovery_roots(discovery: &RuntimeDiscovery) -> Result<Vec<DiscoveryRoot>, ActionError> {
+fn discovery_roots(discovery: &RuntimeDiscovery) -> (Vec<DiscoveryRoot>, Option<io::Error>) {
+    discovery_roots_with(discovery, user_runtime_root)
+}
+
+fn discovery_roots_with(
+    discovery: &RuntimeDiscovery,
+    resolve_user_root: impl FnOnce() -> io::Result<PathBuf>,
+) -> (Vec<DiscoveryRoot>, Option<io::Error>) {
     match discovery {
-        RuntimeDiscovery::Custom(path) => Ok(vec![DiscoveryRoot {
-            origin: RuntimeOrigin::Custom,
-            path: path.clone(),
-            user_owned: false,
-            optional: false,
-        }]),
+        RuntimeDiscovery::Custom(path) => (
+            vec![DiscoveryRoot {
+                origin: RuntimeOrigin::Custom,
+                path: path.clone(),
+                user_owned: false,
+                optional: false,
+            }],
+            None,
+        ),
         RuntimeDiscovery::Automatic(scope) => {
             let mut roots = Vec::with_capacity(2);
             if matches!(scope, RuntimeScope::All | RuntimeScope::System) {
@@ -350,15 +362,19 @@ fn discovery_roots(discovery: &RuntimeDiscovery) -> Result<Vec<DiscoveryRoot>, A
                     optional: true,
                 });
             }
+            let mut user_error = None;
             if matches!(scope, RuntimeScope::All | RuntimeScope::User) {
-                roots.push(DiscoveryRoot {
-                    origin: RuntimeOrigin::User,
-                    path: user_runtime_root().map_err(ActionError::UserRuntime)?,
-                    user_owned: true,
-                    optional: true,
-                });
+                match resolve_user_root() {
+                    Ok(path) => roots.push(DiscoveryRoot {
+                        origin: RuntimeOrigin::User,
+                        path,
+                        user_owned: true,
+                        optional: true,
+                    }),
+                    Err(error) => user_error = Some(error),
+                }
             }
-            Ok(roots)
+            (roots, user_error)
         }
     }
 }
@@ -677,7 +693,7 @@ fn sanitize(value: &str) -> String {
 mod tests {
     use std::{
         error::Error,
-        fs,
+        fs, io,
         os::unix::fs::PermissionsExt,
         os::unix::net::UnixListener as StdUnixListener,
         path::{Path, PathBuf},
@@ -694,9 +710,9 @@ mod tests {
 
     use super::{
         ActionError, DiscoveryRoot, OutputRecord, RuntimeOrigin, ScopedService, contact,
-        discover_from_roots, record, render_output, select_targets,
+        discover_from_roots, discovery_roots_with, record, render_output, select_targets,
     };
-    use crate::cli::dispatch::{Action, OutputFormat, RuntimeDiscovery, Target};
+    use crate::cli::dispatch::{Action, OutputFormat, RuntimeDiscovery, RuntimeScope, Target};
 
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -814,6 +830,20 @@ mod tests {
         );
         assert!(!diagnostics.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn automatic_roots_isolate_user_path_resolution_failure() {
+        let (roots, error) =
+            discovery_roots_with(&RuntimeDiscovery::Automatic(RuntimeScope::All), || {
+                Err(io::Error::new(io::ErrorKind::NotFound, "missing home"))
+            });
+        assert!(error.is_some());
+        assert_eq!(roots.len(), 1);
+        assert_eq!(
+            roots.first().map(|root| root.origin),
+            Some(RuntimeOrigin::System)
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

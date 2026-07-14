@@ -47,7 +47,7 @@ contracts which were deliberately replaced.
 | Go definition | Version 2 definition | Migration decision |
 |---|---|---|
 | `cmd` scalar | `command` argv | Split arguments explicitly; add `/bin/sh -c` only when shell evaluation is intentional. |
-| `cwd`, `env`, `user` | `working_directory`, `environment`, `user` | Select `environment_mode: inherit` or `clear` deliberately. |
+| `cwd`, `env`, `user` | `working_directory`, `environment`, `user` | `env` remains an input alias for `environment`; select `environment_mode: inherit` or `clear` deliberately. |
 | `wait` | `start_delay_seconds` and restart backoff | The old delay applied before every launch; v2 separates the first start from crash-loop delay. |
 | `retries` | `restart` policy and limits | Review success codes, terminal behavior, and retry, elapsed, or burst limits. |
 | `require` | `requires` plus readiness | Dependencies are validated as a graph and gate on Ready. |
@@ -113,15 +113,46 @@ logging:
 ```
 
 `immortal --check-config` validates and emits canonical v2 only; it does not
-guess at legacy intent or modify its input. Review each rewritten definition
-before placing it in the candidate directory.
+guess at legacy intent or modify its input. It accepts `env` as an alias but
+emits `environment`. Review each rewritten definition before placing it in the
+candidate directory.
 
-The Rust CLI also does not accept the historical direct-command `--env-dir`,
-`--follow-pid`, `--log-file`, `--logger`, or `--name` flags. Express environment
-and logging policy in the v2 definition. Use the definition filename with
-`immortaldir`, or an explicit `--control-dir` for a direct command, as the
-service's managed identity. There is no PID-following replacement; use a
-foreground command or the descriptor-tracking contract described above.
+The direct-command CLI accepts `-e DIR` and `--env-dir DIR`. It snapshots each
+regular file's first line before daemonization, applies those values after the
+inherited environment, and fails on unreadable, changing, malformed, or
+unbounded regular input. The option cannot be combined with `--config`; use the
+v2 environment map in definitions.
+
+The Rust CLI does not accept the historical direct-command `--follow-pid`,
+`--log-file`, or `--logger` flags. Express logging policy in the v2 definition.
+The historical `-name service` form becomes `-n service` or `--name service`;
+the exact `-name` token is rejected rather than being misread as `-n ame`. The
+old `-n` foreground shorthand becomes `-f` or `--foreground`. A direct command
+requires either that name or an exact `--control-dir`:
+
+```sh
+immortal -f -n api /usr/local/bin/api --foreground
+```
+
+Without `--control-dir`, config filenames provide the service identity
+(`api.yml` becomes `api`) and named direct commands use the supplied name.
+Both resolve below an automatically created, owner-only `$HOME/.immortal`.
+Unsafe or hidden names are rejected rather than sanitized, and there is no
+PID-based fallback. There is no PID-following replacement; use a foreground
+command or the descriptor-tracking contract described above.
+
+Before the first Rust launch, restrict an existing Go-era user root if needed:
+
+```sh
+chmod 700 "$HOME/.immortal"
+```
+
+Immortal creates a missing root with that mode and refuses an existing root
+owned by another account, writable or readable by group/other, or itself a
+symbolic link. Symlinked home-directory ancestors remain supported when the
+resolved home belongs to the effective user and is not group/world writable.
+The final control-socket pathname is also rejected before creating runtime
+state when it exceeds the portable 103-byte Unix-socket limit.
 
 Before migrating local definitions, the repository example provides a bounded
 rehearsal which must print canonical configuration followed by a `START` plan:
@@ -131,10 +162,13 @@ immortal --config examples/services/sleep.yml --check-config
 immortaldir --once --dry-run examples/services
 ```
 
-Treat the runtime directory as disposable observation state, not configuration.
-Never copy sockets, locks, PID files, or `.definitions` snapshots from the Go
-installation. Do not run old and new directory managers against the same
-definitions or runtime root.
+Treat runtime directories as disposable observation state, not configuration.
+For `immortaldir`, use `/run/immortal` on Linux and `/var/run/immortal` on
+FreeBSD or macOS; the service manager recreates these ephemeral roots after
+boot. Do not use the symlinked `/var/run` spelling on Linux because runtime
+roots must be canonical. Never copy sockets, locks, PID files, or
+`.definitions` snapshots from the Go installation. Do not run old and new
+directory managers against the same definitions or runtime root.
 
 ## FreeBSD rc.d
 

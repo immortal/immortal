@@ -1,4 +1,10 @@
+---
 version: 2
-command: [/bin/sleep, "30"]
+command:
+  - /bin/sleep
+  - 30
 restart:
   policy: always
+pid_files:
+  main: /tmp/child.pid
+  supervisor: /tmp/supervisor.pid
