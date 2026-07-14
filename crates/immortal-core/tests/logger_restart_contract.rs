@@ -29,8 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let mut config =
         ServiceConfig::for_command(vec!["/bin/sh".to_owned(), "-c".to_owned(), service])?;
-    config.logging.combine_stderr = true;
-    config.logging.stdout.logger = Some(vec!["/bin/sh".to_owned(), "-c".to_owned(), logger]);
+    config.logging.logger = Some(vec!["/bin/sh".to_owned(), "-c".to_owned(), logger]);
     config.restart.policy = RestartPolicy::Never;
     config.restart.exit_when_done = true;
 

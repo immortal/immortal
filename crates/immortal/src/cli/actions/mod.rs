@@ -15,8 +15,8 @@ use std::{
 
 use immortal_core::{
     config::{
-        ConfigError, ServiceConfig, emit_config, load_environment_directory, parse_file,
-        resolve_paths,
+        ConfigError, LoggingConfig, ServiceConfig, emit_config, load_environment_directory,
+        parse_file, resolve_paths,
     },
     executor::{
         DaemonRunOutcome, ExecutorError, SupervisionOutcome, run_daemon, run_foreground_controlled,
@@ -188,6 +188,8 @@ fn direct_config(
         command,
         environment_directory,
         foreground,
+        logfile,
+        logger,
         retries,
         runtime_identity,
         start_delay_seconds,
@@ -206,6 +208,7 @@ fn direct_config(
     config.start_delay_seconds = start_delay_seconds;
     config.pid_files.main = child_pid;
     config.pid_files.supervisor = supervisor_pid;
+    config.logging = LoggingConfig::for_direct(logfile, logger)?;
     if let Some(directory) = environment_directory {
         config.environment = load_environment_directory(&directory)?;
     }

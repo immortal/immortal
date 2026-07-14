@@ -21,8 +21,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "-c".to_owned(),
         "printf 'drained-output\\n'".to_owned(),
     ])?;
-    config.logging.combine_stderr = true;
-    config.logging.stdout.logger = Some(vec![
+    config.logging.logger = Some(vec![
         "/bin/sh".to_owned(),
         "-c".to_owned(),
         format!("cat > '{output_path}'"),

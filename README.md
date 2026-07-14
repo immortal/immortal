@@ -148,9 +148,9 @@ See [DESIGN.md](DESIGN.md) for module ownership and implementation rules.
 - `immortal`: daemonize and supervise one service.
 - `immortalctl`: inspect supervisors, change desired state, and deliver signals.
 - `immortaldir`: reconcile a directory of service definitions.
-- `immortallog`: minimal, replaceable stdin-to-file compatibility adapter with
-  bounded-memory streaming, rotation, retention, timestamps, and optional raw
-  byte pass-through. External logger commands remain the preferred interface.
+- `immortallog`: minimal, replaceable stdin-to-file adapter with bounded-memory
+  streaming, rotation, retention, timestamps, and optional raw byte
+  pass-through.
 
 ```mermaid
 flowchart TB
@@ -299,29 +299,29 @@ post_exit:
   command: [/usr/local/libexec/api-cleanup]
   timeout_seconds: 30
 
-logging:
-  file_adapter: null      # null uses immortallog beside immortal
-  combine_stderr: false
-  restart:
-    max_retries: null     # restarts after the initial logger start
-    backoff:
-      initial_seconds: 1
-      max_seconds: 60
-      multiplier: 2
-      jitter_percent: 20
-      reset_after_seconds: 60
+log:
   stdout:
-    file:
-      file: /var/log/api.log
-      max_age_seconds: 86400
-      keep: 7
-      max_bytes: 10485760
-      max_total_bytes: 73400320
-      timestamp: true
-    logger: [/usr/bin/logger, -t, api]
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 10MiB
+    timestamp: true
   stderr:
-    file: {}
-    logger: null
+    file: /var/log/api.err
+    age: 1d
+    keep: 7
+    size: 10MiB
+    timestamp: true
+logger: [/usr/bin/logger, -t, api]
+log_adapter: /usr/local/libexec/custom-immortallog
+logger_restart:
+  max_retries: null       # restarts after the initial logger start
+  backoff:
+    initial_seconds: 1
+    max_seconds: 60
+    multiplier: 2
+    jitter_percent: 20
+    reset_after_seconds: 60
 
 pid_files:
   supervisor: /var/run/api.supervisor.pid
@@ -449,31 +449,72 @@ inherited supervisor environment and remain fixed across service restarts.
 `--env-dir` is a direct-command option and conflicts with `--config`; definitions
 use `environment` or its `env` input alias instead.
 
-Logging routes are process chains, not in-supervisor multiwriters. For example,
-a file plus an external logger is normalized to `service -> immortallog ->
-external logger`. `combine_stderr: true` attaches both child streams to the
-stdout chain and conflicts with an explicit stderr route. `immortallog
---passthrough` writes the original bytes downstream even when its file copy is
-timestamped, and it imposes no maximum line length. Rotation syncs the live
-file, atomically renames it into an Immortal-owned archive namespace, creates a
-replacement, and enforces archive-count and aggregate-byte limits both on open
-and after rotation.
-The broker creates and retains every CLOEXEC pipe endpoint before starting a
-logger. Service and logger restarts receive duplicated endpoints, so pipe
-identity and lossless kernel backpressure remain stable. Logger exec success
-gates the first service start; logger crashes use independent capped
-exponential backoff. `logging.restart.max_retries` bounds restarts after each
-logger's initial start; `null` retries forever, and a stable runtime resets that
-logger's failure streak. Exhaustion before a service generation exists cancels
-only childless pre-start work and publishes service and logger `Failed` health.
-Exhaustion while a service is live leaves that service running and publishes
-logger `Failed` health. An accepted `start`, `once`, or `restart` resets failed
-logger stages and their retry histories. Final shutdown closes broker writer
-masters, drains to EOF, then terminates logger groups downstream-first after a
-hard deadline. A logged service currently rejects control `Exit`, because
-abandoning only the service would break ownership of its broker-backed logging
-graph; use `Halt` until whole-graph detach is implemented.
-`logging.file_adapter` may select another external adapter path; otherwise
+Local files and centralized forwarding have separate names. The simplest local
+configuration combines stdout and stderr:
+
+```yaml
+log:
+  file: /var/log/api.log
+  age: 1d
+  keep: 7
+  size: 10MiB
+  timestamp: true
+```
+
+Nested routes are strict stream selection. Defining only `log.stderr` logs only
+stderr; it never silently redirects stdout. Defining both routes creates
+independent files:
+
+```yaml
+log:
+  stdout:
+    file: /var/log/api.log
+  stderr:
+    file: /var/log/api.err
+```
+
+One top-level logger argv always receives combined stdout and stderr without
+shell parsing:
+
+```yaml
+logger: [/usr/bin/logger, -t, api]
+```
+
+`log` and `logger` may coexist. For a combined file, Immortal runs
+`(stdout + stderr) -> immortallog -> logger`. For selected or split files, each
+configured file adapter forwards its original bytes into one shared kernel
+pipe; any locally unselected stream writes directly to that pipe. Exactly one
+external logger process receives both streams. Local timestamping never changes
+the forwarded bytes, and relative ordering between concurrent stdout and stderr
+writes is unspecified.
+
+`age` accepts bare seconds or `s`, `m`, `h`, `d`, and `w`. `size` accepts bare
+MiB or `B`, `KiB`, `MiB`, and `GiB`. Values must be positive whole numbers.
+`age` and `size` are independent rotation triggers, checked when output arrives.
+`keep` counts rotated archives; the live file is additional. When a trigger is
+present and `keep` is omitted, seven archives are retained. `keep` without a
+trigger is rejected. `num` remains a deprecated input alias for `keep`, and a
+top-level `stderr` remains a deprecated input alias for `log.stderr`;
+`--check-config` emits only canonical names and explicit units.
+
+Logging routes are broker-owned process graphs, not in-supervisor byte
+multiwriters. `immortallog --passthrough` writes the original unbounded stream
+downstream while rotating its local copy. The broker creates stable CLOEXEC
+pipes before starting processes, starts the shared logger before file adapters,
+and gates the first service start on every required process. Restarts receive
+duplicated endpoints, preserving pipe identity, buffered bytes, and lossless
+kernel backpressure. `logger_restart` controls only the one external logger;
+file adapters remain independently supervised. On shutdown, adapters drain
+first, their final descriptor closes the shared pipe, and the external logger
+then drains before bounded TERM/KILL escalation.
+
+Logger exhaustion before a service generation exists cancels childless
+pre-start work and publishes `Failed`. Exhaustion while a service is live leaves
+the service running and reports failed logger health. An accepted `start`,
+`once`, or `restart` resets the external logger retry history. A logged service
+currently rejects control `Exit`, because abandoning only the service would
+break ownership of its logging graph; use `Halt` until whole-graph detach is
+implemented. `log_adapter` may select another file adapter path; otherwise
 Immortal uses `immortallog` beside its own executable.
 
 The resilience contracts execute a non-executable logger target, stream 16 MiB
@@ -496,14 +537,24 @@ and explicit CLI values override only those defaults. Place every Immortal
 option before the child command. Arguments after the command begins are always
 child argv, even when they look like Immortal flags.
 
-The nonoperational Go direct-command flags `--follow-pid`, `--log-file`,
-and `--logger` are not accepted by the Rust CLI. Migrate logging behavior to
-strict version 2 fields. The historical `-name` form becomes `-n`/`--name`;
-the exact `-name` token is rejected so it cannot be misread as attached short
-value `-n ame`. The historical foreground shorthand `-n` becomes
-`-f`/`--foreground`. Replace PID following with foreground execution or the
-descriptor-tracking contract; runtime identity never comes from a PID file or
-transient process identifier.
+Direct commands accept `-l FILE`/`--logfile FILE`, which combines both streams
+and preserves the Go defaults of 1 MiB rotation with seven archives. They also
+accept one exact external logger argv; `--` separates it from the service argv:
+
+```sh
+immortal -n api --logfile /var/log/api.log \
+  --logger /usr/bin/logger -t api \
+  -- /usr/local/bin/api --foreground
+```
+
+The two logging options may coexist and both conflict with `--config`. The
+historical `--log-file` spelling remains rejected, as does single-dash
+`-logger`, which could otherwise be misread as `-l ogger`. The historical
+`-name` form becomes `-n`/`--name`; the exact `-name` token is rejected so it
+cannot be misread as attached short value `-n ame`. The historical foreground
+shorthand `-n` becomes `-f`/`--foreground`. `--follow-pid` remains unsupported;
+use foreground execution or descriptor tracking because runtime identity never
+comes from a PID file or transient process identifier.
 
 ### Runtime and control boundary
 

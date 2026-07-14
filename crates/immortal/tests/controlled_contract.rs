@@ -50,7 +50,7 @@ fn prove_halt_drains_logger(binary: &Path) -> Result<(), Box<dyn Error>> {
     let config = ConfigFile::new(
         "halt-drain",
         &format!(
-            "version: 2\ncommand:\n  - /bin/sh\n  - -c\n  - |\n      printf 'drained-before-halt\\n'\n      : > \"$WRITTEN\"\n      exec /bin/sleep 30\nenvironment:\n  WRITTEN: '{}'\nlogging:\n  combine_stderr: true\n  stdout:\n    logger: [/bin/sh, -c, \"cat > '{}'\"]\n",
+            "version: 2\ncommand:\n  - /bin/sh\n  - -c\n  - |\n      printf 'drained-before-halt\\n'\n      : > \"$WRITTEN\"\n      exec /bin/sleep 30\nenvironment:\n  WRITTEN: '{}'\nlogger: [/bin/sh, -c, \"cat > '{}'\"]\n",
             path_str(&written)?,
             path_str(&output)?,
         ),
@@ -207,7 +207,7 @@ fn prove_controlled_lifecycle(binary: &Path) -> Result<(), Box<dyn Error>> {
     let config = ConfigFile::new(
         "controlled",
         &format!(
-            "version: 2\ncommand: [/bin/sh, -c, 'trap \"printf usr1\\n >> \\\"$MARKER\\\"\" USR1; trap \"exit 0\" TERM; printf start\\n >> \"$MARKER\"; while :; do sleep 1; done']\nenvironment:\n  MARKER: '{}'\nlogging:\n  stdout:\n    logger: [/bin/cat]\n",
+            "version: 2\ncommand: [/bin/sh, -c, 'trap \"printf usr1\\n >> \\\"$MARKER\\\"\" USR1; trap \"exit 0\" TERM; printf start\\n >> \"$MARKER\"; while :; do sleep 1; done']\nenvironment:\n  MARKER: '{}'\nlogger: [/bin/cat]\n",
             path_str(&marker)?
         ),
     )?;
@@ -479,7 +479,7 @@ fn prove_logger_retry_exhaustion_and_recovery(binary: &Path) -> Result<(), Box<d
     let config = ConfigFile::new(
         "logger-recovery",
         &format!(
-            "version: 2\ncommand: [/bin/sh, -c, ': > \"$SERVICE_MARKER\"; exec /bin/sleep 30']\nstart_delay_seconds: 5\nenvironment:\n  SERVICE_MARKER: '{}'\nlogging:\n  combine_stderr: true\n  restart:\n    max_retries: 1\n    backoff:\n      initial_seconds: 1\n      max_seconds: 1\n      multiplier: 1\n      jitter_percent: 0\n      reset_after_seconds: 60\n  stdout:\n    logger: ['{}']\n",
+            "version: 2\ncommand: [/bin/sh, -c, ': > \"$SERVICE_MARKER\"; exec /bin/sleep 30']\nstart_delay_seconds: 5\nenvironment:\n  SERVICE_MARKER: '{}'\nlogger: ['{}']\nlogger_restart:\n  max_retries: 1\n  backoff:\n    initial_seconds: 1\n    max_seconds: 1\n    multiplier: 1\n    jitter_percent: 0\n    reset_after_seconds: 60\n",
             path_str(&service_marker)?,
             path_str(&logger)?
         ),
@@ -549,7 +549,7 @@ fn prove_direct_logger_permission_denial(binary: &Path) -> Result<(), Box<dyn Er
     let config = ConfigFile::new(
         "logger-permission",
         &format!(
-            "version: 2\ncommand: [/bin/sh, -c, ': > \"$SERVICE_MARKER\"']\nenvironment:\n  SERVICE_MARKER: '{}'\nlogging:\n  combine_stderr: true\n  restart:\n    max_retries: 0\n  stdout:\n    logger: ['{}']\n",
+            "version: 2\ncommand: [/bin/sh, -c, ': > \"$SERVICE_MARKER\"']\nenvironment:\n  SERVICE_MARKER: '{}'\nlogger: ['{}']\nlogger_restart:\n  max_retries: 0\n",
             path_str(&service_marker)?,
             path_str(&logger)?
         ),
@@ -594,7 +594,7 @@ fn prove_initializing_is_published_until_loggers_are_ready(
     let config = ConfigFile::new(
         "initializing",
         &format!(
-            "version: 2\ncommand: [/bin/sleep, '30']\nlogging:\n  combine_stderr: true\n  restart:\n    backoff:\n      initial_seconds: 2\n      max_seconds: 2\n      multiplier: 1\n      jitter_percent: 0\n      reset_after_seconds: 60\n  stdout:\n    logger: ['{}']\n",
+            "version: 2\ncommand: [/bin/sleep, '30']\nlogger: ['{}']\nlogger_restart:\n  backoff:\n    initial_seconds: 2\n    max_seconds: 2\n    multiplier: 1\n    jitter_percent: 0\n    reset_after_seconds: 60\n",
             path_str(&logger)?
         ),
     )?;

@@ -38,35 +38,29 @@ start_condition:
 post_exit:
   command: [/usr/local/libexec/api-cleanup, --quiet]
   timeout_seconds: 9
-logging:
-  file_adapter: /usr/local/bin/immortallog
-  combine_stderr: false
-  restart:
-    max_retries: 6
-    backoff:
-      initial_seconds: 4
-      max_seconds: 40
-      multiplier: 2
-      jitter_percent: 15
-      reset_after_seconds: 180
+log:
   stdout:
-    file:
-      file: /var/log/api.log
-      max_age_seconds: 86400
-      keep: 7
-      max_bytes: 10485760
-      max_total_bytes: 73400320
-      timestamp: true
-    logger: [/usr/bin/logger, -t, api]
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 10MiB
+    timestamp: true
   stderr:
-    file:
-      file: /var/log/api.err
-      max_age_seconds: 3600
-      keep: 3
-      max_bytes: 1048576
-      max_total_bytes: 3145728
-      timestamp: false
-    logger: [/usr/bin/logger, -t, api-error]
+    file: /var/log/api.err
+    age: 1h
+    keep: 3
+    size: 1MiB
+    timestamp: false
+logger: [/usr/bin/logger, -t, api]
+log_adapter: /usr/local/bin/immortallog
+logger_restart:
+  max_retries: 6
+  backoff:
+    initial_seconds: 4
+    max_seconds: 40
+    multiplier: 2
+    jitter_percent: 15
+    reset_after_seconds: 180
 pid_files:
   supervisor: /var/run/api.supervisor.pid
   main: /var/run/api.pid

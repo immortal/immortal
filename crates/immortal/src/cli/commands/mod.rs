@@ -1,6 +1,9 @@
 //! Clap command and option definitions for `immortal`.
 
-use std::ffi::{OsStr, OsString};
+use std::{
+    collections::BTreeSet,
+    ffi::{OsStr, OsString},
+};
 
 use clap::{
     Arg, ArgAction, ArgGroup, ArgMatches, ColorChoice, Command, Error, ValueHint,
@@ -8,8 +11,10 @@ use clap::{
     error::ErrorKind,
 };
 
-const CONFIG_CONFLICTS: [&str; 8] = [
+const CONFIG_CONFLICTS: [&str; 10] = [
     "env-dir",
+    "logfile",
+    "logger",
     "name",
     "retries",
     "child-pid",
@@ -39,6 +44,8 @@ pub fn new() -> Command {
         .after_help(
             "Examples:
   immortal --foreground --name probe --retries 0 /bin/true
+  immortal --name api --logfile /var/log/api.log /usr/local/bin/api
+  immortal --name api --logger /usr/bin/logger -t api -- /usr/local/bin/api
   immortal --foreground --config /usr/local/etc/immortal/run.yml
   immortal --config run.yml --check-config",
         )
@@ -60,6 +67,8 @@ pub fn new() -> Command {
         .arg(arg_config())
         .arg(arg_control_dir())
         .arg(arg_environment_directory())
+        .arg(arg_logfile())
+        .arg(arg_logger())
         .arg(arg_supervisor_pid())
         .arg(arg_user())
         .arg(arg_working_dir())
@@ -67,10 +76,10 @@ pub fn new() -> Command {
         .arg(arg_command())
 }
 
-/// Parse arguments while rejecting the ambiguous historical `-name` spelling.
+/// Parse arguments while rejecting ambiguous historical single-dash spellings.
 ///
-/// The check stops before the trailing child argv, whose bytes remain under the
-/// child's ownership even when an argument is exactly `-name`.
+/// Exact logger and child argv remain under those programs' ownership, even
+/// when an argument is exactly `-name` or `-logger`.
 ///
 /// # Errors
 ///
@@ -86,16 +95,25 @@ where
         .get_many::<String>("command")
         .map_or(0, Iterator::count);
     let option_end = arguments.len().saturating_sub(command_arguments);
-    if arguments
+    let logger_indices: BTreeSet<usize> =
+        matches.indices_of("logger").into_iter().flatten().collect();
+    let ambiguous = arguments
         .iter()
+        .enumerate()
         .take(option_end)
         .skip(1)
-        .any(|argument| argument == OsStr::new("-name"))
-    {
-        return Err(new().error(
-            ErrorKind::UnknownArgument,
-            "the historical `-name` spelling is unsupported; use `-n SERVICE` or `--name SERVICE`",
-        ));
+        .find_map(|(index, argument)| {
+            (!logger_indices.contains(&index)
+                && (argument == OsStr::new("-name") || argument == OsStr::new("-logger")))
+            .then_some(argument)
+        });
+    if let Some(argument) = ambiguous {
+        let message = if argument == OsStr::new("-name") {
+            "the historical `-name` spelling is unsupported; use `-n SERVICE` or `--name SERVICE`"
+        } else {
+            "the historical `-logger` spelling is unsupported; use `--logger PROGRAM [ARGUMENTS]... -- COMMAND"
+        };
+        return Err(new().error(ErrorKind::UnknownArgument, message));
     }
     Ok(matches)
 }
@@ -181,6 +199,27 @@ fn arg_environment_directory() -> Arg {
         .value_name("DIR")
         .value_hint(ValueHint::DirPath)
         .help("Set environment variables specified by files in the dir")
+        .conflicts_with("config")
+}
+
+fn arg_logfile() -> Arg {
+    Arg::new("logfile")
+        .short('l')
+        .long("logfile")
+        .value_name("FILE")
+        .value_hint(ValueHint::FilePath)
+        .help("Write combined stdout/stderr to FILE with 1 MiB rotation and 7 archives")
+        .conflicts_with("config")
+}
+
+fn arg_logger() -> Arg {
+    Arg::new("logger")
+        .long("logger")
+        .value_name("PROGRAM [ARGUMENTS]...")
+        .help("Pipe combined stdout/stderr to exact logger argv; terminate it with --")
+        .num_args(1..)
+        .allow_hyphen_values(true)
+        .value_terminator("--")
         .conflicts_with("config")
 }
 
@@ -340,6 +379,8 @@ mod tests {
             "/tmp",
             "-e",
             "/tmp/env",
+            "-l",
+            "/tmp/sleep.log",
             "-w",
             "3",
             "sleep",
@@ -359,6 +400,8 @@ mod tests {
             "/tmp/service",
             "--env-dir",
             "/tmp/env",
+            "--logfile",
+            "/tmp/sleep.log",
             "--wait",
             "3",
             "sleep",
@@ -380,6 +423,10 @@ mod tests {
             matches.get_one::<String>("env-dir").map(String::as_str),
             Some("/tmp/env")
         );
+        assert_eq!(
+            matches.get_one::<String>("logfile").map(String::as_str),
+            Some("/tmp/sleep.log")
+        );
     }
 
     #[test]
@@ -396,7 +443,7 @@ mod tests {
 
     #[test]
     fn removed_nonoperational_options_are_rejected() {
-        for option in ["-l", "-logger", "--follow-pid", "--log-file", "--logger"] {
+        for option in ["--follow-pid", "--log-file"] {
             let result = new().try_get_matches_from(["immortal", option, "value", "/bin/true"]);
             assert_eq!(
                 result.err().map(|error| error.kind()),
@@ -406,10 +453,69 @@ mod tests {
     }
 
     #[test]
-    fn historical_name_spelling_is_rejected_before_but_preserved_after_command() {
+    fn exact_logger_argv_and_child_argv_are_separated_by_double_dash() {
+        let result = try_get_matches_from([
+            "immortal",
+            "--name",
+            "api",
+            "--logfile",
+            "/tmp/api.log",
+            "--logger",
+            "/usr/bin/logger",
+            "-t",
+            "api",
+            "-name",
+            "logger-value",
+            "--",
+            "/usr/local/bin/api",
+            "--serve",
+        ]);
+        assert!(result.is_ok());
+        let Some(matches) = result.ok() else {
+            return;
+        };
+        let logger = matches
+            .get_many::<String>("logger")
+            .map(|values| values.map(String::as_str).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let command = matches
+            .get_many::<String>("command")
+            .map(|values| values.map(String::as_str).collect::<Vec<_>>())
+            .unwrap_or_default();
+        assert_eq!(
+            logger,
+            ["/usr/bin/logger", "-t", "api", "-name", "logger-value"]
+        );
+        assert_eq!(command, ["/usr/local/bin/api", "--serve"]);
+    }
+
+    #[test]
+    fn logger_requires_a_service_separator() {
+        let result = try_get_matches_from([
+            "immortal",
+            "--name",
+            "api",
+            "--logger",
+            "/bin/cat",
+            "/usr/local/bin/api",
+        ]);
+        assert_eq!(
+            result.err().map(|error| error.kind()),
+            Some(ErrorKind::MissingRequiredArgument)
+        );
+    }
+
+    #[test]
+    fn historical_spellings_are_rejected_before_but_preserved_after_boundaries() {
         let rejected = try_get_matches_from(["immortal", "-name", "sleep", "sleep", "30"]);
         assert_eq!(
             rejected.err().map(|error| error.kind()),
+            Some(ErrorKind::UnknownArgument)
+        );
+        let rejected_logger =
+            try_get_matches_from(["immortal", "--name", "sleep", "-logger", "value", "sleep"]);
+        assert_eq!(
+            rejected_logger.err().map(|error| error.kind()),
             Some(ErrorKind::UnknownArgument)
         );
 
@@ -431,6 +537,7 @@ mod tests {
     fn config_rejects_ignored_command_options() {
         for (option, value) in [
             ("--env-dir", "/tmp/env"),
+            ("--logfile", "/tmp/api.log"),
             ("--name", "api"),
             ("--retries", "2"),
             ("--child-pid", "/tmp/child.pid"),
@@ -446,6 +553,12 @@ mod tests {
                 Some(ErrorKind::ArgumentConflict)
             );
         }
+        let logger =
+            new().try_get_matches_from(["immortal", "--config", "run.yml", "--logger", "/bin/cat"]);
+        assert_eq!(
+            logger.err().map(|error| error.kind()),
+            Some(ErrorKind::ArgumentConflict)
+        );
     }
 
     #[test]

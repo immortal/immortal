@@ -1,4 +1,12 @@
-//! Strict service configuration types, parsing, validation, and resolution.
+//! Strict service configuration parsing, normalization, validation, and resolution.
+//!
+//! Version 2 wire input is converted into one typed service model before process
+//! setup. Canonical logging separates local `log` routes from one combined
+//! external `logger`; deprecated v2 spellings are translated only when their
+//! stream behavior is representable without widening or dropping output.
+//! Validation owns policy bounds and field relationships, while path resolution
+//! owns definition-relative paths. Callers never need to infer precedence or
+//! repair partially valid policy across a process boundary.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -10,7 +18,11 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use serde::{Deserialize, Deserializer, Serialize, de::IgnoredAny};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{Error as _, IgnoredAny},
+    ser::SerializeMap,
+};
 
 use crate::service_name::is_safe_service_name;
 
@@ -30,6 +42,8 @@ const DEFAULT_BACKOFF_JITTER_PERCENT: u8 = 20;
 const DEFAULT_BACKOFF_RESET_SECONDS: u64 = 60;
 const DEFAULT_READINESS_TIMEOUT_SECONDS: u64 = 30;
 const DEFAULT_CONDITION_BACKOFF_MAX_SECONDS: u64 = 30;
+const DEFAULT_LOG_KEEP: u32 = 7;
+const MEBIBYTE: u64 = 1024 * 1024;
 const MAX_OPERATION_SECONDS: u64 = 86_400;
 const MAX_SCHEDULE_SECONDS: u64 = 31_536_000;
 const MAX_ENVIRONMENT_VALUE_READ_BYTES: u64 = 256 * 1024 + 2;
@@ -62,6 +76,7 @@ pub struct ServiceConfig {
     /// Command invoked after a service generation exits.
     pub post_exit: Option<CommandHook>,
     /// Standard-output and standard-error routing.
+    #[serde(flatten)]
     pub logging: LoggingConfig,
     /// Optional output-only PID paths.
     pub pid_files: PidFiles,
@@ -295,35 +310,67 @@ pub struct StartConditionConfig {
     pub backoff: ConditionBackoffConfig,
 }
 
-/// File logger compatibility options.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(default, deny_unknown_fields)]
+/// One validated local-file destination and its rotation policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileLogConfig {
     /// Destination file.
-    pub file: Option<PathBuf>,
+    pub file: PathBuf,
     /// Rotation age in seconds.
     pub max_age_seconds: Option<u64>,
     /// Number of rotated files retained.
     pub keep: Option<u32>,
     /// Rotation threshold in bytes.
     pub max_bytes: Option<u64>,
-    /// Maximum combined bytes retained across rotated archives.
-    pub max_total_bytes: Option<u64>,
     /// Prefix records with timestamps.
     pub timestamp: bool,
 }
 
-/// Routing for one output stream.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct OutputConfig {
-    /// Optional file compatibility adapter.
-    pub file: FileLogConfig,
-    /// Optional external logger argv.
-    pub logger: Option<Vec<String>>,
+impl Serialize for FileLogConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let fields = 1
+            + self.max_age_seconds.iter().count()
+            + self.keep.iter().count()
+            + self.max_bytes.iter().count()
+            + usize::from(self.timestamp);
+        let mut map = serializer.serialize_map(Some(fields))?;
+        map.serialize_entry("file", &self.file)?;
+        if let Some(seconds) = self.max_age_seconds {
+            map.serialize_entry("age", &format_log_age(seconds))?;
+        }
+        if let Some(keep) = self.keep {
+            map.serialize_entry("keep", &keep)?;
+        }
+        if let Some(bytes) = self.max_bytes {
+            map.serialize_entry("size", &format_log_size(bytes))?;
+        }
+        if self.timestamp {
+            map.serialize_entry("timestamp", &true)?;
+        }
+        map.end()
+    }
 }
 
-/// Retry policy shared by independently supervised logger stages.
+/// Strict local-file routing selected by the YAML `log` shape.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum FileLogRoutes {
+    /// One file receives combined stdout and stderr.
+    Combined(FileLogConfig),
+    /// Only explicitly named streams receive local file adapters.
+    Selected {
+        /// Optional stdout-only destination.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stdout: Option<FileLogConfig>,
+        /// Optional stderr-only destination.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stderr: Option<FileLogConfig>,
+    },
+}
+
+/// Retry policy for the single external logger process.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LoggerRestartConfig {
@@ -334,19 +381,68 @@ pub struct LoggerRestartConfig {
 }
 
 /// Output configuration for both child streams.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct LoggingConfig {
+    /// Optional local-file routes.
+    #[serde(rename = "log", skip_serializing_if = "Option::is_none")]
+    pub files: Option<FileLogRoutes>,
+    /// Optional external logger argv receiving combined stdout and stderr.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logger: Option<Vec<String>>,
     /// Optional external file-adapter executable; defaults to sibling `immortallog`.
+    #[serde(rename = "log_adapter", skip_serializing_if = "Option::is_none")]
     pub file_adapter: Option<PathBuf>,
-    /// Route stderr through the stdout pipeline instead of creating a second pipe.
-    pub combine_stderr: bool,
-    /// Independent logger-stage restart and exhaustion policy.
+    /// Restart and exhaustion policy for the external logger.
+    #[serde(
+        rename = "logger_restart",
+        skip_serializing_if = "logger_restart_is_default"
+    )]
     pub restart: LoggerRestartConfig,
-    /// Standard-output route.
-    pub stdout: OutputConfig,
-    /// Standard-error route.
-    pub stderr: OutputConfig,
+}
+
+impl LoggingConfig {
+    /// Build direct-command logging with the historical safe file defaults.
+    ///
+    /// A logfile receives combined stdout and stderr, rotates at 1 MiB, and
+    /// retains seven archives. An external logger, when present, receives the
+    /// same combined bytes and may coexist with the local file.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation error for an empty or NUL-containing logger argv or
+    /// an empty logfile path.
+    pub fn for_direct(
+        logfile: Option<PathBuf>,
+        logger: Option<Vec<String>>,
+    ) -> Result<Self, ConfigError> {
+        let files = logfile.map(|file| {
+            FileLogRoutes::Combined(FileLogConfig {
+                file,
+                max_age_seconds: None,
+                keep: Some(DEFAULT_LOG_KEEP),
+                max_bytes: Some(MEBIBYTE),
+                timestamp: false,
+            })
+        });
+        let config = Self {
+            files,
+            logger,
+            file_adapter: None,
+            restart: LoggerRestartConfig::default(),
+        };
+        let mut errors = Vec::new();
+        if let Some(logger) = &config.logger {
+            validate_argv(logger, "logger", &mut errors);
+        }
+        if let Some(FileLogRoutes::Combined(file)) = &config.files {
+            validate_file_log(file, "log", &mut errors);
+        }
+        if errors.is_empty() {
+            Ok(config)
+        } else {
+            Err(ConfigError::Validation(errors))
+        }
+    }
 }
 
 /// PID paths retained as output-only compatibility metadata.
@@ -765,6 +861,7 @@ pub fn emit_config(config: &ServiceConfig) -> Result<String, ConfigError> {
         service: &'a ServiceConfig,
     }
 
+    validate(config)?;
     serde_saphyr::to_string(&ConfigOutput {
         version: 2,
         service: config,
@@ -800,13 +897,82 @@ struct ConfigDocument {
     requires: Vec<String>,
     start_condition: Option<StartConditionConfig>,
     post_exit: Option<CommandHook>,
-    #[serde(default)]
-    logging: LoggingConfig,
+    log: Option<LogInput>,
+    logger: Option<Vec<String>>,
+    log_adapter: Option<PathBuf>,
+    logger_restart: Option<LoggerRestartConfig>,
+    /// Deprecated Go-compatible alias for `log.stderr`.
+    stderr: Option<FileLogInput>,
+    /// Deprecated Rust v2 logging shape accepted during migration.
+    logging: Option<LegacyLoggingConfig>,
     #[serde(default)]
     pid_files: PidFiles,
     #[serde(default)]
     process_mode: ProcessMode,
     descriptor_tracking: Option<DescriptorTrackingConfig>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LogInput {
+    Combined(FileLogInput),
+    Selected(SelectedLogInput),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectedLogInput {
+    stdout: Option<FileLogInput>,
+    stderr: Option<FileLogInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileLogInput {
+    file: PathBuf,
+    #[serde(default, deserialize_with = "deserialize_optional_log_age")]
+    age: Option<u64>,
+    #[serde(default, alias = "num")]
+    keep: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_optional_log_size")]
+    size: Option<u64>,
+    #[serde(default)]
+    timestamp: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+struct LegacyFileLogConfig {
+    file: Option<PathBuf>,
+    max_age_seconds: Option<u64>,
+    keep: Option<u32>,
+    max_bytes: Option<u64>,
+    max_total_bytes: Option<u64>,
+    timestamp: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+struct LegacyOutputConfig {
+    file: LegacyFileLogConfig,
+    logger: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+struct LegacyLoggingConfig {
+    file_adapter: Option<PathBuf>,
+    combine_stderr: bool,
+    restart: LoggerRestartConfig,
+    stdout: LegacyOutputConfig,
+    stderr: LegacyOutputConfig,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LogScalar {
+    Integer(u64),
+    Text(String),
 }
 
 #[derive(Deserialize)]
@@ -843,6 +1009,134 @@ where
     })
 }
 
+fn deserialize_optional_log_age<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<LogScalar>::deserialize(deserializer)?
+        .map(parse_log_age)
+        .transpose()
+        .map_err(D::Error::custom)
+}
+
+fn deserialize_optional_log_size<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<LogScalar>::deserialize(deserializer)?
+        .map(parse_log_size)
+        .transpose()
+        .map_err(D::Error::custom)
+}
+
+fn parse_log_age(value: LogScalar) -> Result<u64, String> {
+    match value {
+        LogScalar::Integer(seconds) => positive_value(seconds, "log age"),
+        LogScalar::Text(duration) => parse_compact_quantity(
+            &duration,
+            &[
+                ("w", 7 * 24 * 60 * 60),
+                ("d", 24 * 60 * 60),
+                ("h", 60 * 60),
+                ("m", 60),
+                ("s", 1),
+            ],
+            "log age",
+        ),
+    }
+}
+
+fn parse_log_size(value: LogScalar) -> Result<u64, String> {
+    match value {
+        LogScalar::Integer(mebibytes) => positive_value(mebibytes, "log size")?
+            .checked_mul(MEBIBYTE)
+            .ok_or_else(|| "log size exceeds the supported byte range".to_owned()),
+        LogScalar::Text(size) => parse_compact_quantity(
+            &size,
+            &[
+                ("GiB", 1024 * MEBIBYTE),
+                ("MiB", MEBIBYTE),
+                ("KiB", 1024),
+                ("B", 1),
+            ],
+            "log size",
+        ),
+    }
+}
+
+fn parse_compact_quantity(
+    value: &str,
+    units: &[(&str, u64)],
+    description: &str,
+) -> Result<u64, String> {
+    let Some((digits, multiplier)) = units.iter().find_map(|(suffix, multiplier)| {
+        value
+            .strip_suffix(*suffix)
+            .map(|digits| (digits, *multiplier))
+    }) else {
+        return Err(format!("{description} has an unknown or missing unit"));
+    };
+    if digits.is_empty()
+        || !digits.as_bytes().iter().all(u8::is_ascii_digit)
+        || (digits.len() > 1 && digits.as_bytes().first() == Some(&b'0'))
+    {
+        return Err(format!("{description} must use a positive compact integer"));
+    }
+    let quantity = digits
+        .parse::<u64>()
+        .map_err(|_| format!("{description} exceeds the supported numeric range"))?;
+    positive_value(quantity, description)?
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("{description} exceeds the supported numeric range"))
+}
+
+fn positive_value(value: u64, description: &str) -> Result<u64, String> {
+    if value == 0 {
+        Err(format!("{description} must be greater than zero"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn format_log_age(seconds: u64) -> String {
+    format_quantity(
+        seconds,
+        &[
+            ("w", 7 * 24 * 60 * 60),
+            ("d", 24 * 60 * 60),
+            ("h", 60 * 60),
+            ("m", 60),
+            ("s", 1),
+        ],
+    )
+}
+
+fn format_log_size(bytes: u64) -> String {
+    format_quantity(
+        bytes,
+        &[
+            ("GiB", 1024 * MEBIBYTE),
+            ("MiB", MEBIBYTE),
+            ("KiB", 1024),
+            ("B", 1),
+        ],
+    )
+}
+
+fn format_quantity(value: u64, units: &[(&str, u64)]) -> String {
+    units
+        .iter()
+        .find(|(_, multiplier)| value >= *multiplier && value.is_multiple_of(*multiplier))
+        .map_or_else(
+            || value.to_string(),
+            |(suffix, multiplier)| format!("{}{suffix}", value / multiplier),
+        )
+}
+
+fn logger_restart_is_default(restart: &LoggerRestartConfig) -> bool {
+    restart == &LoggerRestartConfig::default()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -851,24 +1145,257 @@ fn parse_current(source: &str) -> Result<ServiceConfig, ConfigError> {
     let document: ConfigDocument = serde_saphyr::from_str_with_options(source, yaml_options())
         .map_err(|error| ConfigError::Parse(error.to_string()))?;
     debug_assert_eq!(document.version, 2);
+    let ConfigDocument {
+        version: _,
+        enabled,
+        command,
+        working_directory,
+        environment,
+        environment_mode,
+        user,
+        start_delay_seconds,
+        restart,
+        readiness,
+        requires,
+        start_condition,
+        post_exit,
+        log,
+        logger,
+        log_adapter,
+        logger_restart,
+        stderr,
+        logging,
+        pid_files,
+        process_mode,
+        descriptor_tracking,
+    } = document;
+    let logging = normalize_logging(log, logger, log_adapter, logger_restart, stderr, logging)?;
     Ok(ServiceConfig {
-        enabled: document.enabled,
-        command: document.command,
-        working_directory: document.working_directory,
-        environment: document.environment,
-        environment_mode: document.environment_mode,
-        user: document.user,
-        start_delay_seconds: document.start_delay_seconds,
-        restart: document.restart,
-        readiness: document.readiness,
-        requires: document.requires,
-        start_condition: document.start_condition,
-        post_exit: document.post_exit,
-        logging: document.logging,
-        pid_files: document.pid_files,
-        process_mode: document.process_mode,
-        descriptor_tracking: document.descriptor_tracking,
+        enabled,
+        command,
+        working_directory,
+        environment,
+        environment_mode,
+        user,
+        start_delay_seconds,
+        restart,
+        readiness,
+        requires,
+        start_condition,
+        post_exit,
+        logging,
+        pid_files,
+        process_mode,
+        descriptor_tracking,
     })
+}
+
+fn normalize_logging(
+    log: Option<LogInput>,
+    logger: Option<Vec<String>>,
+    file_adapter: Option<PathBuf>,
+    logger_restart: Option<LoggerRestartConfig>,
+    stderr_alias: Option<FileLogInput>,
+    legacy: Option<LegacyLoggingConfig>,
+) -> Result<LoggingConfig, ConfigError> {
+    if let Some(legacy) = legacy {
+        if log.is_some()
+            || logger.is_some()
+            || file_adapter.is_some()
+            || logger_restart.is_some()
+            || stderr_alias.is_some()
+        {
+            return Err(logging_validation(
+                "deprecated `logging` cannot be mixed with `log`, `stderr`, `logger`, \
+                 `log_adapter`, or `logger_restart`",
+            ));
+        }
+        return normalize_legacy_logging(legacy);
+    }
+
+    let files = normalize_file_routes(log, stderr_alias)?;
+    if file_adapter.is_some() && files.is_none() {
+        return Err(logging_validation("log_adapter requires a log destination"));
+    }
+    if logger_restart.is_some() && logger.is_none() {
+        return Err(logging_validation("logger_restart requires logger"));
+    }
+    Ok(LoggingConfig {
+        files,
+        logger,
+        file_adapter,
+        restart: logger_restart.unwrap_or_default(),
+    })
+}
+
+fn normalize_file_routes(
+    log: Option<LogInput>,
+    stderr_alias: Option<FileLogInput>,
+) -> Result<Option<FileLogRoutes>, ConfigError> {
+    match (log, stderr_alias) {
+        (None, None) => Ok(None),
+        (None, Some(stderr)) => Ok(Some(FileLogRoutes::Selected {
+            stdout: None,
+            stderr: Some(stderr.into_config()),
+        })),
+        (Some(LogInput::Combined(stdout)), None) => {
+            Ok(Some(FileLogRoutes::Combined(stdout.into_config())))
+        }
+        (Some(LogInput::Combined(stdout)), Some(stderr)) => Ok(Some(FileLogRoutes::Selected {
+            stdout: Some(stdout.into_config()),
+            stderr: Some(stderr.into_config()),
+        })),
+        (Some(LogInput::Selected(selected)), None) => {
+            if selected.stdout.is_none() && selected.stderr.is_none() {
+                return Err(logging_validation(
+                    "log must contain a file, stdout, or stderr destination",
+                ));
+            }
+            Ok(Some(FileLogRoutes::Selected {
+                stdout: selected.stdout.map(FileLogInput::into_config),
+                stderr: selected.stderr.map(FileLogInput::into_config),
+            }))
+        }
+        (Some(LogInput::Selected(_)), Some(_)) => Err(logging_validation(
+            "top-level stderr duplicates or conflicts with nested log.stderr",
+        )),
+    }
+}
+
+impl FileLogInput {
+    fn into_config(self) -> FileLogConfig {
+        FileLogConfig {
+            file: self.file,
+            max_age_seconds: self.age,
+            keep: normalized_keep(self.age, self.size, self.keep),
+            max_bytes: self.size,
+            timestamp: self.timestamp,
+        }
+    }
+}
+
+fn normalized_keep(age: Option<u64>, size: Option<u64>, keep: Option<u32>) -> Option<u32> {
+    if keep.is_none() && (age.is_some() || size.is_some()) {
+        Some(DEFAULT_LOG_KEEP)
+    } else {
+        keep
+    }
+}
+
+fn normalize_legacy_logging(legacy: LegacyLoggingConfig) -> Result<LoggingConfig, ConfigError> {
+    let LegacyLoggingConfig {
+        file_adapter,
+        combine_stderr,
+        restart,
+        stdout,
+        stderr,
+    } = legacy;
+    if combine_stderr && legacy_output_is_configured(&stderr) {
+        return Err(logging_validation(
+            "deprecated logging.combine_stderr conflicts with an explicit stderr route",
+        ));
+    }
+
+    let LegacyOutputConfig {
+        file: stdout_file,
+        logger: stdout_logger,
+    } = stdout;
+    let LegacyOutputConfig {
+        file: stderr_file,
+        logger: stderr_logger,
+    } = stderr;
+    let stdout_file = normalize_legacy_file(stdout_file, "logging.stdout.file")?;
+    let stderr_file = normalize_legacy_file(stderr_file, "logging.stderr.file")?;
+
+    let files = if combine_stderr {
+        stdout_file.map(FileLogRoutes::Combined)
+    } else if stdout_file.is_some() || stderr_file.is_some() {
+        Some(FileLogRoutes::Selected {
+            stdout: stdout_file,
+            stderr: stderr_file,
+        })
+    } else {
+        None
+    };
+
+    let logger = if combine_stderr {
+        stdout_logger
+    } else {
+        match (stdout_logger, stderr_logger) {
+            (None, None) => None,
+            (Some(stdout), Some(stderr)) if stdout == stderr => Some(stdout),
+            (Some(_), Some(_)) => {
+                return Err(logging_validation(
+                    "deprecated per-stream logger commands differ; use one top-level logger argv",
+                ));
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(logging_validation(
+                    "deprecated single-stream logger routing cannot map to combined top-level \
+                     logger",
+                ));
+            }
+        }
+    };
+
+    if file_adapter.is_some() && files.is_none() {
+        return Err(logging_validation(
+            "deprecated logging.file_adapter requires a file destination",
+        ));
+    }
+    if logger.is_none() && restart != LoggerRestartConfig::default() {
+        return Err(logging_validation(
+            "deprecated logging.restart requires an external logger",
+        ));
+    }
+    Ok(LoggingConfig {
+        files,
+        logger,
+        file_adapter,
+        restart,
+    })
+}
+
+fn normalize_legacy_file(
+    legacy: LegacyFileLogConfig,
+    path: &str,
+) -> Result<Option<FileLogConfig>, ConfigError> {
+    if legacy.max_total_bytes.is_some() {
+        return Err(logging_validation(&format!(
+            "{path}.max_total_bytes is unsupported; use size and keep"
+        )));
+    }
+    let has_policy = legacy.max_age_seconds.is_some()
+        || legacy.keep.is_some()
+        || legacy.max_bytes.is_some()
+        || legacy.timestamp;
+    match legacy.file {
+        Some(file) => Ok(Some(FileLogConfig {
+            file,
+            max_age_seconds: legacy.max_age_seconds,
+            keep: normalized_keep(legacy.max_age_seconds, legacy.max_bytes, legacy.keep),
+            max_bytes: legacy.max_bytes,
+            timestamp: legacy.timestamp,
+        })),
+        None if has_policy => Err(logging_validation(&format!(
+            "{path} rotation options require a destination file"
+        ))),
+        None => Ok(None),
+    }
+}
+
+fn legacy_output_is_configured(output: &LegacyOutputConfig) -> bool {
+    output.file.file.is_some()
+        || output.file.max_age_seconds.is_some()
+        || output.file.keep.is_some()
+        || output.file.max_bytes.is_some()
+        || output.file.max_total_bytes.is_some()
+        || output.file.timestamp
+        || output.logger.is_some()
+}
+
+fn logging_validation(message: &str) -> ConfigError {
+    ConfigError::Validation(vec![message.to_owned()])
 }
 
 fn yaml_options() -> serde_saphyr::Options {
@@ -932,21 +1459,7 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
     if let Some(hook) = &config.post_exit {
         validate_hook(hook, "post_exit", &mut errors);
     }
-    validate_output(&config.logging.stdout, "logging.stdout", &mut errors);
-    validate_output(&config.logging.stderr, "logging.stderr", &mut errors);
-    validate_backoff(
-        &config.logging.restart.backoff,
-        "logging.restart.backoff",
-        &mut errors,
-    );
-    validate_path(
-        config.logging.file_adapter.as_deref(),
-        "logging.file_adapter",
-        &mut errors,
-    );
-    if config.logging.combine_stderr && output_is_configured(&config.logging.stderr) {
-        errors.push("logging.combine_stderr conflicts with an explicit stderr route".to_owned());
-    }
+    validate_logging(&config.logging, &mut errors);
     validate_path(
         config.working_directory.as_deref(),
         "working_directory",
@@ -991,6 +1504,36 @@ fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
         Ok(())
     } else {
         Err(ConfigError::Validation(errors))
+    }
+}
+
+fn validate_logging(config: &LoggingConfig, errors: &mut Vec<String>) {
+    if let Some(files) = &config.files {
+        match files {
+            FileLogRoutes::Combined(file) => validate_file_log(file, "log", errors),
+            FileLogRoutes::Selected { stdout, stderr } => {
+                if stdout.is_none() && stderr.is_none() {
+                    errors.push("log must configure stdout or stderr".to_owned());
+                }
+                if let Some(file) = stdout {
+                    validate_file_log(file, "log.stdout", errors);
+                }
+                if let Some(file) = stderr {
+                    validate_file_log(file, "log.stderr", errors);
+                }
+            }
+        }
+    }
+    if let Some(logger) = &config.logger {
+        validate_argv(logger, "logger", errors);
+    }
+    validate_backoff(&config.restart.backoff, "logger_restart.backoff", errors);
+    if config.logger.is_none() && config.restart != LoggerRestartConfig::default() {
+        errors.push("logger_restart requires logger".to_owned());
+    }
+    validate_path(config.file_adapter.as_deref(), "log_adapter", errors);
+    if config.file_adapter.is_some() && config.files.is_none() {
+        errors.push("log_adapter requires log".to_owned());
     }
 }
 
@@ -1058,19 +1601,29 @@ pub fn resolve_paths(config: &mut ServiceConfig, base: &Path) -> Result<(), Conf
         resolve_argv_executable(&mut tracking.reload.command, &base)?;
     }
     resolve_optional_path(&mut config.logging.file_adapter, &base);
-    resolve_output_paths(&mut config.logging.stdout, &base)?;
-    resolve_output_paths(&mut config.logging.stderr, &base)?;
+    if let Some(files) = &mut config.logging.files {
+        match files {
+            FileLogRoutes::Combined(file) => resolve_file_log_path(file, &base),
+            FileLogRoutes::Selected { stdout, stderr } => {
+                if let Some(file) = stdout {
+                    resolve_file_log_path(file, &base);
+                }
+                if let Some(file) = stderr {
+                    resolve_file_log_path(file, &base);
+                }
+            }
+        }
+    }
+    if let Some(logger) = &mut config.logging.logger {
+        resolve_argv_executable(logger, &base)?;
+    }
     resolve_optional_path(&mut config.pid_files.supervisor, &base);
     resolve_optional_path(&mut config.pid_files.main, &base);
     Ok(())
 }
 
-fn resolve_output_paths(output: &mut OutputConfig, base: &Path) -> Result<(), ConfigError> {
-    resolve_optional_path(&mut output.file.file, base);
-    if let Some(logger) = &mut output.logger {
-        resolve_argv_executable(logger, base)?;
-    }
-    Ok(())
+fn resolve_file_log_path(file: &mut FileLogConfig, base: &Path) {
+    file.file = normalize_absolute(base, &file.file);
 }
 
 fn resolve_optional_path(path: &mut Option<PathBuf>, base: &Path) {
@@ -1180,41 +1733,20 @@ fn validate_start_condition(condition: &StartConditionConfig, errors: &mut Vec<S
     }
 }
 
-fn validate_output(output: &OutputConfig, path: &str, errors: &mut Vec<String>) {
-    if let Some(logger) = &output.logger {
-        validate_argv(logger, &format!("{path}.logger"), errors);
+fn validate_file_log(file: &FileLogConfig, path: &str, errors: &mut Vec<String>) {
+    validate_path(Some(&file.file), &format!("{path}.file"), errors);
+    if file.max_age_seconds == Some(0) {
+        errors.push(format!("{path}.age must be greater than zero"));
     }
-    validate_path(
-        output.file.file.as_deref(),
-        &format!("{path}.file.file"),
-        errors,
-    );
-    if output.file.max_bytes == Some(0) {
-        errors.push(format!("{path}.file.max_bytes must be greater than zero"));
+    if file.max_bytes == Some(0) {
+        errors.push(format!("{path}.size must be greater than zero"));
     }
-    if output.file.max_total_bytes == Some(0) {
-        errors.push(format!(
-            "{path}.file.max_total_bytes must be greater than zero"
-        ));
+    if file.keep == Some(0) {
+        errors.push(format!("{path}.keep must be greater than zero"));
     }
-    if output.file.keep == Some(0) {
-        errors.push(format!("{path}.file.keep must be greater than zero"));
+    if file.keep.is_some() && file.max_age_seconds.is_none() && file.max_bytes.is_none() {
+        errors.push(format!("{path}.keep requires age or size"));
     }
-    if output.file.file.is_none()
-        && (output.file.max_age_seconds.is_some()
-            || output.file.keep.is_some()
-            || output.file.max_bytes.is_some()
-            || output.file.max_total_bytes.is_some()
-            || output.file.timestamp)
-    {
-        errors.push(format!(
-            "{path}.file rotation options require a destination file"
-        ));
-    }
-}
-
-fn output_is_configured(output: &OutputConfig) -> bool {
-    output.file.file.is_some() || output.logger.is_some()
 }
 
 fn validate_argv(argv: &[String], path: &str, errors: &mut Vec<String>) {
@@ -1268,12 +1800,12 @@ mod tests {
 
     use super::{
         BackoffConfig, CommandHook, ConditionBackoffConfig, ConfigError, DescriptorTrackingConfig,
-        EnvironmentMode, FileLogConfig, LoggerRestartConfig, LoggingConfig, MAX_CONFIG_BYTES,
-        MAX_ENVIRONMENT_DIRECTORY_BYTES, MAX_ENVIRONMENT_DIRECTORY_ENTRIES,
-        MAX_ENVIRONMENT_VALUE_BYTES, OutputConfig, PidFiles, ProcessMode, ReadinessConfig,
-        ReadinessMode, RestartBurstLimit, RestartConfig, RestartLimits, RestartPolicy,
-        ServiceConfig, StartConditionConfig, emit_config, load_environment_directory, parse_bytes,
-        parse_file, parse_str, resolve_paths,
+        EnvironmentMode, FileLogConfig, FileLogRoutes, LoggerRestartConfig, LoggingConfig,
+        MAX_CONFIG_BYTES, MAX_ENVIRONMENT_DIRECTORY_BYTES, MAX_ENVIRONMENT_DIRECTORY_ENTRIES,
+        MAX_ENVIRONMENT_VALUE_BYTES, PidFiles, ProcessMode, ReadinessConfig, ReadinessMode,
+        RestartBurstLimit, RestartConfig, RestartLimits, RestartPolicy, ServiceConfig,
+        StartConditionConfig, emit_config, load_environment_directory, parse_bytes, parse_file,
+        parse_str, resolve_paths,
     };
 
     #[test]
@@ -1322,6 +1854,184 @@ mod tests {
         assert!(nested.is_err());
         let null = parse_str("version: 2\ncommand: [/bin/true]\nenv:\n  DEBUG: null\n");
         assert!(null.is_err());
+    }
+
+    #[test]
+    fn logging_schema_normalizes_combined_and_selected_routes() -> Result<(), Box<dyn Error>> {
+        let combined = parse_str(
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  age: 86400\n  size: 1\nlogger: [/usr/bin/logger, -t, app]\n",
+        )?;
+        let Some(FileLogRoutes::Combined(file)) = &combined.logging.files else {
+            return Err("combined log route is missing".into());
+        };
+        assert_eq!(file.file, PathBuf::from("/tmp/app.log"));
+        assert_eq!(file.max_age_seconds, Some(86_400));
+        assert_eq!(file.max_bytes, Some(1_048_576));
+        assert_eq!(file.keep, Some(7));
+        assert_eq!(
+            combined.logging.logger,
+            Some(vec![
+                "/usr/bin/logger".to_owned(),
+                "-t".to_owned(),
+                "app".to_owned()
+            ])
+        );
+        let emitted = emit_config(&combined)?;
+        assert!(emitted.contains("age: 1d"));
+        assert!(emitted.contains("size: 1MiB"));
+        assert!(emitted.contains("keep: 7"));
+        assert!(!emitted.lines().any(|line| line == "logging:"));
+
+        let selected = parse_str(
+            "version: 2\ncommand: [/bin/true]\nlog:\n  stderr:\n    file: /tmp/app.err\n",
+        )?;
+        let Some(FileLogRoutes::Selected { stdout, stderr }) = &selected.logging.files else {
+            return Err("selected log routes are missing".into());
+        };
+        assert_eq!(stdout, &None);
+        assert_eq!(
+            stderr.as_ref().map(|file| &file.file),
+            Some(&PathBuf::from("/tmp/app.err"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn logging_duration_and_size_units_are_checked_and_canonical() -> Result<(), Box<dyn Error>> {
+        for (value, expected) in [
+            ("1s", 1),
+            ("2m", 120),
+            ("3h", 10_800),
+            ("4d", 345_600),
+            ("2w", 1_209_600),
+        ] {
+            let source = format!(
+                "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  age: {value}\n"
+            );
+            let config = parse_str(&source)?;
+            let Some(FileLogRoutes::Combined(file)) = config.logging.files else {
+                return Err("combined age route is missing".into());
+            };
+            assert_eq!(file.max_age_seconds, Some(expected));
+            assert_eq!(file.keep, Some(7));
+        }
+
+        for (value, expected) in [
+            ("1B", 1),
+            ("2KiB", 2_048),
+            ("3MiB", 3_145_728),
+            ("4GiB", 4_294_967_296),
+            ("2", 2_097_152),
+        ] {
+            let source = format!(
+                "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  size: {value}\n"
+            );
+            let config = parse_str(&source)?;
+            let Some(FileLogRoutes::Combined(file)) = config.logging.files else {
+                return Err("combined size route is missing".into());
+            };
+            assert_eq!(file.max_bytes, Some(expected));
+            assert_eq!(file.keep, Some(7));
+        }
+
+        let canonical = parse_str(
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  age: 3600\n  size: 1024KiB\n",
+        )?;
+        let emitted = emit_config(&canonical)?;
+        assert!(emitted.contains("age: 1h"));
+        assert!(emitted.contains("size: 1MiB"));
+        Ok(())
+    }
+
+    #[test]
+    fn logging_schema_rejects_ambiguous_ineffective_and_unbounded_values() {
+        for source in [
+            "version: 2\ncommand: [/bin/true]\nlog: {}\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  stdout:\n    file: /tmp/out.log\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  keep: 7\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  age: 0\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  age: 01s\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  age: 1month\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  size: 0\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  size: 1.5MiB\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  size: 1MB\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  size: 18446744073709551615GiB\n",
+            "version: 2\ncommand: [/bin/true]\nlog_adapter: /bin/cat\n",
+            "version: 2\ncommand: [/bin/true]\nlogger_restart:\n  max_retries: 1\n",
+            "version: 2\ncommand: [/bin/true]\nlogger: []\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  stdout:\n    file: /tmp/out.log\n    logger: [/bin/cat]\n",
+        ] {
+            assert!(
+                parse_str(source).is_err(),
+                "unexpected valid source: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn logging_compatibility_aliases_emit_only_canonical_fields() -> Result<(), Box<dyn Error>> {
+        let config = parse_str(
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  age: 86400\n  num: 7\n  size: 1\nstderr:\n  file: /tmp/app.err\n",
+        )?;
+        let Some(FileLogRoutes::Selected {
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+        }) = &config.logging.files
+        else {
+            return Err("Go-compatible split routes are missing".into());
+        };
+        assert_eq!(stdout.file, PathBuf::from("/tmp/app.log"));
+        assert_eq!(stderr.file, PathBuf::from("/tmp/app.err"));
+        let emitted = emit_config(&config)?;
+        assert!(emitted.lines().any(|line| line == "  stderr:"));
+        assert!(!emitted.lines().any(|line| line == "stderr:"));
+        assert!(!emitted.contains("num:"));
+
+        let legacy = parse_str(
+            "version: 2\ncommand: [/bin/true]\nlogging:\n  combine_stderr: true\n  stdout:\n    file:\n      file: /tmp/app.log\n      max_age_seconds: 60\n      max_bytes: 1048576\n      keep: 7\n    logger: [/bin/cat]\n",
+        )?;
+        assert!(matches!(
+            legacy.logging.files,
+            Some(FileLogRoutes::Combined(_))
+        ));
+        assert_eq!(legacy.logging.logger, Some(vec!["/bin/cat".to_owned()]));
+        let emitted = emit_config(&legacy)?;
+        assert!(!emitted.lines().any(|line| line == "logging:"));
+        assert!(emitted.lines().any(|line| line == "log:"));
+        assert!(emitted.lines().any(|line| line == "logger:"));
+        Ok(())
+    }
+
+    #[test]
+    fn logging_compatibility_rejects_conflicts_and_unrepresentable_routes() {
+        for source in [
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\n  keep: 7\n  num: 7\n  size: 1MiB\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  stderr:\n    file: /tmp/app.err\nstderr:\n  file: /tmp/legacy.err\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/app.log\nlogging: {}\n",
+            "version: 2\ncommand: [/bin/true]\nlogging:\n  stdout:\n    file:\n      file: /tmp/app.log\n      max_total_bytes: 1048576\n",
+            "version: 2\ncommand: [/bin/true]\nlogging:\n  stdout:\n    logger: [/bin/cat, stdout]\n  stderr:\n    logger: [/bin/cat, stderr]\n",
+            "version: 2\ncommand: [/bin/true]\nlogging:\n  stdout:\n    logger: [/bin/cat]\n",
+        ] {
+            assert!(
+                parse_str(source).is_err(),
+                "unexpected valid source: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_logging_preserves_go_rotation_defaults() -> Result<(), Box<dyn Error>> {
+        let logging = LoggingConfig::for_direct(
+            Some(PathBuf::from("/tmp/app.log")),
+            Some(vec!["/bin/cat".to_owned()]),
+        )?;
+        let Some(FileLogRoutes::Combined(file)) = logging.files else {
+            return Err("direct combined file route is missing".into());
+        };
+        assert_eq!(file.max_bytes, Some(1_048_576));
+        assert_eq!(file.keep, Some(7));
+        assert_eq!(logging.logger, Some(vec!["/bin/cat".to_owned()]));
+        Ok(())
     }
 
     #[test]
@@ -1499,8 +2209,28 @@ mod tests {
 
     fn complete_logging() -> LoggingConfig {
         LoggingConfig {
+            files: Some(FileLogRoutes::Selected {
+                stdout: Some(complete_file(
+                    "/var/log/api.log",
+                    86_400,
+                    7,
+                    10_485_760,
+                    true,
+                )),
+                stderr: Some(complete_file(
+                    "/var/log/api.err",
+                    3_600,
+                    3,
+                    1_048_576,
+                    false,
+                )),
+            }),
+            logger: Some(vec![
+                "/usr/bin/logger".to_owned(),
+                "-t".to_owned(),
+                "api".to_owned(),
+            ]),
             file_adapter: Some(PathBuf::from("/usr/local/bin/immortallog")),
-            combine_stderr: false,
             restart: LoggerRestartConfig {
                 max_retries: Some(6),
                 backoff: BackoffConfig {
@@ -1511,50 +2241,22 @@ mod tests {
                     reset_after_seconds: 180,
                 },
             },
-            stdout: complete_output(
-                "/var/log/api.log",
-                86_400,
-                7,
-                10_485_760,
-                73_400_320,
-                true,
-                "api",
-            ),
-            stderr: complete_output(
-                "/var/log/api.err",
-                3_600,
-                3,
-                1_048_576,
-                3_145_728,
-                false,
-                "api-error",
-            ),
         }
     }
 
-    fn complete_output(
+    fn complete_file(
         path: &str,
         max_age_seconds: u64,
         keep: u32,
         max_bytes: u64,
-        max_total_bytes: u64,
         timestamp: bool,
-        tag: &str,
-    ) -> OutputConfig {
-        OutputConfig {
-            file: FileLogConfig {
-                file: Some(PathBuf::from(path)),
-                max_age_seconds: Some(max_age_seconds),
-                keep: Some(keep),
-                max_bytes: Some(max_bytes),
-                max_total_bytes: Some(max_total_bytes),
-                timestamp,
-            },
-            logger: Some(vec![
-                "/usr/bin/logger".to_owned(),
-                "-t".to_owned(),
-                tag.to_owned(),
-            ]),
+    ) -> FileLogConfig {
+        FileLogConfig {
+            file: PathBuf::from(path),
+            max_age_seconds: Some(max_age_seconds),
+            keep: Some(keep),
+            max_bytes: Some(max_bytes),
+            timestamp,
         }
     }
 
@@ -1585,10 +2287,14 @@ mod tests {
             config.command.first().map(String::as_str),
             base.join("bin/api").to_str()
         );
-        assert_eq!(
-            config.logging.stdout.file.file,
-            Some(base.join("logs/api.log"))
-        );
+        let Some(FileLogRoutes::Selected {
+            stdout: Some(stdout),
+            ..
+        }) = &config.logging.files
+        else {
+            return Err("relative stdout log route is missing".into());
+        };
+        assert_eq!(stdout.file, base.join("logs/api.log"));
         assert_eq!(
             config.logging.file_adapter,
             Some(base.join("bin/immortallog"))
@@ -1733,15 +2439,15 @@ start_condition:
             r"
 version: 2
 command: [service]
-logging:
-  restart:
-    max_retries: 4
-    backoff:
-      initial_seconds: 2
-      max_seconds: 8
-      multiplier: 3
-      jitter_percent: 5
-      reset_after_seconds: 20
+logger: [/bin/cat]
+logger_restart:
+  max_retries: 4
+  backoff:
+    initial_seconds: 2
+    max_seconds: 8
+    multiplier: 3
+    jitter_percent: 5
+    reset_after_seconds: 20
 ",
         )?;
         assert_eq!(config.logging.restart.max_retries, Some(4));
@@ -1759,12 +2465,14 @@ logging:
         );
         assert!(matches!(
             parse_str(
-                "version: 2\ncommand: [service]\nlogging:\n  restart:\n    backoff:\n      initial_seconds: 0\n"
+                "version: 2\ncommand: [service]\nlogger: [/bin/cat]\nlogger_restart:\n  backoff:\n    initial_seconds: 0\n"
             ),
             Err(ConfigError::Validation(_))
         ));
         assert!(matches!(
-            parse_str("version: 2\ncommand: [service]\nlogging:\n  restart:\n    future: true\n"),
+            parse_str(
+                "version: 2\ncommand: [service]\nlogger: [/bin/cat]\nlogger_restart:\n  future: true\n"
+            ),
             Err(ConfigError::Parse(_))
         ));
         Ok(())

@@ -13,6 +13,13 @@
 //! group; deliberate cleanup disarms and reaps the helper. A helper event is a
 //! containment failure, not an ordinary workload exit, and terminates policy
 //! execution after the broker kills the affected group.
+//!
+//! Logging plans are also materialized before Tokio starts. The broker retains
+//! stable service-route masters and one optional shared logger pipe, duplicating
+//! only the descriptors each file adapter, service stream, or external logger
+//! needs. It never copies bytes. Closing retained writers begins ordered EOF
+//! drain, while child-held writer clones keep downstream input alive until every
+//! upstream adapter exits.
 
 use std::{
     collections::BTreeMap,
@@ -62,6 +69,7 @@ const LIFETIME_DESCRIPTOR: i32 = 4;
 const LIFETIME_EVENT_CAPACITY: usize = 32;
 const MAX_LIFETIME_CLEANUP_TIMEOUT: Duration = Duration::from_hours(24);
 const AUXILIARY_GENERATION_BASE: u64 = 1_u64 << 63;
+const SHARED_LOGGER_PIPELINE: u16 = u16::MAX;
 
 /// Bounded address of one logger stage inside the broker-owned graph.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -82,31 +90,46 @@ impl BrokerLoggerId {
     pub(crate) const fn stage(self) -> u16 {
         self.stage
     }
+
+    pub(crate) const fn shared_logger() -> Self {
+        Self::new(SHARED_LOGGER_PIPELINE, 0)
+    }
+
+    pub(crate) const fn is_shared_logger(self) -> bool {
+        self.pipeline == SHARED_LOGGER_PIPELINE && self.stage == 0
+    }
 }
 
-/// Fully materialized logger commands for one service output stream.
+/// Fully materialized local file adapter for one service output stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct BrokerLoggerPipeline {
+pub(crate) struct BrokerFileRoute {
     pub(crate) stream: OutputStream,
-    pub(crate) stages: Vec<ProcessCommand>,
+    pub(crate) command: ProcessCommand,
 }
 
 /// Logger graph transferred to the broker before Tokio starts.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct BrokerLoggingPlan {
-    pub(crate) pipelines: Vec<BrokerLoggerPipeline>,
+    pub(crate) local_files: Vec<BrokerFileRoute>,
+    pub(crate) logger: Option<ProcessCommand>,
 }
 
 struct BrokerLogging {
-    pipelines: Vec<BrokerPipeline>,
+    local_files: Vec<BrokerFileRouteRuntime>,
+    logger: Option<SharedLoggerRuntime>,
     live_loggers: BTreeMap<BrokerLoggerId, Generation>,
     logger_generations: BTreeMap<Generation, BrokerLoggerId>,
 }
 
-struct BrokerPipeline {
+struct BrokerFileRouteRuntime {
     stream: OutputStream,
-    stages: Vec<ProcessCommand>,
-    pipes: Vec<StablePipe>,
+    command: ProcessCommand,
+    input: StablePipe,
+}
+
+struct SharedLoggerRuntime {
+    command: ProcessCommand,
+    input: StablePipe,
 }
 
 struct StablePipe {
@@ -116,106 +139,109 @@ struct StablePipe {
 
 impl BrokerLogging {
     fn prepare(plan: BrokerLoggingPlan) -> io::Result<Self> {
-        let mut pipelines = Vec::with_capacity(plan.pipelines.len());
-        for pipeline in plan.pipelines {
-            if pipeline.stages.is_empty() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "broker logging pipeline has no stages",
-                ));
-            }
-            let mut pipes = Vec::with_capacity(pipeline.stages.len());
-            for _ in 0..pipeline.stages.len() {
-                let pipe = fork::pipe_cloexec()?;
-                let (reader, writer) = pipe.into_parts();
-                pipes.push(StablePipe {
-                    reader,
-                    writer: Some(writer),
-                });
-            }
-            pipelines.push(BrokerPipeline {
-                stream: pipeline.stream,
-                stages: pipeline.stages,
-                pipes,
+        let mut local_files = Vec::with_capacity(plan.local_files.len());
+        for route in plan.local_files {
+            local_files.push(BrokerFileRouteRuntime {
+                stream: route.stream,
+                command: route.command,
+                input: stable_pipe()?,
             });
         }
+        let logger = if let Some(command) = plan.logger {
+            Some(SharedLoggerRuntime {
+                command,
+                input: stable_pipe()?,
+            })
+        } else {
+            None
+        };
         Ok(Self {
-            pipelines,
+            local_files,
+            logger,
             live_loggers: BTreeMap::new(),
             logger_generations: BTreeMap::new(),
         })
     }
 
     fn service_descriptors(&self) -> io::Result<Vec<ProcessDescriptor>> {
-        let mut descriptors = Vec::with_capacity(self.pipelines.len().saturating_mul(2));
-        for pipeline in &self.pipelines {
-            let writer = pipeline
-                .pipes
-                .first()
-                .ok_or_else(|| io::Error::other("broker logging pipeline has no input pipe"))?
-                .writer
-                .as_ref()
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::BrokenPipe, "logging input is closed")
-                })?
-                .try_clone()?;
-            match pipeline.stream {
-                OutputStream::Stdout => {
-                    descriptors.push(ProcessDescriptor::map(writer, libc::STDOUT_FILENO)?);
-                }
-                OutputStream::Stderr => {
-                    descriptors.push(ProcessDescriptor::map(writer, libc::STDERR_FILENO)?);
-                }
-                OutputStream::Combined => {
-                    descriptors.push(ProcessDescriptor::map(
-                        writer.try_clone()?,
-                        libc::STDOUT_FILENO,
-                    )?);
-                    descriptors.push(ProcessDescriptor::map(writer, libc::STDERR_FILENO)?);
-                }
-            }
+        if let Some(combined) = self
+            .local_files
+            .iter()
+            .find(|route| route.stream == OutputStream::Combined)
+        {
+            let writer = clone_writer(&combined.input)?;
+            return Ok(vec![
+                ProcessDescriptor::map(writer.try_clone()?, libc::STDOUT_FILENO)?,
+                ProcessDescriptor::map(writer, libc::STDERR_FILENO)?,
+            ]);
         }
+
+        let mut descriptors = Vec::with_capacity(2);
+        self.push_service_descriptor(OutputStream::Stdout, libc::STDOUT_FILENO, &mut descriptors)?;
+        self.push_service_descriptor(OutputStream::Stderr, libc::STDERR_FILENO, &mut descriptors)?;
         Ok(descriptors)
+    }
+
+    fn push_service_descriptor(
+        &self,
+        stream: OutputStream,
+        target: i32,
+        descriptors: &mut Vec<ProcessDescriptor>,
+    ) -> io::Result<()> {
+        let input = self
+            .local_files
+            .iter()
+            .find(|route| route.stream == stream)
+            .map(|route| &route.input)
+            .or_else(|| self.logger.as_ref().map(|logger| &logger.input));
+        if let Some(input) = input {
+            descriptors.push(ProcessDescriptor::map(clone_writer(input)?, target)?);
+        }
+        Ok(())
     }
 
     fn logger_command(
         &self,
         logger: BrokerLoggerId,
     ) -> io::Result<(ProcessCommand, Vec<ProcessDescriptor>)> {
-        let pipeline = self
-            .pipelines
+        if logger.is_shared_logger() {
+            let shared = self.logger.as_ref().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "shared logger is not configured",
+                )
+            })?;
+            return Ok((
+                shared.command.clone(),
+                vec![ProcessDescriptor::map(
+                    shared.input.reader.try_clone()?,
+                    libc::STDIN_FILENO,
+                )?],
+            ));
+        }
+        if logger.stage != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unknown file-adapter stage",
+            ));
+        }
+        let route = self
+            .local_files
             .get(usize::from(logger.pipeline))
             .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "unknown logger pipeline")
+                io::Error::new(io::ErrorKind::InvalidInput, "unknown file-adapter route")
             })?;
-        let stage = usize::from(logger.stage);
-        let command = pipeline
-            .stages
-            .get(stage)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unknown logger stage"))?
-            .clone();
-        let input = pipeline
-            .pipes
-            .get(stage)
-            .ok_or_else(|| io::Error::other("logger input pipe is absent"))?
-            .reader
-            .try_clone()?;
-        let mut descriptors = vec![ProcessDescriptor::map(input, libc::STDIN_FILENO)?];
-        if let Some(next) = stage
-            .checked_add(1)
-            .and_then(|index| pipeline.pipes.get(index))
-        {
+        let mut descriptors = vec![ProcessDescriptor::map(
+            route.input.reader.try_clone()?,
+            libc::STDIN_FILENO,
+        )?];
+        if let Some(shared) = &self.logger {
             descriptors.push(ProcessDescriptor::map(
-                next.writer
-                    .as_ref()
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::BrokenPipe, "logger output is closed")
-                    })?
-                    .try_clone()?,
+                clone_writer(&shared.input)?,
                 libc::STDOUT_FILENO,
             )?);
         }
-        Ok((command, descriptors))
+        Ok((route.command.clone(), descriptors))
     }
 
     fn register(&mut self, logger: BrokerLoggerId, generation: Generation) -> io::Result<()> {
@@ -244,12 +270,29 @@ impl BrokerLogging {
     }
 
     fn close_writer_masters(&mut self) {
-        for pipeline in &mut self.pipelines {
-            for pipe in &mut pipeline.pipes {
-                pipe.writer = None;
-            }
+        for route in &mut self.local_files {
+            route.input.writer = None;
+        }
+        if let Some(logger) = &mut self.logger {
+            logger.input.writer = None;
         }
     }
+}
+
+fn stable_pipe() -> io::Result<StablePipe> {
+    let pipe = fork::pipe_cloexec()?;
+    let (reader, writer) = pipe.into_parts();
+    Ok(StablePipe {
+        reader,
+        writer: Some(writer),
+    })
+}
+
+fn clone_writer(pipe: &StablePipe) -> io::Result<OwnedFd> {
+    pipe.writer
+        .as_ref()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "logging input is closed"))?
+        .try_clone()
 }
 
 /// Supervisor-local identifier for a broker child which is not a service generation.

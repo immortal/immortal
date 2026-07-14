@@ -227,22 +227,42 @@ than claiming Down. The immutable stop plan is copied once at the pre-Tokio
 broker boundary so unexpected supervisor EOF can use the same bounded cleanup
 contract without trusting a PID file.
 
-Logging pipelines are materialized before the broker starts. The single-threaded
-broker owns stable CLOEXEC pipe masters and duplicates only the endpoints needed
-by each service or logger spawn. The Tokio supervisor owns logger restart policy
-and health but never reads or copies log bytes. Logger exec success gates the
-first service generation. A logger crash leaves its pipe identity and buffered
-bytes intact while independent exponential backoff runs. Each logger stage owns
-its failure streak; the immutable configuration is borrowed only while handling
-an event. Configured exhaustion before a service generation cancels childless
-pre-start work and publishes `Failed`. Exhaustion after a service generation is
-live changes logger health without silently stopping that service. Explicit
-start operations reset failed logger stages. Final shutdown closes broker
-writer masters, permits bounded EOF drain, then signals logger groups from
-downstream to upstream before broker reaping. Failed or backing-off stages have
-no drainable child and normalize to Down at shutdown; live stages retain the
-EOF, TERM, and KILL sequence. Real permission denial, oversized lossless pipe
-backpressure, and TERM-resistant drain expiry are process contract-tested.
+Logging separates two user intents. `log` selects zero, one, or two local files;
+its flat form combines stdout and stderr, while nested `stdout` and `stderr`
+routes are strict and never capture an omitted stream. `logger` is one exact
+external argv which always receives both child streams. The two may coexist.
+`immortallog` is Immortal's replaceable local file writer and rotator, not the
+user's centralized logger.
+
+The complete graph is materialized before the broker starts. A combined local
+file forms one adapter chain. Selected or split files each have their own input
+pipe and adapter, while adapter pass-through descriptors and any locally
+unselected child stream duplicate writers into one shared kernel pipe. That
+pipe has exactly one reader: the external logger. The single-threaded broker
+owns stable CLOEXEC masters and duplicates only the endpoints needed by a
+spawn. The Tokio supervisor therefore never reads, copies, labels, reorders, or
+buffers log bytes; kernel backpressure remains the lossless flow-control
+boundary.
+
+The shared downstream logger starts first, then local adapters, and the first
+service generation is gated on every required exec succeeding. A crash leaves
+pipe identity and already buffered bytes intact. `logger_restart` owns retry
+limits and backoff only for the external logger; each file adapter remains an
+independently supervised upstream process with the safe unbounded default.
+Exhaustion before a service generation cancels childless pre-start work and
+publishes `Failed`. Exhaustion after a service generation is live changes
+logger health without silently stopping that service. Explicit start operations
+reset failed stages.
+
+Shutdown closes the broker's service-route and shared-pipe writer masters.
+Adapter-held shared writers keep the external logger input open while adapters
+drain. If an upstream adapter exceeds its deadline, it receives bounded TERM
+then KILL escalation before the external logger is allowed to finish draining;
+only after every upstream writer is gone can the shared reader observe EOF.
+The external logger then receives its own drain and escalation interval before
+broker reaping. Failed or backing-off stages own no drainable child and
+normalize to Down. Permission denial, oversized lossless backpressure, split
+fan-in, tail drain, and TERM-resistant expiry are process contract-tested.
 
 ### Required `immortal/fork` contract
 

@@ -1,8 +1,12 @@
-//! Supervised external-logger pipeline plans and shutdown ordering.
+//! Local-file routing, shared external-logger planning, and file rotation.
 //!
-//! This module deliberately models ownership and lifecycle, not byte copying.
-//! A service writes to one stable pipe; each configured stage reads from the
-//! previous stage. Lossless kernel-pipe backpressure is the only default.
+//! Configuration normalizes into strict local routes plus at most one external
+//! sink. Combined routes use one file adapter; selected routes keep stdout and
+//! stderr independent locally while both may converge on the shared sink.
+//! This module models that ownership and lifecycle but never copies service
+//! bytes: the broker materializes stable pipes and kernel backpressure remains
+//! lossless. The rotating writer separately owns sync-before-rename, archive
+//! retention, timestamping, and bounded-memory partial-line handling.
 
 use std::{
     error::Error,
@@ -14,7 +18,7 @@ use std::{
 };
 
 use crate::{
-    config::{FileLogConfig, LoggingConfig, OutputConfig},
+    config::{FileLogConfig, FileLogRoutes, LoggingConfig},
     supervisor::SupervisorState,
 };
 
@@ -25,7 +29,7 @@ pub enum OutputStream {
     Stdout,
     /// Standard error only.
     Stderr,
-    /// Standard output and error share one pipe for Go compatibility.
+    /// Standard output and error share one pipe.
     Combined,
 }
 
@@ -45,76 +49,78 @@ pub enum LoggerStage {
     External(Vec<String>),
 }
 
-/// One service-output pipeline, ordered from service to final consumer.
+/// One local-file route attached to an exact child stream selection.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PipelinePlan {
-    /// Service descriptors connected to this chain.
+pub struct FileRoutePlan {
+    /// Service descriptors connected to this adapter.
     pub stream: OutputStream,
-    /// File adapter followed by an optional external command.
-    pub stages: Vec<LoggerStage>,
+    /// Local destination and rotation policy.
+    pub file: FileLogConfig,
     /// Loss policy between processes.
     pub backpressure: BackpressurePolicy,
 }
 
-/// Complete logger plan for one service.
+/// Complete local-file and centralized-logger graph for one service.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LoggingPlan {
-    /// Zero, one, or two independent pipelines.
-    pub pipelines: Vec<PipelinePlan>,
+    /// Zero, one, or two independently supervised local file adapters.
+    pub local_files: Vec<FileRoutePlan>,
+    /// At most one external logger receiving merged stdout and stderr.
+    pub logger: Option<Vec<String>>,
 }
 
 impl LoggingPlan {
-    /// Normalize output configuration into process chains.
+    /// Normalize output configuration into local routes and one shared sink.
     ///
-    /// A file-plus-command route becomes `service -> immortallog -> external`
-    /// rather than an in-supervisor multiwriter.
+    /// Local stream selection never filters the external logger. When both are
+    /// configured, file-adapter passthrough writers converge on one kernel pipe
+    /// owned by the broker.
     ///
     /// # Errors
     ///
-    /// Returns an error for an empty external command or conflicting combined
-    /// and explicit stderr routes.
+    /// Returns an error for an empty external command or empty selected route.
     pub fn from_config(config: &LoggingConfig) -> Result<Self, LoggingError> {
-        let stdout = pipeline_stages(&config.stdout)?;
-        let stderr = pipeline_stages(&config.stderr)?;
-        if config.combine_stderr && !stderr.is_empty() {
-            return Err(LoggingError::CombinedWithStderrRoute);
-        }
-
-        let mut pipelines = Vec::new();
-        if !stdout.is_empty() {
-            pipelines.push(PipelinePlan {
-                stream: if config.combine_stderr {
-                    OutputStream::Combined
-                } else {
-                    OutputStream::Stdout
-                },
-                stages: stdout,
-                backpressure: BackpressurePolicy::LosslessBlock,
-            });
-        }
-        if !stderr.is_empty() {
-            pipelines.push(PipelinePlan {
-                stream: OutputStream::Stderr,
-                stages: stderr,
-                backpressure: BackpressurePolicy::LosslessBlock,
-            });
-        }
-        Ok(Self { pipelines })
-    }
-}
-
-fn pipeline_stages(output: &OutputConfig) -> Result<Vec<LoggerStage>, LoggingError> {
-    let mut stages = Vec::new();
-    if output.file.file.is_some() {
-        stages.push(LoggerStage::FileAdapter(output.file.clone()));
-    }
-    if let Some(command) = &output.logger {
-        if command.first().is_none_or(String::is_empty) {
+        if config
+            .logger
+            .as_ref()
+            .is_some_and(|command| command.first().is_none_or(String::is_empty))
+        {
             return Err(LoggingError::EmptyExternalCommand);
         }
-        stages.push(LoggerStage::External(command.clone()));
+
+        let mut local_files = Vec::new();
+        match &config.files {
+            Some(FileLogRoutes::Combined(file)) => local_files.push(FileRoutePlan {
+                stream: OutputStream::Combined,
+                file: file.clone(),
+                backpressure: BackpressurePolicy::LosslessBlock,
+            }),
+            Some(FileLogRoutes::Selected { stdout, stderr }) => {
+                if stdout.is_none() && stderr.is_none() {
+                    return Err(LoggingError::EmptyFileSelection);
+                }
+                if let Some(file) = stdout {
+                    local_files.push(FileRoutePlan {
+                        stream: OutputStream::Stdout,
+                        file: file.clone(),
+                        backpressure: BackpressurePolicy::LosslessBlock,
+                    });
+                }
+                if let Some(file) = stderr {
+                    local_files.push(FileRoutePlan {
+                        stream: OutputStream::Stderr,
+                        file: file.clone(),
+                        backpressure: BackpressurePolicy::LosslessBlock,
+                    });
+                }
+            }
+            None => {}
+        }
+        Ok(Self {
+            local_files,
+            logger: config.logger.clone(),
+        })
     }
-    Ok(stages)
 }
 
 /// Durable identity for stable pipe endpoints, independent of child PIDs.
@@ -156,63 +162,88 @@ pub struct LoggerStageStatus {
 /// Runtime ownership of stable pipes and restartable logger stages.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoggingRuntime {
-    pipelines: Vec<PipelineRuntime>,
+    local_files: Vec<FileRouteRuntime>,
+    logger: Option<SharedLoggerRuntime>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PipelineRuntime {
-    plan: PipelinePlan,
+struct FileRouteRuntime {
+    plan: FileRoutePlan,
     pipe: PipeId,
-    stages: Vec<LoggerStageStatus>,
+    stage: LoggerStageStatus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SharedLoggerRuntime {
+    pipe: PipeId,
+    stage: LoggerStageStatus,
 }
 
 impl LoggingRuntime {
     /// Allocate durable pipe identities before starting any logger or service.
     #[must_use]
     pub fn new(plan: LoggingPlan) -> Self {
-        let pipelines = plan
-            .pipelines
+        let logger_position = plan.local_files.len();
+        let local_files = plan
+            .local_files
             .into_iter()
             .enumerate()
             .map(|(position, plan)| {
-                let stages = plan
-                    .stages
-                    .iter()
-                    .cloned()
-                    .map(|stage| LoggerStageStatus {
-                        stage,
-                        generation: 0,
-                        state: SupervisorState::Down,
-                    })
-                    .collect();
-                PipelineRuntime {
-                    plan,
+                let stage = LoggerStageStatus {
+                    stage: LoggerStage::FileAdapter(plan.file.clone()),
+                    generation: 0,
+                    state: SupervisorState::Down,
+                };
+                FileRouteRuntime {
                     pipe: PipeId(
                         u64::try_from(position)
                             .unwrap_or(u64::MAX)
                             .saturating_add(1),
                     ),
-                    stages,
+                    plan,
+                    stage,
                 }
             })
             .collect();
-        Self { pipelines }
+        let logger = plan.logger.map(|command| SharedLoggerRuntime {
+            pipe: PipeId(
+                u64::try_from(logger_position)
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(1),
+            ),
+            stage: LoggerStageStatus {
+                stage: LoggerStage::External(command),
+                generation: 0,
+                state: SupervisorState::Down,
+            },
+        });
+        Self {
+            local_files,
+            logger,
+        }
     }
 
-    /// Stable pipe identity for an output stream.
+    /// Stable service-input pipe identity for an output stream.
     #[must_use]
     pub fn pipe(&self, stream: OutputStream) -> Option<PipeId> {
-        self.pipelines
+        self.local_files
             .iter()
-            .find(|pipeline| pipeline.plan.stream == stream)
-            .map(|pipeline| pipeline.pipe)
+            .find(|route| route_matches_stream(route.plan.stream, stream))
+            .map(|route| route.pipe)
+            .or_else(|| self.logger.as_ref().map(|logger| logger.pipe))
     }
 
-    /// Replace one logger generation/state without replacing its pipe.
+    /// Stable shared pipe feeding the one external logger.
+    #[must_use]
+    pub fn logger_pipe(&self) -> Option<PipeId> {
+        self.logger.as_ref().map(|logger| logger.pipe)
+    }
+
+    /// Replace one file-adapter generation/state without replacing its pipe.
     ///
     /// # Errors
     ///
-    /// Returns an error for an unknown stream or stage index.
+    /// Returns an error for an unknown stream or a nonzero stage index.
     pub fn update_stage(
         &mut self,
         stream: OutputStream,
@@ -220,40 +251,78 @@ impl LoggingRuntime {
         generation: u64,
         lifecycle_state: SupervisorState,
     ) -> Result<(), LoggingError> {
-        let pipeline = self
-            .pipelines
+        if stage_index != 0 {
+            return Err(LoggingError::UnknownStage);
+        }
+        let route = self
+            .local_files
             .iter_mut()
-            .find(|pipeline| pipeline.plan.stream == stream)
+            .find(|route| route_matches_stream(route.plan.stream, stream))
             .ok_or(LoggingError::UnknownPipeline)?;
-        let stage_status = pipeline
-            .stages
-            .get_mut(stage_index)
-            .ok_or(LoggingError::UnknownStage)?;
-        stage_status.generation = generation;
-        stage_status.state = lifecycle_state;
+        route.stage.generation = generation;
+        route.stage.state = lifecycle_state;
         Ok(())
     }
 
-    /// Aggregate health for one pipeline.
-    #[must_use]
-    pub fn health(&self, stream: OutputStream) -> Option<PipelineHealth> {
-        self.pipelines
-            .iter()
-            .find(|pipeline| pipeline.plan.stream == stream)
-            .map(|pipeline| summarize_health(&pipeline.stages))
+    /// Replace the shared external logger state without replacing its pipe.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no external logger is configured.
+    pub fn update_logger(
+        &mut self,
+        generation: u64,
+        lifecycle_state: SupervisorState,
+    ) -> Result<(), LoggingError> {
+        let logger = self
+            .logger
+            .as_mut()
+            .ok_or(LoggingError::UnknownExternalLogger)?;
+        logger.stage.generation = generation;
+        logger.stage.state = lifecycle_state;
+        Ok(())
     }
 
-    /// Immutable stage statuses for status publication.
+    /// Aggregate health for one stream's local route and shared logger.
     #[must_use]
-    pub fn stages(&self, stream: OutputStream) -> Option<&[LoggerStageStatus]> {
-        self.pipelines
+    pub fn health(&self, stream: OutputStream) -> Option<PipelineHealth> {
+        let local = self
+            .local_files
             .iter()
-            .find(|pipeline| pipeline.plan.stream == stream)
-            .map(|pipeline| pipeline.stages.as_slice())
+            .find(|route| route_matches_stream(route.plan.stream, stream))
+            .map(|route| &route.stage);
+        let logger = self.logger.as_ref().map(|logger| &logger.stage);
+        let stages: Vec<&LoggerStageStatus> = local.into_iter().chain(logger).collect();
+        (!stages.is_empty()).then(|| summarize_health(&stages))
+    }
+
+    /// Immutable stage statuses affecting one stream.
+    #[must_use]
+    pub fn stages(&self, stream: OutputStream) -> Vec<&LoggerStageStatus> {
+        let local = self
+            .local_files
+            .iter()
+            .find(|route| route_matches_stream(route.plan.stream, stream))
+            .map(|route| &route.stage);
+        local
+            .into_iter()
+            .chain(self.logger.as_ref().map(|logger| &logger.stage))
+            .collect()
     }
 }
 
-fn summarize_health(stages: &[LoggerStageStatus]) -> PipelineHealth {
+fn route_matches_stream(route: OutputStream, stream: OutputStream) -> bool {
+    route == stream
+        || matches!(
+            (route, stream),
+            (
+                OutputStream::Combined,
+                OutputStream::Stdout | OutputStream::Stderr
+            )
+        )
+}
+
+fn summarize_health(stages: &[&LoggerStageStatus]) -> PipelineHealth {
     if stages
         .iter()
         .any(|stage| matches!(stage.state, SupervisorState::Failed(_)))
@@ -379,12 +448,14 @@ impl LoggingShutdown {
 pub enum LoggingError {
     /// External logger argv has no executable.
     EmptyExternalCommand,
-    /// Combined stderr conflicts with an explicit stderr chain.
-    CombinedWithStderrRoute,
+    /// Selected local-file routing has no stream.
+    EmptyFileSelection,
     /// Runtime stream does not have a pipeline.
     UnknownPipeline,
     /// Pipeline stage index does not exist.
     UnknownStage,
+    /// Runtime has no shared external logger.
+    UnknownExternalLogger,
     /// Shutdown event arrived out of order.
     InvalidShutdownTransition,
     /// Archive count cannot fit the target platform.
@@ -395,11 +466,10 @@ impl Display for LoggingError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyExternalCommand => formatter.write_str("external logger command is empty"),
-            Self::CombinedWithStderrRoute => {
-                formatter.write_str("combined stderr conflicts with explicit stderr logging")
-            }
+            Self::EmptyFileSelection => formatter.write_str("local log selection is empty"),
             Self::UnknownPipeline => formatter.write_str("unknown logging pipeline"),
             Self::UnknownStage => formatter.write_str("unknown logger stage"),
+            Self::UnknownExternalLogger => formatter.write_str("external logger is not configured"),
             Self::InvalidShutdownTransition => {
                 formatter.write_str("invalid logging shutdown transition")
             }
@@ -441,7 +511,7 @@ impl RotationPolicy {
                 .map(usize::try_from)
                 .transpose()
                 .map_err(|_| LoggingError::RetentionCountTooLarge)?,
-            max_total_bytes: config.max_total_bytes,
+            max_total_bytes: None,
         })
     }
 }
@@ -702,8 +772,8 @@ mod tests {
     };
 
     use super::{
-        BackpressurePolicy, LoggerStage, LoggingPlan, LoggingRuntime, LoggingShutdown,
-        LoggingShutdownEffect, OutputStream, PipelineHealth, RotatingFile, RotationPolicy,
+        BackpressurePolicy, LoggingPlan, LoggingRuntime, LoggingShutdown, LoggingShutdownEffect,
+        OutputStream, PipelineHealth, RotatingFile, RotationPolicy,
     };
     use crate::config::parse_str;
     use crate::supervisor::{FailureReason, Generation, SupervisorState};
@@ -735,40 +805,70 @@ mod tests {
     }
 
     #[test]
-    fn file_and_logger_become_one_combined_process_chain() -> Result<(), Box<dyn Error>> {
+    fn file_and_logger_normalize_to_combined_route_and_shared_sink() -> Result<(), Box<dyn Error>> {
         let config = parse_str(
-            "version: 2\ncommand: [/bin/true]\nlogging:\n  combine_stderr: true\n  stdout:\n    file:\n      file: /tmp/out.log\n    logger: [/usr/bin/logger, -t, service]\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/out.log\nlogger: [/usr/bin/logger, -t, service]\n",
         )?;
         let plan = LoggingPlan::from_config(&config.logging)?;
-        assert_eq!(plan.pipelines.len(), 1);
-        let pipeline = plan.pipelines.first().ok_or("pipeline missing")?;
-        assert_eq!(pipeline.stream, OutputStream::Combined);
-        assert_eq!(pipeline.backpressure, BackpressurePolicy::LosslessBlock);
-        assert!(matches!(
-            pipeline.stages.first(),
-            Some(LoggerStage::FileAdapter(_))
-        ));
-        assert!(matches!(
-            pipeline.stages.get(1),
-            Some(LoggerStage::External(_))
-        ));
+        assert_eq!(plan.local_files.len(), 1);
+        let route = plan.local_files.first().ok_or("file route missing")?;
+        assert_eq!(route.stream, OutputStream::Combined);
+        assert_eq!(route.backpressure, BackpressurePolicy::LosslessBlock);
+        assert_eq!(
+            plan.logger,
+            Some(vec![
+                "/usr/bin/logger".to_owned(),
+                "-t".to_owned(),
+                "service".to_owned()
+            ])
+        );
         Ok(())
     }
 
     #[test]
-    fn explicit_stderr_creates_independent_pipeline() -> Result<(), Box<dyn Error>> {
+    fn explicit_streams_create_independent_local_routes() -> Result<(), Box<dyn Error>> {
         let config = parse_str(
-            "version: 2\ncommand: [/bin/true]\nlogging:\n  stdout:\n    file:\n      file: /tmp/out.log\n  stderr:\n    file:\n      file: /tmp/err.log\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  stdout:\n    file: /tmp/out.log\n  stderr:\n    file: /tmp/err.log\n",
         )?;
         let plan = LoggingPlan::from_config(&config.logging)?;
-        assert_eq!(plan.pipelines.len(), 2);
+        assert_eq!(plan.local_files.len(), 2);
         assert_eq!(
-            plan.pipelines.first().map(|value| value.stream),
+            plan.local_files.first().map(|value| value.stream),
             Some(OutputStream::Stdout)
         );
         assert_eq!(
-            plan.pipelines.get(1).map(|value| value.stream),
+            plan.local_files.get(1).map(|value| value.stream),
             Some(OutputStream::Stderr)
+        );
+        assert_eq!(plan.logger, None);
+        Ok(())
+    }
+
+    #[test]
+    fn combined_route_covers_both_child_streams() -> Result<(), Box<dyn Error>> {
+        let config = parse_str("version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/out.log\n")?;
+        let mut runtime = LoggingRuntime::new(LoggingPlan::from_config(&config.logging)?);
+        let combined = runtime
+            .pipe(OutputStream::Combined)
+            .ok_or("combined pipe missing")?;
+        assert_eq!(runtime.pipe(OutputStream::Stdout), Some(combined));
+        assert_eq!(runtime.pipe(OutputStream::Stderr), Some(combined));
+        assert_eq!(runtime.stages(OutputStream::Stdout).len(), 1);
+        assert_eq!(runtime.stages(OutputStream::Stderr).len(), 1);
+
+        runtime.update_stage(
+            OutputStream::Stdout,
+            0,
+            1,
+            SupervisorState::Ready(Generation::FIRST),
+        )?;
+        assert_eq!(
+            runtime.health(OutputStream::Stdout),
+            Some(PipelineHealth::Ready)
+        );
+        assert_eq!(
+            runtime.health(OutputStream::Stderr),
+            Some(PipelineHealth::Ready)
         );
         Ok(())
     }
@@ -776,10 +876,11 @@ mod tests {
     #[test]
     fn logger_restart_preserves_pipe_and_reports_health() -> Result<(), Box<dyn Error>> {
         let config = parse_str(
-            "version: 2\ncommand: [/bin/true]\nlogging:\n  combine_stderr: true\n  stdout:\n    file:\n      file: /tmp/out.log\n    logger: [/usr/bin/logger, -t, service]\n",
+            "version: 2\ncommand: [/bin/true]\nlog:\n  file: /tmp/out.log\nlogger: [/usr/bin/logger, -t, service]\n",
         )?;
         let mut runtime = LoggingRuntime::new(LoggingPlan::from_config(&config.logging)?);
         let pipe = runtime.pipe(OutputStream::Combined).ok_or("pipe missing")?;
+        let logger_pipe = runtime.logger_pipe().ok_or("logger pipe missing")?;
         assert_eq!(
             runtime.health(OutputStream::Combined),
             Some(PipelineHealth::Starting)
@@ -791,19 +892,12 @@ mod tests {
             1,
             SupervisorState::Ready(Generation::FIRST),
         )?;
-        runtime.update_stage(
-            OutputStream::Combined,
-            1,
-            1,
-            SupervisorState::Ready(Generation::FIRST),
-        )?;
+        runtime.update_logger(1, SupervisorState::Ready(Generation::FIRST))?;
         assert_eq!(
             runtime.health(OutputStream::Combined),
             Some(PipelineHealth::Ready)
         );
-        runtime.update_stage(
-            OutputStream::Combined,
-            1,
+        runtime.update_logger(
             2,
             SupervisorState::Backoff {
                 generation: Generation::FIRST,
@@ -811,16 +905,12 @@ mod tests {
             },
         )?;
         assert_eq!(runtime.pipe(OutputStream::Combined), Some(pipe));
+        assert_eq!(runtime.logger_pipe(), Some(logger_pipe));
         assert_eq!(
             runtime.health(OutputStream::Combined),
             Some(PipelineHealth::Backoff)
         );
-        runtime.update_stage(
-            OutputStream::Combined,
-            1,
-            2,
-            SupervisorState::Failed(FailureReason::RetryLimit),
-        )?;
+        runtime.update_logger(2, SupervisorState::Failed(FailureReason::RetryLimit))?;
         assert_eq!(
             runtime.health(OutputStream::Combined),
             Some(PipelineHealth::Failed)

@@ -21,13 +21,13 @@ use crate::config::{EnvironmentMode, ServiceConfig};
 mod broker;
 mod broker_protocol;
 
+pub(crate) use broker::{
+    BrokerFileRoute, BrokerLoggerId, BrokerLoggingPlan, start_process_broker_with_logging,
+};
 pub use broker::{
     BrokerLifetimePlan, BrokerSignalScope, BrokerTaskId, ProcessBrokerClient,
     ProcessBrokerEndpoint, ProcessBrokerError, ProcessBrokerEvent, ReadinessFailure,
     start_process_broker, start_process_broker_with_lifetime,
-};
-pub(crate) use broker::{
-    BrokerLoggerId, BrokerLoggerPipeline, BrokerLoggingPlan, start_process_broker_with_logging,
 };
 
 /// Stable stage in the checked daemon startup sequence.

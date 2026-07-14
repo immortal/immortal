@@ -53,7 +53,7 @@ contracts which were deliberately replaced.
 | `require` | `requires` plus readiness | Dependencies are validated as a graph and gate on Ready. |
 | `require_cmd` | `start_condition` | Use exact argv, a deadline, and independent backoff instead of an implicit unbounded shell command. |
 | `post_exit` | `post_exit` command hook | Use exact argv and a deadline; read result context from the documented environment. |
-| `log`, `stderr`, `logger` | structured `logging` routes | Rotation sizes are bytes; file adapters and external loggers are supervised processes. |
+| `log`, `stderr`, `logger` | `log` plus `logger` | `log` retains local files; one top-level logger argv receives both streams. |
 | `pid.parent`, `pid.child` | `pid_files.supervisor`, `pid_files.main` | These files are atomic observation output, never process identity. |
 | `pid.follow` | foreground or descriptor tracking | There is intentionally no PID-adoption translation. |
 
@@ -102,20 +102,51 @@ restart:
   policy: always
   limits:
     max_retries: 3
-logging:
-  combine_stderr: true
-  stdout:
-    file:
-      file: /var/log/api.log
-      max_age_seconds: 86400
-      keep: 7
-      max_bytes: 1048576
+log:
+  file: /var/log/api.log
+  age: 1d
+  keep: 7
+  size: 1MiB
 ```
 
 `immortal --check-config` validates and emits canonical v2 only; it does not
-guess at legacy intent or modify its input. It accepts `env` as an alias but
-emits `environment`. Review each rewritten definition before placing it in the
-candidate directory.
+guess at an unversioned definition or modify its input. It accepts `env` as an
+alias but emits `environment`. For an incremental logging migration inside a
+strict `version: 2` document, `num` is a deprecated alias for `keep`, bare `age`
+values mean seconds, bare `size` values mean MiB, and top-level `stderr` is a
+deprecated alias for a selected stderr file:
+
+```yaml
+version: 2
+command: [/usr/local/bin/api, --foreground]
+log:
+  file: /var/log/api.log
+  age: 86400
+  num: 7
+  size: 1
+stderr:
+  file: /var/log/api.err
+```
+
+The canonical output makes the split and units explicit:
+
+```yaml
+version: 2
+command: [/usr/local/bin/api, --foreground]
+log:
+  stdout:
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 1MiB
+  stderr:
+    file: /var/log/api.err
+```
+
+Use `logger: [/usr/bin/logger, -t, api]` independently or alongside `log`.
+Unlike nested local routes, the single logger always receives both stdout and
+stderr. Review each rewritten definition before placing it in the candidate
+directory.
 
 The direct-command CLI accepts `-e DIR` and `--env-dir DIR`. It snapshots each
 regular file's first line before daemonization, applies those values after the
@@ -123,16 +154,23 @@ inherited environment, and fails on unreadable, changing, malformed, or
 unbounded regular input. The option cannot be combined with `--config`; use the
 v2 environment map in definitions.
 
-The Rust CLI does not accept the historical direct-command `--follow-pid`,
-`--log-file`, or `--logger` flags. Express logging policy in the v2 definition.
-The historical `-name service` form becomes `-n service` or `--name service`;
-the exact `-name` token is rejected rather than being misread as `-n ame`. The
-old `-n` foreground shorthand becomes `-f` or `--foreground`. A direct command
-requires either that name or an exact `--control-dir`:
+The Rust CLI accepts `-l FILE`/`--logfile FILE` for a combined local file and
+long-only `--logger PROGRAM [ARGUMENTS]... -- SERVICE [ARGUMENTS]...` for one
+exact external logger argv. They may coexist, preserve the Go logfile defaults
+of 1 MiB and seven archives, and conflict with `--config`:
 
 ```sh
-immortal -f -n api /usr/local/bin/api --foreground
+immortal -f -n api \
+  --logfile /var/log/api.log \
+  --logger /usr/bin/logger -t api \
+  -- /usr/local/bin/api --foreground
 ```
+
+The historical `--log-file`, `-logger`, and `--follow-pid` spellings remain
+rejected. The historical `-name service` form becomes `-n service` or
+`--name service`; the exact `-name` token is rejected rather than being misread
+as `-n ame`. The old `-n` foreground shorthand becomes `-f` or `--foreground`.
+A direct command requires either that name or an exact `--control-dir`.
 
 Without `--control-dir`, config filenames provide the service identity
 (`api.yml` becomes `api`) and named direct commands use the supplied name.

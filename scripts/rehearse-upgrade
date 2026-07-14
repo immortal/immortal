@@ -11,7 +11,7 @@ fi
 
 plan=$(cargo run --quiet --locked -p immortaldir -- \
     --once --dry-run examples/services)
-expected=$(printf 'START\tsleep')
+expected=$(printf 'START\tsleep\nSTART\tsleep-2')
 if [ "$plan" != "$expected" ]; then
     echo "unexpected example reconciliation plan: $plan" >&2
     exit 1

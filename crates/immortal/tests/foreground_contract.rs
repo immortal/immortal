@@ -359,10 +359,94 @@ fn main() -> Result<(), Box<dyn Error>> {
         ExitClass::Success,
         "graceful supervisor SIGINT",
     )?;
+    prove_direct_logfile_and_logger_receive_both_streams(binary)?;
     prove_logger_exec_permission_denial(binary)?;
     prove_lossless_pipe_backpressure(binary)?;
     prove_logger_drain_timeout_escalates(binary)?;
     prove_unsafe_user_runtime_root_is_rejected(binary)?;
+    Ok(())
+}
+
+fn prove_direct_logfile_and_logger_receive_both_streams(
+    binary: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let logfile = MarkerFile::new("direct-logfile");
+    let logger_output = MarkerFile::new("direct-logger");
+    let service_ready = MarkerFile::new("direct-logging-ready");
+    let logger_script = format!("cat > '{}'", logger_output.path_str()?);
+    let service_script = format!(
+        "printf 'direct-stdout\\n'; printf 'direct-stderr\\n' >&2; : > '{}'; exec /bin/sleep 30",
+        service_ready.path_str()?
+    );
+    let supervisor = ChildGuard::new(spawn_immortal(
+        binary,
+        [
+            "--foreground",
+            "--name",
+            "direct-logging",
+            "--logfile",
+            logfile.path_str()?,
+            "--logger",
+            "/bin/sh",
+            "-c",
+            &logger_script,
+            "--",
+            "/bin/sh",
+            "-c",
+            &service_script,
+        ],
+    )?);
+    service_ready.wait(COMMAND_TIMEOUT)?;
+    let socket = TemporaryDirectory::test_home_path()
+        .join(".immortal")
+        .join("direct-logging")
+        .join(CONTROL_SOCKET_NAME);
+    let status = control_request(
+        &socket,
+        &Request {
+            operation: Operation::Status,
+            service: "direct-logging".to_owned(),
+            expected_generation: GenerationMatch::Any,
+            scope: SignalScope::Main,
+            signal: None,
+        },
+    )?;
+    let generation = status
+        .generation
+        .ok_or("direct logging status omitted the live generation")?;
+    let halt = control_request(
+        &socket,
+        &Request {
+            operation: Operation::Halt,
+            service: "direct-logging".to_owned(),
+            expected_generation: GenerationMatch::Exact(generation),
+            scope: SignalScope::Main,
+            signal: None,
+        },
+    )?;
+    if halt.code != ResponseCode::Ok {
+        return Err(format!("direct logging halt failed: {}", halt.message).into());
+    }
+    assert_status(
+        supervisor.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "direct logfile and logger",
+    )?;
+    let logfile_actual = fs::read_to_string(&logfile.0)?;
+    let logger_actual = fs::read_to_string(&logger_output.0)?;
+    let mut logfile_lines: Vec<&str> = logfile_actual.lines().collect();
+    let mut logger_lines: Vec<&str> = logger_actual.lines().collect();
+    logfile_lines.sort_unstable();
+    logger_lines.sort_unstable();
+    if logfile_lines != ["direct-stderr", "direct-stdout"]
+        || logger_lines != ["direct-stderr", "direct-stdout"]
+    {
+        return Err(format!(
+            "direct logging lost or duplicated output: file={logfile_actual:?}, \
+             logger={logger_actual:?}"
+        )
+        .into());
+    }
     Ok(())
 }
 
@@ -452,7 +536,7 @@ fn prove_logger_exec_permission_denial(binary: &Path) -> Result<(), Box<dyn Erro
     let config = ConfigFile::new(
         "logger-permission",
         &format!(
-            "version: 2\ncommand: [/bin/sh, -c, ': > \"$SERVICE_MARKER\"']\nenvironment:\n  SERVICE_MARKER: '{}'\nlogging:\n  combine_stderr: true\n  restart:\n    max_retries: 0\n  stdout:\n    logger: ['{}']\nrestart:\n  policy: never\n  exit_when_done: true\n",
+            "version: 2\ncommand: [/bin/sh, -c, ': > \"$SERVICE_MARKER\"']\nenvironment:\n  SERVICE_MARKER: '{}'\nlogger: ['{}']\nlogger_restart:\n  max_retries: 0\nrestart:\n  policy: never\n  exit_when_done: true\n",
             service.path_str()?,
             logger.path_str()?
         ),
@@ -487,7 +571,7 @@ fn prove_lossless_pipe_backpressure(binary: &Path) -> Result<(), Box<dyn Error>>
     let config = ConfigFile::new(
         "logger-backpressure",
         &format!(
-            "version: 2\ncommand: [/bin/sh, -c, ': > \"$WRITING\"; dd if=/dev/zero bs=1048576 count=16 2>/dev/null; : > \"$FINISHED\"']\nenvironment:\n  WRITING: '{}'\n  CONSUMING: '{}'\n  FINISHED: '{}'\n  OUTPUT: '{}'\nlogging:\n  combine_stderr: true\n  stdout:\n    logger: [/bin/sh, -c, 'while [ ! -e \"$WRITING\" ]; do sleep 0.01; done; sleep 1; : > \"$CONSUMING\"; cat > \"$OUTPUT\"']\nrestart:\n  policy: never\n  exit_when_done: true\n",
+            "version: 2\ncommand: [/bin/sh, -c, ': > \"$WRITING\"; dd if=/dev/zero bs=1048576 count=16 2>/dev/null; : > \"$FINISHED\"']\nenvironment:\n  WRITING: '{}'\n  CONSUMING: '{}'\n  FINISHED: '{}'\n  OUTPUT: '{}'\nlogger: [/bin/sh, -c, 'while [ ! -e \"$WRITING\" ]; do sleep 0.01; done; sleep 1; : > \"$CONSUMING\"; cat > \"$OUTPUT\"']\nrestart:\n  policy: never\n  exit_when_done: true\n",
             writing.path_str()?,
             consuming.path_str()?,
             finished.path_str()?,
@@ -519,7 +603,7 @@ fn prove_logger_drain_timeout_escalates(binary: &Path) -> Result<(), Box<dyn Err
     let config = ConfigFile::new(
         "logger-drain-timeout",
         &format!(
-            "version: 2\ncommand: [/bin/sh, -c, 'printf drain-timeout']\nenvironment:\n  TERM_MARKER: '{}'\nlogging:\n  combine_stderr: true\n  stdout:\n    logger: [/bin/sh, -c, 'trap \": > \\\"$TERM_MARKER\\\"\" TERM; cat >/dev/null; while :; do sleep 30; done']\nrestart:\n  policy: never\n  exit_when_done: true\n",
+            "version: 2\ncommand: [/bin/sh, -c, 'printf drain-timeout']\nenvironment:\n  TERM_MARKER: '{}'\nlogger: [/bin/sh, -c, 'trap \": > \\\"$TERM_MARKER\\\"\" TERM; cat >/dev/null; while :; do sleep 30; done']\nrestart:\n  policy: never\n  exit_when_done: true\n",
             terminated.path_str()?
         ),
     )?;

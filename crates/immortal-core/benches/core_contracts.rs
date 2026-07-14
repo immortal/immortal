@@ -37,10 +37,7 @@ restart:
 readiness:
   mode: notify-fd
   timeout_seconds: 30
-logging:
-  combine_stderr: true
-  stdout:
-    logger: [/usr/bin/logger, -t, api]
+logger: [/usr/bin/logger, -t, api]
 ";
 
 fn main() -> Result<(), Box<dyn Error>> {

@@ -8,6 +8,10 @@
 //! socket and keeps it until asynchronous logger stages are ready. Every exit
 //! path drains or terminates owned logger groups, shuts down the broker, and
 //! reaps it before returning; no task or PID is detached implicitly.
+//! The one shared external logger starts before local file adapters. Shutdown
+//! reverses data ownership rather than process order: adapters drain and lose
+//! their shared-pipe writers before the external logger receives EOF and its own
+//! bounded escalation interval.
 //! Descriptor tracking keeps logical lifetime separate from launcher identity:
 //! stop/reload hooks remain serialized here while descriptor ownership and
 //! supervisor-loss fallback remain inside the broker.
@@ -32,21 +36,21 @@ use tokio::{
 
 use crate::{
     config::{
-        LoggerRestartConfig, ProcessMode, ReadinessMode, RestartPolicy, ServiceConfig,
-        StartConditionConfig,
+        FileLogConfig, LoggerRestartConfig, ProcessMode, ReadinessMode, RestartPolicy,
+        ServiceConfig, StartConditionConfig,
     },
     control::{
         ControlCommand, ControlEffect, ControlListener, DEFAULT_MAX_CONTROL_CLIENTS, Operation,
         Response, ResponseCode, Signal, SignalScope, StopCompletion, decide_request,
         run_control_server,
     },
-    logging::{LoggerStage, LoggingPlan},
+    logging::LoggingPlan,
     pid_file::OwnedPidFile,
     process::{
-        BrokerLifetimePlan, BrokerLoggerId, BrokerLoggerPipeline, BrokerLoggingPlan,
-        BrokerSignalScope, BrokerTaskId, ChildEvent, DaemonError, DaemonStartup, Daemonized,
-        ProcessBrokerClient, ProcessBrokerError, ProcessBrokerEvent, ProcessCommand,
-        ProcessGroupId, ProcessId, ProcessSignal, SignalTarget, daemonize, reap_any_event, signal,
+        BrokerFileRoute, BrokerLifetimePlan, BrokerLoggerId, BrokerLoggingPlan, BrokerSignalScope,
+        BrokerTaskId, ChildEvent, DaemonError, DaemonStartup, Daemonized, ProcessBrokerClient,
+        ProcessBrokerError, ProcessBrokerEvent, ProcessCommand, ProcessGroupId, ProcessId,
+        ProcessSignal, SignalTarget, daemonize, reap_any_event, signal,
         start_process_broker_with_logging, wait_for_event,
     },
     runtime::RuntimeOwner,
@@ -389,36 +393,45 @@ fn prepare_logging(
 ) -> Result<(BrokerLoggingPlan, Vec<BrokerLoggerId>), ExecutorError> {
     let plan = LoggingPlan::from_config(&config.logging)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    if plan.pipelines.is_empty() {
+    if plan.local_files.is_empty() && plan.logger.is_none() {
         return Ok((BrokerLoggingPlan::default(), Vec::new()));
     }
-    let adapter = logger_adapter_program(config.logging.file_adapter.as_deref())?;
-    let mut pipelines = Vec::with_capacity(plan.pipelines.len());
+    let adapter = if plan.local_files.is_empty() {
+        None
+    } else {
+        Some(logger_adapter_program(
+            config.logging.file_adapter.as_deref(),
+        )?)
+    };
+    let has_logger = plan.logger.is_some();
+    let logger = plan
+        .logger
+        .map(|command| ProcessCommand::from_lifecycle(&command, service))
+        .transpose()?;
+    let mut local_files = Vec::with_capacity(plan.local_files.len());
     let mut loggers = Vec::new();
-    for (pipeline_index, pipeline) in plan.pipelines.into_iter().enumerate() {
-        let pipeline_id = u16::try_from(pipeline_index)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many log pipelines"))?;
-        let stage_count = pipeline.stages.len();
-        let mut stages = Vec::with_capacity(stage_count);
-        for (stage_index, stage) in pipeline.stages.into_iter().enumerate() {
-            let stage_id = u16::try_from(stage_index).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidInput, "too many logger stages")
-            })?;
-            let has_downstream = stage_index.saturating_add(1) < stage_count;
-            stages.push(prepare_logger_command(
-                stage,
-                has_downstream,
-                &adapter,
-                service,
-            )?);
-            loggers.push(BrokerLoggerId::new(pipeline_id, stage_id));
-        }
-        pipelines.push(BrokerLoggerPipeline {
-            stream: pipeline.stream,
-            stages,
-        });
+    if logger.is_some() {
+        loggers.push(BrokerLoggerId::shared_logger());
     }
-    Ok((BrokerLoggingPlan { pipelines }, loggers))
+    for (route_index, route) in plan.local_files.into_iter().enumerate() {
+        let route_id = u16::try_from(route_index)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many log routes"))?;
+        let adapter = adapter
+            .as_ref()
+            .ok_or_else(|| io::Error::other("file adapter program is absent"))?;
+        local_files.push(BrokerFileRoute {
+            stream: route.stream,
+            command: prepare_file_adapter(route.file, has_logger, adapter, service)?,
+        });
+        loggers.push(BrokerLoggerId::new(route_id, 0));
+    }
+    Ok((
+        BrokerLoggingPlan {
+            local_files,
+            logger,
+        },
+        loggers,
+    ))
 }
 
 fn logger_adapter_program(configured: Option<&Path>) -> io::Result<OsString> {
@@ -435,36 +448,24 @@ fn logger_adapter_program(configured: Option<&Path>) -> io::Result<OsString> {
     Ok(directory.join("immortallog").into_os_string())
 }
 
-fn prepare_logger_command(
-    stage: LoggerStage,
+fn prepare_file_adapter(
+    config: FileLogConfig,
     has_downstream: bool,
     adapter: &OsString,
     service: &ProcessCommand,
 ) -> io::Result<ProcessCommand> {
-    match stage {
-        LoggerStage::External(command) => ProcessCommand::from_lifecycle(&command, service),
-        LoggerStage::FileAdapter(config) => {
-            let destination = config.file.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "file logger has no destination",
-                )
-            })?;
-            let mut arguments = Vec::new();
-            push_logger_limit(&mut arguments, "--max-age", config.max_age_seconds);
-            push_logger_limit(&mut arguments, "--keep", config.keep.map(u64::from));
-            push_logger_limit(&mut arguments, "--max-bytes", config.max_bytes);
-            push_logger_limit(&mut arguments, "--max-total-bytes", config.max_total_bytes);
-            if config.timestamp {
-                arguments.push(OsString::from("--timestamp"));
-            }
-            if has_downstream {
-                arguments.push(OsString::from("--passthrough"));
-            }
-            arguments.push(destination.into_os_string());
-            ProcessCommand::from_lifecycle_os(adapter, arguments, service)
-        }
+    let mut arguments = Vec::new();
+    push_logger_limit(&mut arguments, "--max-age", config.max_age_seconds);
+    push_logger_limit(&mut arguments, "--keep", config.keep.map(u64::from));
+    push_logger_limit(&mut arguments, "--max-bytes", config.max_bytes);
+    if config.timestamp {
+        arguments.push(OsString::from("--timestamp"));
     }
+    if has_downstream {
+        arguments.push(OsString::from("--passthrough"));
+    }
+    arguments.push(config.file.into_os_string());
+    ProcessCommand::from_lifecycle_os(adapter, arguments, service)
 }
 
 fn push_logger_limit(arguments: &mut Vec<OsString>, option: &str, value: Option<u64>) {
@@ -809,17 +810,59 @@ async fn advance_logger_shutdown(
             deadline: TokioInstant::now() + BROKER_EVENT_TIMEOUT,
         };
     }
-    if matches!(
-        execution.logger_shutdown,
-        LoggerShutdownState::Draining { .. } | LoggerShutdownState::Terminating { .. }
-    ) && execution
-        .loggers
-        .iter()
-        .all(|logger| matches!(logger.state, LoggerExecutionState::Down))
-    {
-        execution.logger_shutdown = LoggerShutdownState::Complete;
-    }
+    advance_logger_shutdown_tier(execution);
     Ok(execution.logger_shutdown == LoggerShutdownState::Complete)
+}
+
+fn advance_logger_shutdown_tier(execution: &mut ExecutionContext) {
+    let tier = match execution.logger_shutdown {
+        LoggerShutdownState::Draining { tier, .. }
+        | LoggerShutdownState::Terminating { tier, .. } => tier,
+        LoggerShutdownState::Running
+        | LoggerShutdownState::Preparing { .. }
+        | LoggerShutdownState::ClosingInputs { .. }
+        | LoggerShutdownState::Complete => return,
+    };
+    match next_logger_shutdown_tier(&execution.loggers, tier) {
+        Some(next) if next == tier => {}
+        Some(next) => {
+            execution.logger_shutdown = LoggerShutdownState::Draining {
+                deadline: TokioInstant::now() + LOGGER_DRAIN_GRACE,
+                tier: next,
+            };
+        }
+        None => execution.logger_shutdown = LoggerShutdownState::Complete,
+    }
+}
+
+fn next_logger_shutdown_tier(
+    loggers: &[LoggerExecution],
+    tier: LoggerShutdownTier,
+) -> Option<LoggerShutdownTier> {
+    if !logger_tier_is_down(loggers, tier) {
+        return Some(tier);
+    }
+    if tier == LoggerShutdownTier::FileAdapters
+        && !logger_tier_is_down(loggers, LoggerShutdownTier::SharedLogger)
+    {
+        return Some(LoggerShutdownTier::SharedLogger);
+    }
+    None
+}
+
+fn logger_tier_is_down(loggers: &[LoggerExecution], tier: LoggerShutdownTier) -> bool {
+    loggers
+        .iter()
+        .filter(|logger| logger_shutdown_tier(logger.logger) == tier)
+        .all(|logger| matches!(logger.state, LoggerExecutionState::Down))
+}
+
+fn logger_shutdown_tier(logger: BrokerLoggerId) -> LoggerShutdownTier {
+    if logger.is_shared_logger() {
+        LoggerShutdownTier::SharedLogger
+    } else {
+        LoggerShutdownTier::FileAdapters
+    }
 }
 
 fn advance_childless_state(
@@ -996,6 +1039,12 @@ impl DescriptorExecution {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoggerShutdownTier {
+    FileAdapters,
+    SharedLogger,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LoggerShutdownState {
     Running,
     Preparing {
@@ -1006,10 +1055,12 @@ enum LoggerShutdownState {
     },
     Draining {
         deadline: TokioInstant,
+        tier: LoggerShutdownTier,
     },
     Terminating {
         deadline: TokioInstant,
         kill_sent: bool,
+        tier: LoggerShutdownTier,
     },
     Complete,
 }
@@ -1019,7 +1070,7 @@ impl LoggerShutdownState {
         match self {
             Self::Preparing { deadline }
             | Self::ClosingInputs { deadline }
-            | Self::Draining { deadline }
+            | Self::Draining { deadline, .. }
             | Self::Terminating { deadline, .. } => Some(deadline),
             Self::Running | Self::Complete => None,
         }
@@ -1360,28 +1411,32 @@ async fn handle_due_logger_timers(
         LoggerShutdownState::ClosingInputs { deadline } if deadline <= now => {
             return Err(ExecutorError::BrokerTimedOut("closing logger inputs"));
         }
-        LoggerShutdownState::Draining { deadline } if deadline <= now => {
-            signal_loggers(client, execution, ProcessSignal::Terminate).await?;
+        LoggerShutdownState::Draining { deadline, tier } if deadline <= now => {
+            signal_logger_tier(client, execution, tier, ProcessSignal::Terminate).await?;
             execution.logger_shutdown = LoggerShutdownState::Terminating {
                 deadline: now + LOGGER_STOP_GRACE,
                 kill_sent: false,
+                tier,
             };
             return Ok(());
         }
         LoggerShutdownState::Terminating {
             deadline,
             kill_sent: false,
+            tier,
         } if deadline <= now => {
-            signal_loggers(client, execution, ProcessSignal::Kill).await?;
+            signal_logger_tier(client, execution, tier, ProcessSignal::Kill).await?;
             execution.logger_shutdown = LoggerShutdownState::Terminating {
                 deadline: now + BROKER_EVENT_TIMEOUT,
                 kill_sent: true,
+                tier,
             };
             return Ok(());
         }
         LoggerShutdownState::Terminating {
             deadline,
             kill_sent: true,
+            ..
         } if deadline <= now => {
             return Err(ExecutorError::BrokerTimedOut("logger termination"));
         }
@@ -1423,13 +1478,18 @@ async fn handle_due_logger_timers(
     start_down_loggers(client, execution).await
 }
 
-async fn signal_loggers(
+async fn signal_logger_tier(
     client: &mut ProcessBrokerClient,
     execution: &mut ExecutionContext,
+    tier: LoggerShutdownTier,
     signal: ProcessSignal,
 ) -> Result<(), ExecutorError> {
     let deadline = TokioInstant::now() + BROKER_EVENT_TIMEOUT;
-    for logger in execution.loggers.iter_mut().rev() {
+    for logger in execution
+        .loggers
+        .iter_mut()
+        .filter(|logger| logger_shutdown_tier(logger.logger) == tier)
+    {
         let Some(task) = logger.state.task() else {
             logger.state = LoggerExecutionState::Down;
             continue;
@@ -2169,8 +2229,14 @@ async fn handle_broker_event(
             LoggerShutdownState::ClosingInputs { .. }
         )
     {
+        let tier = if logger_tier_is_down(&execution.loggers, LoggerShutdownTier::FileAdapters) {
+            LoggerShutdownTier::SharedLogger
+        } else {
+            LoggerShutdownTier::FileAdapters
+        };
         execution.logger_shutdown = LoggerShutdownState::Draining {
             deadline: TokioInstant::now() + LOGGER_DRAIN_GRACE,
+            tier,
         };
         return Ok(());
     }
@@ -2188,7 +2254,7 @@ async fn handle_broker_event(
             .iter()
             .any(|logger| logger.state.task() == Some(task))
     }) {
-        return handle_logger_event(client, event, &config.logging.restart, execution);
+        return handle_logger_event(client, event, config, execution);
     }
     if task_id(&event).is_some() {
         return handle_auxiliary_event(client, event, config, execution);
@@ -2569,7 +2635,7 @@ const fn task_id(event: &ProcessBrokerEvent) -> Option<BrokerTaskId> {
 fn handle_logger_event(
     client: &ProcessBrokerClient,
     event: ProcessBrokerEvent,
-    restart: &LoggerRestartConfig,
+    config: &ServiceConfig,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
     let Some(task) = task_id(&event) else {
@@ -2586,6 +2652,12 @@ fn handle_logger_event(
         .loggers
         .get_mut(position)
         .ok_or_else(|| io::Error::other("selected logger disappeared"))?;
+    let adapter_restart = LoggerRestartConfig::default();
+    let restart = if logger.logger.is_shared_logger() {
+        &config.logging.restart
+    } else {
+        &adapter_restart
+    };
     match event {
         ProcessBrokerEvent::TaskStarted { .. }
             if matches!(logger.state, LoggerExecutionState::Starting { .. }) =>
@@ -3354,8 +3426,8 @@ mod tests {
     use tokio::time::Instant as TokioInstant;
 
     use super::{
-        LoggerExecution, LoggerExecutionState, logger_status, schedule_logger_restart,
-        supervision_finished,
+        LoggerExecution, LoggerExecutionState, LoggerShutdownTier, logger_status,
+        next_logger_shutdown_tier, schedule_logger_restart, supervision_finished,
     };
     use crate::{
         config::{BackoffConfig, LoggerRestartConfig},
@@ -3395,6 +3467,47 @@ mod tests {
         assert_eq!(
             logger_status(std::slice::from_ref(&logger)),
             LoggerStatus::Failed
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn logger_shutdown_drains_file_adapters_before_shared_logger() -> Result<(), Box<dyn Error>> {
+        let shared_task = BrokerTaskId::new(1).ok_or("invalid shared logger task")?;
+        let adapter_task = BrokerTaskId::new(2).ok_or("invalid file adapter task")?;
+        let mut shared = LoggerExecution::new(BrokerLoggerId::shared_logger());
+        shared.state = LoggerExecutionState::Running {
+            task: shared_task,
+            started_at: Instant::now(),
+        };
+        let mut adapter = LoggerExecution::new(BrokerLoggerId::new(0, 0));
+        adapter.state = LoggerExecutionState::Running {
+            task: adapter_task,
+            started_at: Instant::now(),
+        };
+        let mut loggers = vec![shared, adapter];
+
+        assert_eq!(
+            next_logger_shutdown_tier(&loggers, LoggerShutdownTier::FileAdapters),
+            Some(LoggerShutdownTier::FileAdapters)
+        );
+        let adapter = loggers
+            .get_mut(1)
+            .ok_or("file adapter logger disappeared")?;
+        adapter.state = LoggerExecutionState::Down;
+        assert_eq!(
+            next_logger_shutdown_tier(&loggers, LoggerShutdownTier::FileAdapters),
+            Some(LoggerShutdownTier::SharedLogger)
+        );
+        assert_eq!(
+            next_logger_shutdown_tier(&loggers, LoggerShutdownTier::SharedLogger),
+            Some(LoggerShutdownTier::SharedLogger)
+        );
+        let shared = loggers.get_mut(0).ok_or("shared logger disappeared")?;
+        shared.state = LoggerExecutionState::Down;
+        assert_eq!(
+            next_logger_shutdown_tier(&loggers, LoggerShutdownTier::SharedLogger),
+            None
         );
         Ok(())
     }

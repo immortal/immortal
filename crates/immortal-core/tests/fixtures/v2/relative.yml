@@ -7,12 +7,11 @@ environment:
 start_condition:
   command: [./checks/network-ready]
   timeout_seconds: 5
-logging:
-  file_adapter: ./bin/immortallog
+log:
   stdout:
-    file:
-      file: logs/api.log
-    logger: [./loggers/tag, api]
+    file: logs/api.log
+logger: [./loggers/tag, api]
+log_adapter: ./bin/immortallog
 pid_files:
   supervisor: run/supervisor.pid
   main: run/main.pid
