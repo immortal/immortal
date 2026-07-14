@@ -64,12 +64,10 @@ checked process and process-group identifiers, full nonblocking child events,
 explicit signal targets, prepared direct execution, descriptor allow-lists,
 and checked daemon startup.
 
-Broker-death containment additionally requires the additive
-[`immortal/fork#17`](https://github.com/immortal/fork/issues/17) API. Immortal
-requires the `0.9.1` candidate and currently exercises it through the local
-review mirror. The Immortal change must not merge or publish until that exact
-API has passed native review and the temporary workspace patch has been
-replaced with the released, locked registry dependency.
+Broker-death containment additionally uses the additive API developed under
+[`immortal/fork#17`](https://github.com/immortal/fork/issues/17). It is released
+in `fork` 0.9.1 after native Linux, macOS, and FreeBSD review. Immortal locks
+that exact crates.io release and checksum without a Git or local patch override.
 
 `immortal-core::process` has adopted those APIs. It translates
 the fork crate's typed `Exited`, `Signalled`, `Stopped`, and `Continued` events
@@ -120,13 +118,10 @@ live-child detachment.
 Immortal will not add direct `libc` calls or a second process library to work
 around this boundary. `fork` owns the safety-sensitive Unix mechanisms;
 Immortal owns the broker protocol, lifecycle generations, supervision policy,
-readiness, logging, control, status, and reconciliation. The current candidate
-has passed Immortal's native Linux, macOS, and FreeBSD lifecycle matrix. Until
-the reviewed `fork` 0.9.1 candidate is published, Immortal pins its exact Git
-revision and `Cargo.lock` records that immutable source. The release gate then
-requires the exact registry version and checksum. Complete native, fuzzing,
-security, audit, and FreeBSD validation remains mandatory for every Immortal
-release candidate.
+readiness, logging, control, status, and reconciliation. The registry-backed
+dependency checkpoint has passed Immortal's native Linux, macOS, and FreeBSD
+lifecycle matrix. Complete native, fuzzing, security, audit, and FreeBSD
+validation remains mandatory for every Immortal release candidate.
 
 Dependency planning is deterministic and portable. Enabled services are
 topologically sorted into start waves, and the next wave waits for its
@@ -640,7 +635,7 @@ failure tests, and required CI pass.
 - [x] Add a bounded repeatable soak runner over the complete contract suite.
 - [x] Add bounded signal-storm and descriptor-exhaustion broker contracts.
 - [x] Define an evidence-based validation charter and comparative scope.
-- [ ] Complete the public-contract-to-test traceability audit.
+- [x] Complete the [public-contract-to-test traceability audit](TRACEABILITY.md).
 - [ ] Close every P0 adversarial ownership and cleanup finding.
 - [ ] Add cross-platform lifecycle benchmarks and reviewed regression budgets.
 - [ ] Retain 30 comparative runs across three days on dedicated hosts.
@@ -991,13 +986,14 @@ Windows, and macOS. Every native job runs the workspace tests, fork-backed
 lifecycle benchmark, and executable version smoke checks; the separate FreeBSD
 cross-check remains a fast compile gate.
 
-The guarded-group candidate at commit `e735120`, pinned to `fork` commit
-`883798b`, passed the complete native matrix in
-[Rust CI run 29281646376](https://github.com/immortal/immortal/actions/runs/29281646376).
-The same exact revision also passed two clean workspace-suite samples on an
-independent amd64 FreeBSD 15.1 host. The reviewed records and checksum manifest
-are linked from [VALIDATION.md](VALIDATION.md#current-candidate-evidence). These
-results prove the current containment contracts but do not replace the longer
+The registry-backed dependency checkpoint at commit `b1d1799`, locked to
+`fork` 0.9.1, passed the complete native matrix in
+[Rust CI run 29319666973](https://github.com/immortal/immortal/actions/runs/29319666973)
+and the audit and dependency-policy jobs in
+[security run 29319666972](https://github.com/immortal/immortal/actions/runs/29319666972).
+Earlier independent FreeBSD evidence and the exact fork release evidence are
+linked from [VALIDATION.md](VALIDATION.md#current-candidate-evidence). These
+results prove the current repository contracts but do not replace the longer
 release-candidate campaigns.
 
 Run project commands inside DevPod:

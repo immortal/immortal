@@ -1,0 +1,64 @@
+# Public contract traceability
+
+This audit maps every currently supported public input and output surface to
+tests which exercise its syntax or codec and its observable behavior. A parser
+round trip alone is not behavioral evidence: process, filesystem, lifecycle,
+and authorization claims also name a contract executable or focused failure
+test. The release evidence and platform state remain governed by
+[`VALIDATION.md`](VALIDATION.md).
+
+## Command-line interfaces
+
+| Executable | Public surface | Syntax and typed-dispatch tests | Behavioral and failure tests |
+|---|---|---|---|
+| `immortal` | `--foreground`, `--retries`, `--check-config`, `--child-pid`, `--config`, `--control-dir`, `--supervisor-pid`, `--user`, `--working-dir`, `--wait`, command argv, released `-cc`/`-ctl`/`-v` forms, help and version | `immortal::cli::commands` tests; `captures_supported_direct_options`; `carries_an_exact_control_directory_for_commands_and_configs`; `preserves_direct_argv`; `selects_config_check` | `foreground_contract`; `controlled_contract`; configuration, PID-file, account, daemon-startup, and process contracts in `immortal-core` |
+| `immortalctl` | automatic or exact runtime discovery; `--runtime-scope`; table/JSON, color, and header selection; lifecycle timeout and no-wait; status, start, stop, restart, once, exit, halt, signal; main/group scope; service, `--all`, and released signal flags | `immortalctl::cli::commands` tests; `immortalctl::cli::dispatch` tests | `immortalctl::cli::actions` discovery, transport, rendering, generation-binding, timeout, and completion tests; `controlled_contract` |
+| `immortaldir` | definitions directory, runtime directory, scan interval, concurrent-start limit, supervisor binary, once, dry-run, environment overrides, help and version | `immortaldir::cli::commands` and `immortaldir::cli::dispatch` tests | `immortaldir::cli::actions` tests; `operational_contract`; reconciliation and watch tests in `immortal-core` |
+| `immortallog` | destination file, maximum bytes, maximum age, retained archive count, total archive bytes, timestamp, passthrough, help and version | `immortallog::cli::commands` tests; `preserves_rotation_and_stream_flags` | `immortallog::cli::actions` stream and failure tests; logging rotation and `file_adapter_contract` tests in `immortal-core` |
+
+Short and long version behavior is also executed for every supervisor-facing
+binary by the native Linux, macOS, and FreeBSD CI jobs. CLI conflicts, missing
+values, zero or excessive numeric bounds, removed options, and option-looking
+child arguments are covered by the named command tests.
+
+## Strict configuration version 2
+
+The following rows cover the complete schema shown in `README.md`. Serde denies
+unknown fields at every document level; mutation, depth, alias, size, UTF-8,
+duplicate-key, multi-document, missing-version, and unsupported-version tests
+exercise the common decoder boundary.
+
+| Configuration group | Fields and values | Parse and validation evidence | Operational evidence |
+|---|---|---|---|
+| Service | `version`, `enabled`, `command`, `working_directory`, `environment`, `environment_mode`, `user`, `start_delay_seconds`, `requires` | `supported_configuration_round_trips`; schema rejection tests; path-resolution tests; `validates_commands_dependencies_and_descriptor_tracking`; start-condition parser tests | `foreground_contract`; `operational_contract`; account, environment, dependency-plan, and delayed-start contracts |
+| Restart | `policy`, `success_exit_codes`, `exit_when_done`; `limits.max_retries`, `max_elapsed_seconds`, `burst.starts`, `burst.window_seconds`; backoff initial, maximum, multiplier, jitter, and stable-reset values | `parses_strict_v2_restart_and_readiness_policy`; logger backoff parser tests; invalid-value validation corpus | supervisor retry, issue 71, elapsed/burst, stable-reset, condition-isolation, logger-retry, and executor contracts |
+| Readiness and hooks | readiness mode and timeout; start-condition command, timeout, and backoff; post-exit command and timeout | readiness and start-condition parser tests; hook validation and path-resolution tests | readiness unit/broker/foreground contracts; condition retry/timeout/shutdown contracts; complete post-exit contract family |
+| Logging | `file_adapter`, `combine_stderr`; logger restart limit and backoff; stdout/stderr file, age, count, size, total-size, timestamp, and logger argv | configuration path, conflict, bound, and unknown-field tests; logging normalization tests | logger restart/drain/file-adapter contracts; foreground permission, backpressure, and drain-timeout contracts; rotation, sync, retention, broken-pipe, and partial-line tests |
+| Process metadata and mode | supervisor/main PID files; foreground or descriptor-tracking mode; stop/reload command and timeout; lifetime timeout | PID and descriptor configuration/path tests; partial, misplaced, unknown, zero, and excessive descriptor-field rejection | PID atomicity/replacement tests; foreground PID lifecycle; descriptor lifetime, control, hook, shutdown, and broker-loss contracts |
+
+Defaults are exercised by minimal definitions and explicit default assertions;
+canonical emission is reparsed and compared as a complete `ServiceConfig`.
+Fuzzing targets the same public configuration byte boundary.
+
+## Control and status protocol
+
+| Frame | Public fields | Codec and bound evidence | Semantic and transport evidence |
+|---|---|---|---|
+| Request | protocol version; operation; service; expected generation (`any`, no child, exact); signal scope; optional signal | `every_lifecycle_operation_round_trips`; `all_signal_names_round_trip`; unknown version/operation/scope/signal, unsafe name, inconsistent signal, generation, truncation, trailing data, and size tests | `decide_request` state-machine tests; authenticated transport tests; `controlled_contract`; generation-bound `immortalctl` action tests |
+| Response | response code; optional generation; bounded message; optional typed status | response-code and typed-status round trips; malformed, unknown, truncated, oversized, and excessive-argument tests | transport round trip, disconnect, timeout, bad-client isolation, and controlled lifecycle contracts |
+| Status | supervisor/main PID; desired and observed state; readiness; up/down duration; starts; failures; last result; backoff; logger health; command argv | `typed_status_payload_round_trips_every_field`; status enum/code tests | pre-child status, state-machine, controlled lifecycle, discovery, and table/JSON rendering tests |
+| Local socket | runtime path ownership; peer UID/GID/PID; active-client limit; read/write/accept deadlines | listener path, mode, peer-policy, cleanup, timeout, and client-limit tests | runtime ownership/discovery tests; server bad-client isolation; black-box authenticated control contracts |
+
+The private broker protocol is not a public compatibility surface, but its
+version, generation and task identities, argv/environment/path bytes,
+credentials, descriptor plans, logging plans, requests, events, truncation,
+bounds, and unknown values are covered by `broker_protocol` unit tests and the
+broker, process, resource-fault, and supervisor-loss contract executables.
+
+## Maintenance rule
+
+A new CLI option, configuration field, control/status field, or public enum
+value must update this audit in the same change and add both successful and
+failing coverage. A row may cite a family of tests only while every field in
+that row remains exercised; otherwise split the row and leave the uncovered
+contract explicitly pending in `VALIDATION.md`.

@@ -48,12 +48,12 @@ must still pass the real-host gates below for its exact commit.
 COR-005 is deliberately bounded by COR-006. A process which creates a new
 session or joins another process group has escaped the portable ownership unit;
 the project must expose that limitation rather than claiming cgroup- or
-subreaper-equivalent containment. The pinned `fork#17` candidate passes its
+subreaper-equivalent containment. The released `fork` 0.9.1 crate passes its
 running, stopped, empty-startup, descriptor-isolation, and cleanup contracts on
 native Linux, macOS, and FreeBSD, including an explicit session-escape fixture.
 The combined Immortal candidate passes its broker-death and complete workspace
-contracts on the same three native platforms. Publishing the locked `fork`
-release remains a separate release gate and does not weaken either contract.
+contracts on the same three native platforms. Immortal locks the exact crates.io
+release and checksum; no Git or local patch overrides the reviewed source.
 
 RES-005 has deterministic contracts for a bounded stop/continue storm,
 descriptor exhaustion before broker creation, active control-client limits,
@@ -64,26 +64,34 @@ load.
 
 ### Current candidate evidence
 
-The 2026-07-13 review binds the process-containment claims to exact revisions:
+The 2026-07-14 review binds the process-containment claims to exact revisions:
 
-- `fork` commit `883798b189829871947fd3f34e84938cc294f426` passed its complete
-  native Linux, macOS, and FreeBSD matrix in
-  [`fork` run 29280073678](https://github.com/immortal/fork/actions/runs/29280073678).
-- Immortal commit `e735120c4fca7686d3f8b758b9e81fe54232ac87`, locked to that
-  `fork` revision, passed its complete native Linux, macOS, and FreeBSD matrix,
-  lifecycle benchmarks, version checks, and FreeBSD cross-check in
-  [Rust CI run 29281646376](https://github.com/immortal/immortal/actions/runs/29281646376).
-  Its security workflow passed in
-  [run 29281646367](https://github.com/immortal/immortal/actions/runs/29281646367),
-  and the latest code-changing predecessor passed both fuzz targets in
-  [run 29281376286](https://github.com/immortal/immortal/actions/runs/29281376286).
-- An independent amd64 FreeBSD 15.1-RELEASE-p1 host ran the locked workspace
-  suite twice at the exact Immortal commit with clean outcomes in 43 and 42
+- The signed `fork` 0.9.1 tag resolves to commit
+  `08d50bf05cd0a63d1567b4f475eb701ff51a2907`, which passed its complete native
+  Linux, macOS, and FreeBSD matrix in
+  [`fork` run 29318936207](https://github.com/immortal/fork/actions/runs/29318936207).
+- Immortal commit `b1d17997a5fbd782c69b7e4145a92db405bc53ce`, locked to the
+  crates.io `fork` 0.9.1 release and checksum, passed its complete native Linux,
+  macOS, and FreeBSD matrix, lifecycle benchmarks, version checks, and FreeBSD
+  cross-check in
+  [Rust CI run 29319666973](https://github.com/immortal/immortal/actions/runs/29319666973).
+  Its audit and dependency-policy jobs passed in
+  [security run 29319666972](https://github.com/immortal/immortal/actions/runs/29319666972).
+  The exact checkpoint passed both bounded parser fuzz targets in
+  [run 29320496890](https://github.com/immortal/immortal/actions/runs/29320496890).
+- As retained historical regression evidence, an independent amd64 FreeBSD
+  15.1-RELEASE-p1 host ran the workspace suite twice at Immortal commit
+  `e735120c4fca7686d3f8b758b9e81fe54232ac87`, with clean outcomes in 43 and 42
   seconds. The schema-validated records and SHA-256 manifest are retained in
   [`validation/evidence/freebsd-15.1-e735120`](validation/evidence/freebsd-15.1-e735120).
 
 This evidence proves the repository contracts above. It does not replace the
 24-hour campaigns, seven-day canary, comparative runs, or release drills.
+
+The complete public CLI, strict configuration, control, status, and private
+broker field inventory is mapped to its success and failure coverage in
+[`TRACEABILITY.md`](TRACEABILITY.md). That audit establishes test ownership; it
+does not change any Pending real-host or duration gate in this document.
 
 ## Comparative reference set
 

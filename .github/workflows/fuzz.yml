@@ -6,11 +6,15 @@ on:
       - rust
     paths:
       - ".github/workflows/fuzz.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
       - "crates/immortal-core/**"
       - "fuzz/**"
   pull_request:
     paths:
       - ".github/workflows/fuzz.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
       - "crates/immortal-core/**"
       - "fuzz/**"
   schedule:

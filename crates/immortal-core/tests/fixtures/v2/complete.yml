@@ -1,0 +1,81 @@
+version: 2
+enabled: false
+command: [/usr/local/bin/api, --foreground]
+working_directory: /srv/api
+environment:
+  MODE: test
+environment_mode: clear
+user: www
+start_delay_seconds: 7
+restart:
+  policy: on-failure
+  success_exit_codes: [0, 2]
+  exit_when_done: true
+  limits:
+    max_retries: 4
+    max_elapsed_seconds: 300
+    burst:
+      starts: 5
+      window_seconds: 60
+  backoff:
+    initial_seconds: 2
+    max_seconds: 20
+    multiplier: 3
+    jitter_percent: 10
+    reset_after_seconds: 120
+readiness:
+  mode: notify-fd
+  timeout_seconds: 15
+requires: [database, network]
+start_condition:
+  command: [/usr/bin/test, -e, /run/network-ready]
+  timeout_seconds: 5
+  backoff:
+    initial_seconds: 3
+    max_seconds: 30
+    multiplier: 2
+    jitter_percent: 5
+post_exit:
+  command: [/usr/local/libexec/api-cleanup, --quiet]
+  timeout_seconds: 9
+logging:
+  file_adapter: /usr/local/bin/immortallog
+  combine_stderr: false
+  restart:
+    max_retries: 6
+    backoff:
+      initial_seconds: 4
+      max_seconds: 40
+      multiplier: 2
+      jitter_percent: 15
+      reset_after_seconds: 180
+  stdout:
+    file:
+      file: /var/log/api.log
+      max_age_seconds: 86400
+      keep: 7
+      max_bytes: 10485760
+      max_total_bytes: 73400320
+      timestamp: true
+    logger: [/usr/bin/logger, -t, api]
+  stderr:
+    file:
+      file: /var/log/api.err
+      max_age_seconds: 3600
+      keep: 3
+      max_bytes: 1048576
+      max_total_bytes: 3145728
+      timestamp: false
+    logger: [/usr/bin/logger, -t, api-error]
+pid_files:
+  supervisor: /var/run/api.supervisor.pid
+  main: /var/run/api.pid
+process_mode: descriptor-tracking
+descriptor_tracking:
+  stop:
+    command: [/usr/local/bin/api-control, stop]
+    timeout_seconds: 11
+  reload:
+    command: [/usr/local/bin/api-control, reload]
+    timeout_seconds: 12
+  lifetime_timeout_seconds: 13
