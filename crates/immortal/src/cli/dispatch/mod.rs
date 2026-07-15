@@ -8,46 +8,7 @@ use std::{
 
 use clap::ArgMatches;
 
-/// Typed direct-command inputs which are safe to apply before broker creation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DirectService {
-    pub child_pid: Option<PathBuf>,
-    pub command: Vec<String>,
-    pub environment_directory: Option<PathBuf>,
-    pub foreground: bool,
-    pub logfile: Option<PathBuf>,
-    pub logger: Option<Vec<String>>,
-    pub retries: i32,
-    pub runtime_identity: RuntimeIdentity,
-    pub start_delay_seconds: u64,
-    pub supervisor_pid: Option<PathBuf>,
-    pub user: Option<String>,
-    pub working_directory: Option<PathBuf>,
-}
-
-/// Exclusive runtime identity selected for one direct command.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RuntimeIdentity {
-    /// Service name resolved below the effective user's runtime root.
-    Name(String),
-    /// Exact absolute runtime service directory.
-    ControlDirectory(PathBuf),
-}
-
-/// Typed operation selected by the command line.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Action {
-    /// Validate a file and emit the normalized supported schema.
-    CheckConfig(PathBuf),
-    /// Supervise the service described by a configuration file.
-    SuperviseConfig {
-        control_directory: Option<PathBuf>,
-        path: PathBuf,
-        foreground: bool,
-    },
-    /// Supervise a direct argv command.
-    SuperviseCommand(DirectService),
-}
+use crate::cli::actions::{Action, DirectService, RuntimeIdentity};
 
 /// A required invariant was absent from otherwise valid Clap matches.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -119,8 +80,11 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
 mod tests {
     use std::{error::Error, path::PathBuf};
 
-    use super::{Action, DirectService, RuntimeIdentity, action};
-    use crate::cli::commands;
+    use super::action;
+    use crate::cli::{
+        actions::{Action, DirectService, RuntimeIdentity},
+        commands,
+    };
 
     #[test]
     fn selects_config_check() -> Result<(), Box<dyn Error>> {

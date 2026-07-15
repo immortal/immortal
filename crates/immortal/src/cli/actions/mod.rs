@@ -9,24 +9,62 @@
 use std::{
     error::Error,
     fmt::{self, Display, Formatter},
-    io::{self, Write},
-    path::{Path, PathBuf},
+    io,
+    path::PathBuf,
 };
 
 use immortal_core::{
-    config::{
-        ConfigError, LoggingConfig, ServiceConfig, emit_config, load_environment_directory,
-        parse_file, resolve_paths,
-    },
-    executor::{
-        DaemonRunOutcome, ExecutorError, SupervisionOutcome, run_daemon, run_foreground_controlled,
-    },
+    config::ConfigError,
+    executor::{ExecutorError, SupervisionOutcome},
     exit::ExitClass,
-    runtime::prepare_user_service_directory,
-    supervisor::SupervisorState,
 };
 
-use crate::cli::dispatch::{Action, DirectService, RuntimeIdentity};
+pub mod check_config;
+pub mod supervise_command;
+pub mod supervise_config;
+
+mod supervision;
+
+/// Typed direct-command inputs which are safe to apply before broker creation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectService {
+    pub child_pid: Option<PathBuf>,
+    pub command: Vec<String>,
+    pub environment_directory: Option<PathBuf>,
+    pub foreground: bool,
+    pub logfile: Option<PathBuf>,
+    pub logger: Option<Vec<String>>,
+    pub retries: i32,
+    pub runtime_identity: RuntimeIdentity,
+    pub start_delay_seconds: u64,
+    pub supervisor_pid: Option<PathBuf>,
+    pub user: Option<String>,
+    pub working_directory: Option<PathBuf>,
+}
+
+/// Exclusive runtime identity selected for one direct command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeIdentity {
+    /// Service name resolved below the effective user's runtime root.
+    Name(String),
+    /// Exact absolute runtime service directory.
+    ControlDirectory(PathBuf),
+}
+
+/// Typed operation selected by the command line.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Action {
+    /// Validate a file and emit the normalized supported schema.
+    CheckConfig(PathBuf),
+    /// Supervise the service described by a configuration file.
+    SuperviseConfig {
+        control_directory: Option<PathBuf>,
+        path: PathBuf,
+        foreground: bool,
+    },
+    /// Supervise a direct argv command.
+    SuperviseCommand(DirectService),
+}
 
 /// Failure while coordinating an application action.
 #[derive(Debug)]
@@ -50,11 +88,21 @@ impl Display for ActionError {
             Self::Output(error) => write!(formatter, "unable to write output: {error}"),
             Self::Runtime(error) => write!(formatter, "unable to prepare service runtime: {error}"),
             Self::Executor(error) => Display::fmt(error, formatter),
-            Self::ServiceFailed(outcome) => write!(
-                formatter,
-                "service supervision stopped in {:?} after {} start(s); last result {:?}",
-                outcome.state, outcome.starts, outcome.last_result
-            ),
+            Self::ServiceFailed(outcome) => {
+                if let Some(reason) = outcome.terminal_failure {
+                    write!(
+                        formatter,
+                        "service supervision exited after {} start(s) because {reason:?}; last result {:?}",
+                        outcome.starts, outcome.last_result
+                    )
+                } else {
+                    write!(
+                        formatter,
+                        "service supervision stopped in {:?} after {} start(s); last result {:?}",
+                        outcome.state, outcome.starts, outcome.last_result
+                    )
+                }
+            }
         }
     }
 }
@@ -109,123 +157,5 @@ impl ActionError {
             Self::Executor(_) => ExitClass::Software,
             Self::ServiceFailed(_) => ExitClass::TemporaryFailure,
         }
-    }
-}
-
-/// Execute one typed action.
-///
-/// # Errors
-///
-/// Returns an error when input is invalid, output fails, or a requested
-/// operational capability has not yet passed its implementation gate.
-pub fn execute(action: Action) -> Result<(), ActionError> {
-    match action {
-        Action::CheckConfig(path) => {
-            let config = parse_file(&path)?;
-            let output = emit_config(&config)?;
-            io::stdout().lock().write_all(output.as_bytes())?;
-            Ok(())
-        }
-        Action::SuperviseConfig {
-            control_directory,
-            path,
-            foreground,
-        } => {
-            let config = parse_file(&path)?;
-            let control_directory = match control_directory {
-                Some(directory) => directory,
-                None => config_runtime_directory(&path)?,
-            };
-            supervise(&config, &control_directory, foreground)
-        }
-        Action::SuperviseCommand(service) => {
-            let (config, runtime_identity, foreground) = direct_config(service)?;
-            let control_directory = match runtime_identity {
-                RuntimeIdentity::Name(name) => {
-                    prepare_user_service_directory(&name).map_err(ActionError::Runtime)?
-                }
-                RuntimeIdentity::ControlDirectory(directory) => directory,
-            };
-            supervise(&config, &control_directory, foreground)
-        }
-    }
-}
-
-fn supervise(
-    config: &ServiceConfig,
-    control_directory: &Path,
-    foreground: bool,
-) -> Result<(), ActionError> {
-    if foreground {
-        let outcome = run_foreground_controlled(config, control_directory)?;
-        finish_supervision(outcome)
-    } else {
-        match run_daemon(config, Some(control_directory))? {
-            DaemonRunOutcome::Parent => Ok(()),
-            DaemonRunOutcome::Daemon(outcome) => finish_supervision(outcome),
-        }
-    }
-}
-
-fn config_runtime_directory(path: &Path) -> Result<PathBuf, ActionError> {
-    let name = path
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| {
-            ActionError::Runtime(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "configuration filename has no UTF-8 service stem",
-            ))
-        })?;
-    prepare_user_service_directory(name).map_err(ActionError::Runtime)
-}
-
-fn direct_config(
-    service: DirectService,
-) -> Result<(ServiceConfig, RuntimeIdentity, bool), ActionError> {
-    let DirectService {
-        child_pid,
-        command,
-        environment_directory,
-        foreground,
-        logfile,
-        logger,
-        retries,
-        runtime_identity,
-        start_delay_seconds,
-        supervisor_pid,
-        user,
-        working_directory,
-    } = service;
-    let mut config = ServiceConfig::for_command(command)?;
-    config.restart.limits.max_retries = if retries < 0 {
-        None
-    } else {
-        Some(u32::try_from(retries).map_err(|_| {
-            ConfigError::Validation(vec!["retries must be -1 or a nonnegative count".to_owned()])
-        })?)
-    };
-    config.start_delay_seconds = start_delay_seconds;
-    config.pid_files.main = child_pid;
-    config.pid_files.supervisor = supervisor_pid;
-    config.logging = LoggingConfig::for_direct(logfile, logger)?;
-    if let Some(directory) = environment_directory {
-        config.environment = load_environment_directory(&directory)?;
-    }
-    config.user = user;
-    config.working_directory = working_directory;
-    let base = std::env::current_dir().map_err(ActionError::Output)?;
-    resolve_paths(&mut config, &base)?;
-    Ok((config, runtime_identity, foreground))
-}
-
-fn finish_supervision(outcome: SupervisionOutcome) -> Result<(), ActionError> {
-    if outcome.last_start_failed
-        || outcome.last_readiness_failed
-        || matches!(outcome.state, SupervisorState::Failed(_))
-    {
-        Err(ActionError::ServiceFailed(outcome))
-    } else {
-        Ok(())
     }
 }

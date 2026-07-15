@@ -9,24 +9,7 @@ use std::{
 use clap::ArgMatches;
 use immortal_core::reconcile::LaunchConcurrency;
 
-/// Typed `immortaldir` operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Action {
-    /// Definitions directory.
-    pub directory: PathBuf,
-    /// Runtime state root reserved for operational reconciliation.
-    pub runtime_directory: PathBuf,
-    /// Safety reconciliation interval.
-    pub scan_interval_seconds: u64,
-    /// Exact `immortal` executable used for new supervisors.
-    pub supervisor_binary: PathBuf,
-    /// Validated maximum launches submitted within one dependency wave.
-    pub launch_concurrency: LaunchConcurrency,
-    /// Exit after one complete reconciliation.
-    pub once: bool,
-    /// Print the desired plan without mutations.
-    pub dry_run: bool,
-}
+use crate::cli::actions::{Action, ReconcileAction};
 
 /// Required parser invariant was absent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,7 +54,7 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
             })?,
         None => LaunchConcurrency::default(),
     };
-    Ok(Action {
+    Ok(Action::Reconcile(ReconcileAction {
         directory,
         runtime_directory,
         scan_interval_seconds,
@@ -79,7 +62,7 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         launch_concurrency,
         once: matches.get_flag("once"),
         dry_run: matches.get_flag("dry-run"),
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -88,8 +71,11 @@ mod tests {
 
     use immortal_core::reconcile::LaunchConcurrency;
 
-    use super::{Action, action};
-    use crate::cli::commands;
+    use super::action;
+    use crate::cli::{
+        actions::{Action, ReconcileAction},
+        commands,
+    };
 
     #[test]
     fn preserves_dry_run_inputs() -> Result<(), Box<dyn Error>> {
@@ -107,7 +93,7 @@ mod tests {
         ])?;
         assert_eq!(
             action(&matches)?,
-            Action {
+            Action::Reconcile(ReconcileAction {
                 directory: PathBuf::from("/tmp/services"),
                 runtime_directory: PathBuf::from("/tmp/runtime"),
                 scan_interval_seconds: 30,
@@ -115,7 +101,7 @@ mod tests {
                 launch_concurrency: LaunchConcurrency::new(4)?,
                 once: true,
                 dry_run: true,
-            }
+            })
         );
         Ok(())
     }

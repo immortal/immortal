@@ -150,6 +150,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     if !retry_service.join(SUPERVISOR_LOCK_NAME).is_file() {
         return Err("direct service name did not select the automatic service runtime".into());
     }
+
+    let exhausted_attempts = MarkerFile::new("exit-after-retries-attempts");
+    let exhausted_log = MarkerFile::new("exit-after-retries-log");
+    let exhausted = ConfigFile::new(
+        "exit-after-retries",
+        &format!(
+            "version: 2\ncommand: [/bin/sh, -c, 'printf x >> \"$ATTEMPTS\"; printf \"attempt\\\\n\"; exit 1']\nenvironment:\n  ATTEMPTS: '{}'\nrestart:\n  policy: on-failure\n  exit_when_done: true\n  limits:\n    max_retries: 3\n  backoff:\n    initial_seconds: 1\n    max_seconds: 1\n    multiplier: 1\n    jitter_percent: 0\n    reset_after_seconds: 60\nlog:\n  file: '{}'\n",
+            exhausted_attempts.path_str()?,
+            exhausted_log.path_str()?
+        ),
+    )?;
+    assert_status(
+        run(binary, ["--foreground", "--config", exhausted.path_str()?])?,
+        ExitClass::TemporaryFailure,
+        "exit after exhausted retries",
+    )?;
+    if fs::read_to_string(&exhausted_attempts.0)? != "xxxx" {
+        return Err(
+            "max_retries did not permit exactly three retries after the initial start".into(),
+        );
+    }
+    if fs::read_to_string(&exhausted_log.0)?.lines().count() != 4 {
+        return Err("terminal retry exhaustion did not drain all four logged generations".into());
+    }
+
     assert_status(
         run(binary, ["--foreground", "--name", ".hidden", TRUE_PROGRAM])?,
         ExitClass::Configuration,

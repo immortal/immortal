@@ -10,66 +10,9 @@ use std::{
 use clap::ArgMatches;
 use immortal_core::control::{Operation, Signal, SignalScope};
 
-/// Target selected by an operator.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Target {
-    /// One named service.
-    Service(String),
-    /// Every safely discovered service.
-    All,
-}
-
-/// Stable operator output format.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OutputFormat {
-    /// Human-readable fixed columns.
-    Table,
-    /// Machine-readable JSON array.
-    Json,
-}
-
-/// Automatic runtime roots selected for discovery.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RuntimeScope {
-    /// Search both platform system and effective-user roots.
-    All,
-    /// Search only the platform system root.
-    System,
-    /// Search only the effective user's root.
-    User,
-}
-
-/// Runtime-root selection after CLI precedence is applied.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RuntimeDiscovery {
-    /// Discover documented roots for the selected scope.
-    Automatic(RuntimeScope),
-    /// Discover exactly one operator-provided root.
-    Custom(PathBuf),
-}
-
-/// Fully typed control action.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Action {
-    /// Typed automatic or exact runtime-root selection.
-    pub discovery: RuntimeDiscovery,
-    /// Output representation.
-    pub output: OutputFormat,
-    /// Omit the table header.
-    pub no_header: bool,
-    /// Hard lifecycle completion deadline.
-    pub wait_timeout: Duration,
-    /// Return after request acceptance instead of polling completion.
-    pub no_wait: bool,
-    /// Lifecycle or signal operation.
-    pub operation: Operation,
-    /// One service or the discovery set.
-    pub target: Target,
-    /// Explicit raw-signal target.
-    pub scope: SignalScope,
-    /// Raw signal, present only for [`Operation::Signal`].
-    pub signal: Option<Signal>,
-}
+use crate::cli::actions::{
+    Action, ControlAction, OutputFormat, RuntimeDiscovery, RuntimeScope, Target,
+};
 
 /// CLI matches violated a control-action invariant.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,31 +59,35 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         let target = matches
             .get_one::<String>("legacy-target")
             .ok_or_else(|| DispatchError("legacy signal requires a service".to_owned()))?;
-        return Ok(Action {
-            discovery,
-            output,
-            no_header,
-            wait_timeout,
-            no_wait,
-            operation: Operation::Signal,
-            target: parse_target(target),
-            scope: legacy_scope(signal),
-            signal: Some(signal),
-        });
+        return Ok(Action::from_operation(
+            Operation::Signal,
+            ControlAction {
+                discovery,
+                output,
+                no_header,
+                wait_timeout,
+                no_wait,
+                target: parse_target(target),
+                scope: legacy_scope(signal),
+                signal: Some(signal),
+            },
+        ));
     }
 
     let Some((name, subcommand)) = matches.subcommand() else {
-        return Ok(Action {
-            discovery,
-            output,
-            no_header,
-            wait_timeout,
-            no_wait,
-            operation: Operation::Status,
-            target: Target::All,
-            scope: SignalScope::Main,
-            signal: None,
-        });
+        return Ok(Action::from_operation(
+            Operation::Status,
+            ControlAction {
+                discovery,
+                output,
+                no_header,
+                wait_timeout,
+                no_wait,
+                target: Target::All,
+                scope: SignalScope::Main,
+                signal: None,
+            },
+        ));
     };
     let operation = match name {
         "status" => Operation::Status,
@@ -169,17 +116,19 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
         ));
     };
     let (signal, scope) = signal_fields(operation, subcommand)?;
-    Ok(Action {
-        discovery,
-        output,
-        no_header,
-        wait_timeout,
-        no_wait,
+    Ok(Action::from_operation(
         operation,
-        target,
-        scope,
-        signal,
-    })
+        ControlAction {
+            discovery,
+            output,
+            no_header,
+            wait_timeout,
+            no_wait,
+            target,
+            scope,
+            signal,
+        },
+    ))
 }
 
 fn signal_fields(
@@ -253,20 +202,41 @@ mod tests {
 
     use immortal_core::control::{Operation, Signal, SignalScope};
 
-    use super::{OutputFormat, RuntimeDiscovery, RuntimeScope, Target, action};
-    use crate::cli::commands;
+    use super::action;
+    use crate::cli::{
+        actions::{Action, ControlAction, OutputFormat, RuntimeDiscovery, RuntimeScope, Target},
+        commands,
+    };
+
+    fn parts(action: &Action) -> (Operation, &ControlAction) {
+        match action {
+            Action::Status(control) => (Operation::Status, control),
+            Action::Start(control) => (Operation::Start, control),
+            Action::Stop(control) => (Operation::Stop, control),
+            Action::Restart(control) => (Operation::Restart, control),
+            Action::Once(control) => (Operation::Once, control),
+            Action::Exit(control) => (Operation::Exit, control),
+            Action::Halt(control) => (Operation::Halt, control),
+            Action::Signal(control) => (Operation::Signal, control),
+        }
+    }
+
+    fn control(action: &Action) -> &ControlAction {
+        parts(action).1
+    }
 
     #[test]
     fn default_is_status_for_all() -> Result<(), Box<dyn Error>> {
         let matches = commands::try_get_matches_from(["immortalctl"])?;
         let action = action(&matches)?;
-        assert_eq!(action.operation, Operation::Status);
-        assert_eq!(action.target, Target::All);
-        assert_eq!(action.output, OutputFormat::Table);
-        assert_eq!(action.wait_timeout, std::time::Duration::from_secs(30));
-        assert!(!action.no_wait);
+        let (operation, control) = parts(&action);
+        assert_eq!(operation, Operation::Status);
+        assert_eq!(control.target, Target::All);
+        assert_eq!(control.output, OutputFormat::Table);
+        assert_eq!(control.wait_timeout, std::time::Duration::from_secs(30));
+        assert!(!control.no_wait);
         assert_eq!(
-            action.discovery,
+            control.discovery,
             RuntimeDiscovery::Automatic(RuntimeScope::All)
         );
         Ok(())
@@ -283,9 +253,11 @@ mod tests {
             "group",
         ])?;
         let action = action(&matches)?;
-        assert_eq!(action.signal, Some(Signal::User2));
-        assert_eq!(action.scope, SignalScope::Group);
-        assert_eq!(action.target, Target::Service("api".to_owned()));
+        let (operation, control) = parts(&action);
+        assert_eq!(operation, Operation::Signal);
+        assert_eq!(control.signal, Some(Signal::User2));
+        assert_eq!(control.scope, SignalScope::Group);
+        assert_eq!(control.target, Target::Service("api".to_owned()));
         Ok(())
     }
 
@@ -294,8 +266,8 @@ mod tests {
         for operation in ["status", "start", "stop", "restart", "once", "exit", "halt"] {
             let matches = commands::try_get_matches_from(["immortalctl", operation, "api"])?;
             let action = action(&matches)?;
-            assert_eq!(action.signal, None);
-            assert_eq!(action.scope, SignalScope::Main);
+            assert_eq!(control(&action).signal, None);
+            assert_eq!(control(&action).scope, SignalScope::Main);
         }
         Ok(())
     }
@@ -304,14 +276,14 @@ mod tests {
     fn selects_automatic_user_or_exact_custom_runtime_roots() -> Result<(), Box<dyn Error>> {
         let user = commands::try_get_matches_from(["immortalctl", "--runtime-scope", "user"])?;
         assert_eq!(
-            action(&user)?.discovery,
+            control(&action(&user)?).discovery,
             RuntimeDiscovery::Automatic(RuntimeScope::User)
         );
 
         let custom =
             commands::try_get_matches_from(["immortalctl", "--runtime-dir", "/tmp/immortal"])?;
         assert_eq!(
-            action(&custom)?.discovery,
+            control(&action(&custom)?).discovery,
             RuntimeDiscovery::Custom(std::path::PathBuf::from("/tmp/immortal"))
         );
         Ok(())
@@ -320,16 +292,16 @@ mod tests {
     #[test]
     fn legacy_kill_targets_group_but_other_signals_target_main() -> Result<(), Box<dyn Error>> {
         let kill = commands::try_get_matches_from(["immortalctl", "-k", "api"])?;
-        assert_eq!(action(&kill)?.scope, SignalScope::Group);
+        assert_eq!(control(&action(&kill)?).scope, SignalScope::Group);
         let hangup = commands::try_get_matches_from(["immortalctl", "-h", "api"])?;
-        assert_eq!(action(&hangup)?.scope, SignalScope::Main);
+        assert_eq!(control(&action(&hangup)?).scope, SignalScope::Main);
         Ok(())
     }
 
     #[test]
     fn legacy_star_means_all() -> Result<(), Box<dyn Error>> {
         let matches = commands::try_get_matches_from(["immortalctl", "-t", "*"])?;
-        assert_eq!(action(&matches)?.target, Target::All);
+        assert_eq!(control(&action(&matches)?).target, Target::All);
         Ok(())
     }
 

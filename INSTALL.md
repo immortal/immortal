@@ -75,6 +75,7 @@ the complete [descriptor-tracking example and lifecycle](README.md#configuration
 A representative legacy definition:
 
 ```yaml
+---
 cmd: /usr/local/bin/api --foreground
 cwd: /srv/api
 env:
@@ -91,6 +92,7 @@ log:
 becomes an explicit version 2 definition:
 
 ```yaml
+---
 version: 2
 command: [/usr/local/bin/api, --foreground]
 working_directory: /srv/api
@@ -109,6 +111,11 @@ log:
   size: 1MiB
 ```
 
+`max_retries: 3` permits the initial start plus three restarts. Its default
+terminal behavior is a persistent `Failed` supervisor; add
+`exit_when_done: true` when the supervisor should instead clean up and exit
+with a failure status after exhausting the limit.
+
 `immortal --check-config` validates and emits canonical v2 only; it does not
 guess at an unversioned definition or modify its input. It accepts `env` as an
 alias but emits `environment`. For an incremental logging migration inside a
@@ -117,6 +124,7 @@ values mean seconds, bare `size` values mean MiB, and top-level `stderr` is a
 deprecated alias for a selected stderr file:
 
 ```yaml
+---
 version: 2
 command: [/usr/local/bin/api, --foreground]
 log:
@@ -131,6 +139,7 @@ stderr:
 The canonical output makes the split and units explicit:
 
 ```yaml
+---
 version: 2
 command: [/usr/local/bin/api, --foreground]
 log:
@@ -171,6 +180,21 @@ rejected. The historical `-name service` form becomes `-n service` or
 `--name service`; the exact `-name` token is rejected rather than being misread
 as `-n ame`. The old `-n` foreground shorthand becomes `-f` or `--foreground`.
 A direct command requires either that name or an exact `--control-dir`.
+
+The Rust prototype's `.immortal-archive.<time>.<pid>.<sequence>` names are not
+migrated. New rotations use
+`<file>.@<unix-nanoseconds>.<immortallog-pid>.<sequence>`; old prototype files
+remain untouched and do not count toward retention. After selecting a live log
+path, inspect only its new archive namespace with:
+
+```sh
+immortallog archives /var/log/api.log
+immortallog archives -o json /var/log/api.log
+```
+
+The table converts rotation time to UTC. JSON also retains the exact Unix
+nanoseconds as a string. The compact `@` marker does not imply TAI64N or
+multilog-compatible `.s`/`.u` processing states.
 
 Without `--control-dir`, config filenames provide the service identity
 (`api.yml` becomes `api`) and named direct commands use the supplied name.

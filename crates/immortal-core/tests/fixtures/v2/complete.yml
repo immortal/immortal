@@ -1,3 +1,4 @@
+---
 version: 2
 enabled: false
 command: [/usr/local/bin/api, --foreground]

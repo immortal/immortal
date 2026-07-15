@@ -1,8 +1,9 @@
 //! CLI definition and orchestration for `immortaldir`.
 
 pub mod actions;
-pub mod commands;
-pub mod dispatch;
 
+mod commands;
+mod dispatch;
 mod start;
-pub use start::start;
+
+pub use self::start::{StartError, finish, start};

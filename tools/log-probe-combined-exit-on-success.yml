@@ -1,0 +1,22 @@
+---
+version: 2
+command:
+  - target/debug/immortal-log-probe
+  - --interval
+  - 1s
+  - --exit-after
+  - 10s
+  - --exit-code
+  - '0'
+
+restart:
+  policy: on-failure
+  exit_when_done: true
+  limits:
+    max_retries: 3
+
+log:
+  file: /tmp/immortal-log-probe-exit-on-success.log
+  keep: 7
+  size: 1KiB
+  timestamp: true

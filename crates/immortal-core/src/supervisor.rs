@@ -601,6 +601,8 @@ pub enum RestartDecision {
     StayDown,
     /// Finish the supervisor after cleanup.
     ExitSupervisor,
+    /// Finish after cleanup while preserving the exhausted restart limit as failure.
+    ExitFailure(FailureReason),
     /// Enter a configured failure state until reset by an operator.
     Fail(FailureReason),
 }
@@ -614,7 +616,9 @@ const fn completion_state(generation: Generation, decision: RestartDecision) -> 
             delay_seconds: base_delay_seconds,
         },
         RestartDecision::StayDown => SupervisorState::Down,
-        RestartDecision::ExitSupervisor => SupervisorState::Exited,
+        RestartDecision::ExitSupervisor | RestartDecision::ExitFailure(_) => {
+            SupervisorState::Exited
+        }
         RestartDecision::Fail(reason) => SupervisorState::Failed(reason),
     }
 }
@@ -721,7 +725,11 @@ impl RestartTracker {
         }
 
         if let Some(reason) = self.exhausted_limit(now_seconds, restart) {
-            return RestartDecision::Fail(reason);
+            return if restart.exit_when_done {
+                RestartDecision::ExitFailure(reason)
+            } else {
+                RestartDecision::Fail(reason)
+            };
         }
 
         if runtime_seconds >= restart.backoff.reset_after_seconds {
@@ -1041,6 +1049,25 @@ mod tests {
         assert_eq!(
             tracker.decide(ChildResult::Exited(1), 0, 2, DesiredState::Up, &restart),
             RestartDecision::Fail(FailureReason::RetryLimit)
+        );
+    }
+
+    #[test]
+    fn exit_when_done_preserves_exhausted_retry_failure() {
+        let mut tracker = RestartTracker::default();
+        let restart = RestartConfig {
+            exit_when_done: true,
+            limits: RestartLimits {
+                max_retries: Some(0),
+                ..RestartLimits::default()
+            },
+            ..RestartConfig::default()
+        };
+
+        tracker.record_start(0);
+        assert_eq!(
+            tracker.decide(ChildResult::Exited(1), 0, 0, DesiredState::Up, &restart),
+            RestartDecision::ExitFailure(FailureReason::RetryLimit)
         );
     }
 

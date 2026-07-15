@@ -6,7 +6,9 @@
 //! This module models that ownership and lifecycle but never copies service
 //! bytes: the broker materializes stable pipes and kernel backpressure remains
 //! lossless. The rotating writer separately owns sync-before-rename, archive
-//! retention, timestamping, and bounded-memory partial-line handling.
+//! retention, timestamping, and bounded-memory partial-line handling. Rotated
+//! files use `<live>.@<unix-nanoseconds>.<adapter-pid>.<sequence>`; one shared
+//! catalog defines which regular non-symlink siblings retention may remove.
 
 use std::{
     error::Error,
@@ -516,7 +518,95 @@ impl RotationPolicy {
     }
 }
 
+/// One Immortal-owned rotated file and its parsed storage identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Archive {
+    path: PathBuf,
+    unix_nanoseconds: u128,
+    adapter_pid: u32,
+    sequence: u64,
+    byte_length: u64,
+}
+
+impl Archive {
+    /// Archive path.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Rotation time measured in nanoseconds since the Unix epoch.
+    #[must_use]
+    pub const fn unix_nanoseconds(&self) -> u128 {
+        self.unix_nanoseconds
+    }
+
+    /// Process identifier of the `immortallog` adapter that rotated the file.
+    #[must_use]
+    pub const fn adapter_pid(&self) -> u32 {
+        self.adapter_pid
+    }
+
+    /// Per-adapter sequence used to disambiguate archive names.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// File length observed while scanning the archive directory.
+    #[must_use]
+    pub const fn byte_length(&self) -> u64 {
+        self.byte_length
+    }
+}
+
+/// List archives owned by one live-file namespace in chronological order.
+///
+/// The live file need not exist. Only regular non-symlink siblings named
+/// `<live>.@<unix-nanoseconds>.<adapter-pid>.<sequence>` are returned.
+///
+/// # Errors
+///
+/// Returns an error when the live filename is not UTF-8 or its parent
+/// directory or matching archive metadata cannot be read.
+pub fn archives(path: &Path) -> io::Result<Vec<Archive>> {
+    let (parent, prefix) = archive_location(path)?;
+    let mut archives = Vec::new();
+    for entry in fs::read_dir(parent)? {
+        let entry = entry?;
+        let archive_path = entry.path();
+        let Some(name) = archive_path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some((unix_nanoseconds, adapter_pid, sequence)) = archive_identity(name, &prefix)
+        else {
+            continue;
+        };
+        let metadata = fs::symlink_metadata(&archive_path)?;
+        if metadata.is_file() && !metadata.file_type().is_symlink() {
+            archives.push(Archive {
+                path: archive_path,
+                unix_nanoseconds,
+                adapter_pid,
+                sequence,
+                byte_length: metadata.len(),
+            });
+        }
+    }
+    archives.sort_by_key(|archive| {
+        (
+            archive.unix_nanoseconds,
+            archive.adapter_pid,
+            archive.sequence,
+        )
+    });
+    Ok(archives)
+}
+
 /// Append-only file sink with atomic rename rotation and bounded retention.
+///
+/// Rotation syncs the live file before renaming it into Immortal's `.@`
+/// namespace. Retention never removes siblings outside the exact archive shape.
 pub struct RotatingFile {
     path: PathBuf,
     file: File,
@@ -650,26 +740,19 @@ impl RotatingFile {
     }
 
     fn next_archive_path(&mut self) -> io::Result<PathBuf> {
-        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
-        let filename = self
-            .path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "log filename is not UTF-8")
-            })?;
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
+        let (parent, prefix) = archive_location(&self.path)?;
+        let timestamp = unix_nanoseconds(SystemTime::now())?;
         for _ in 0..1024 {
-            self.archive_sequence = self.archive_sequence.saturating_add(1);
+            self.archive_sequence = self
+                .archive_sequence
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("log archive sequence is exhausted"))?;
             let candidate = parent.join(format!(
-                "{filename}.immortal-archive.{timestamp}.{}.{}",
+                "{prefix}{timestamp}.{}.{}",
                 std::process::id(),
                 self.archive_sequence
             ));
-            if !candidate.exists() {
+            if archive_path_is_available(&candidate)? {
                 return Ok(candidate);
             }
         }
@@ -680,36 +763,12 @@ impl RotatingFile {
     }
 
     fn enforce_retention(&mut self) -> io::Result<()> {
-        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
-        let filename = self
-            .path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "log filename is not UTF-8")
-            })?;
-        let prefix = format!("{filename}.immortal-archive.");
-        let mut archives = Vec::new();
-        for entry in fs::read_dir(parent)? {
-            let entry = entry?;
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            let Some(identity) = archive_identity(name, &prefix) else {
-                continue;
-            };
-            let metadata = fs::symlink_metadata(&path)?;
-            if metadata.is_file() && !metadata.file_type().is_symlink() {
-                archives.push((identity, path, metadata.len()));
-            }
-        }
-        archives.sort_by_key(|(identity, _, _)| *identity);
-        let mut total_bytes = archives
-            .iter()
-            .fold(0_u64, |total, (_, _, length)| total.saturating_add(*length));
+        let archives = archives(&self.path)?;
+        let mut total_bytes = archives.iter().fold(0_u64, |total, archive| {
+            total.saturating_add(archive.byte_length)
+        });
         let mut remaining = archives.len();
-        for (_, archive, length) in archives {
+        for archive in archives {
             let over_count = self.policy.keep.is_some_and(|keep| remaining > keep);
             let over_bytes = self
                 .policy
@@ -718,23 +777,57 @@ impl RotatingFile {
             if !(over_count || over_bytes) {
                 break;
             }
-            fs::remove_file(archive)?;
+            fs::remove_file(archive.path)?;
             remaining = remaining.saturating_sub(1);
-            total_bytes = total_bytes.saturating_sub(length);
+            total_bytes = total_bytes.saturating_sub(archive.byte_length);
         }
         Ok(())
     }
 }
 
+fn archive_location(path: &Path) -> io::Result<(&Path, String)> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "log filename is not UTF-8"))?;
+    Ok((parent, format!("{filename}.@")))
+}
+
 fn archive_identity(name: &str, prefix: &str) -> Option<(u128, u32, u64)> {
     let mut fields = name.strip_prefix(prefix)?.split('.');
-    let timestamp = fields.next()?.parse().ok()?;
-    let process = fields.next()?.parse().ok()?;
-    let sequence = fields.next()?.parse().ok()?;
-    fields
-        .next()
-        .is_none()
-        .then_some((timestamp, process, sequence))
+    let timestamp = fields.next()?;
+    let process = fields.next()?;
+    let sequence = fields.next()?;
+    if fields.next().is_some()
+        || [timestamp, process, sequence]
+            .iter()
+            .any(|field| field.is_empty() || !field.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return None;
+    }
+    Some((
+        timestamp.parse().ok()?,
+        process.parse().ok()?,
+        sequence.parse().ok()?,
+    ))
+}
+
+fn unix_nanoseconds(time: SystemTime) -> io::Result<u128> {
+    time.duration_since(UNIX_EPOCH)
+        .map_err(|_| io::Error::other("system clock is before the Unix epoch"))
+        .map(|elapsed| elapsed.as_nanos())
+}
+
+fn archive_path_is_available(path: &Path) -> io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 fn validate_rotation_policy(policy: RotationPolicy) -> io::Result<()> {
@@ -756,10 +849,11 @@ fn open_append(path: &Path) -> io::Result<File> {
 }
 
 fn sync_parent(path: &Path) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        File::open(parent)?.sync_all()?;
-    }
-    Ok(())
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    File::open(parent)?.sync_all()
 }
 
 #[cfg(test)]
@@ -769,11 +863,13 @@ mod tests {
         fs,
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
+        time::{Duration, UNIX_EPOCH},
     };
 
     use super::{
         BackpressurePolicy, LoggingPlan, LoggingRuntime, LoggingShutdown, LoggingShutdownEffect,
-        OutputStream, PipelineHealth, RotatingFile, RotationPolicy,
+        OutputStream, PipelineHealth, RotatingFile, RotationPolicy, archive_path_is_available,
+        archives, unix_nanoseconds,
     };
     use crate::config::parse_str;
     use crate::supervisor::{FailureReason, Generation, SupervisorState};
@@ -982,18 +1078,99 @@ mod tests {
     }
 
     #[test]
+    fn archive_timestamp_rejects_pre_epoch_clock() -> Result<(), Box<dyn Error>> {
+        let before_epoch = UNIX_EPOCH
+            .checked_sub(Duration::from_nanos(1))
+            .ok_or("could not represent a pre-epoch test time")?;
+        let error = unix_nanoseconds(before_epoch)
+            .err()
+            .ok_or("pre-epoch time was accepted")?;
+        assert!(error.to_string().contains("before the Unix epoch"));
+        Ok(())
+    }
+
+    #[test]
+    fn archive_sequence_exhaustion_is_reported() -> Result<(), Box<dyn Error>> {
+        let directory = TestDirectory::new()?;
+        let path = directory.path().join("api.log");
+        let mut sink = RotatingFile::open(&path, RotationPolicy::default())?;
+        sink.archive_sequence = u64::MAX;
+
+        let error = sink
+            .next_archive_path()
+            .err()
+            .ok_or("exhausted archive sequence was accepted")?;
+        assert!(error.to_string().contains("sequence is exhausted"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_allocation_treats_dangling_symlink_as_a_collision() -> Result<(), Box<dyn Error>> {
+        let directory = TestDirectory::new()?;
+        let candidate = directory.path().join("api.log.@1.2.3");
+        std::os::unix::fs::symlink(directory.path().join("missing"), &candidate)?;
+
+        assert!(!archive_path_is_available(&candidate)?);
+        assert!(archive_path_is_available(
+            &directory.path().join("api.log.@1.2.4")
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn archive_catalog_uses_exact_ownership_and_numeric_order() -> Result<(), Box<dyn Error>> {
+        let directory = TestDirectory::new()?;
+        let path = directory.path().join("api.log");
+        let first = directory.path().join("api.log.@2.3.20");
+        let second = directory.path().join("api.log.@2.10.10");
+        let third = directory.path().join("api.log.@10.9.2");
+        for (archive, contents) in [
+            (&first, b"a".as_slice()),
+            (&second, b"bb".as_slice()),
+            (&third, b"ccc".as_slice()),
+        ] {
+            fs::write(archive, contents)?;
+        }
+        for unrelated in [
+            "api.log.immortal-archive.1.2.3",
+            "api.log.@3.4",
+            "api.log.@3.4.5.extra",
+            "api.log.@not-a-time.4.5",
+            "api.log.@+3.4.5",
+            "api.log.@3.+4.5",
+            "api.log.@3.4.+5",
+            "api.log.@340282366920938463463374607431768211456.4.5",
+        ] {
+            fs::write(directory.path().join(unrelated), b"unowned")?;
+        }
+        fs::create_dir(directory.path().join("api.log.@3.4.5"))?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&first, directory.path().join("api.log.@4.5.6"))?;
+
+        let found = archives(&path)?;
+        let paths: Vec<&Path> = found.iter().map(super::Archive::path).collect();
+        assert_eq!(paths, [&first, &second, &third]);
+        assert_eq!(found.first().map(super::Archive::unix_nanoseconds), Some(2));
+        assert_eq!(found.first().map(super::Archive::adapter_pid), Some(3));
+        assert_eq!(found.first().map(super::Archive::sequence), Some(20));
+        assert_eq!(found.first().map(super::Archive::byte_length), Some(1));
+        Ok(())
+    }
+
+    #[test]
     fn reopen_recovers_rotation_state_without_removing_unowned_files() -> Result<(), Box<dyn Error>>
     {
         let directory = TestDirectory::new()?;
         let path = directory.path().join("api.log");
-        let older = directory.path().join("api.log.immortal-archive.100.7.1");
-        let newer = directory.path().join("api.log.immortal-archive.200.7.2");
-        let unrelated = directory
-            .path()
-            .join("api.log.immortal-archive.operator-copy");
+        let older = directory.path().join("api.log.@100.7.1");
+        let newer = directory.path().join("api.log.@200.7.2");
+        let old_prototype = directory.path().join("api.log.immortal-archive.50.7.1");
+        let malformed = directory.path().join("api.log.@operator-copy");
         fs::write(&older, b"old")?;
         fs::write(&newer, b"new")?;
-        fs::write(&unrelated, b"operator")?;
+        fs::write(&old_prototype, b"prototype")?;
+        fs::write(&malformed, b"operator")?;
 
         let mut sink = RotatingFile::open(
             &path,
@@ -1007,7 +1184,8 @@ mod tests {
 
         assert!(!older.exists());
         assert_eq!(fs::read(newer)?, b"new");
-        assert_eq!(fs::read(unrelated)?, b"operator");
+        assert_eq!(fs::read(old_prototype)?, b"prototype");
+        assert_eq!(fs::read(malformed)?, b"operator");
         assert_eq!(fs::read(path)?, b"live");
         Ok(())
     }
@@ -1034,22 +1212,9 @@ mod tests {
     }
 
     fn archive_contents(directory: &Path, filename: &str) -> Result<Vec<Vec<u8>>, Box<dyn Error>> {
-        let prefix = format!("{filename}.immortal-archive.");
-        let mut paths = Vec::new();
-        for entry in fs::read_dir(directory)? {
-            let path = entry?.path();
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with(&prefix))
-            {
-                paths.push(path);
-            }
-        }
-        paths.sort();
-        paths
+        archives(&directory.join(filename))?
             .into_iter()
-            .map(|path| fs::read(path).map_err(Into::into))
+            .map(|archive| fs::read(archive.path).map_err(Into::into))
             .collect()
     }
 }

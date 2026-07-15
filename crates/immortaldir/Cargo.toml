@@ -24,3 +24,8 @@ workspace = true
 name = "operational_contract"
 path = "tests/operational_contract.rs"
 harness = false
+
+[[test]]
+name = "routing_contract"
+path = "tests/routing_contract.rs"
+harness = false

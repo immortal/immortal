@@ -77,6 +77,8 @@ const SPAWN_FAILURE_EXIT: u8 = 127;
 pub struct SupervisionOutcome {
     /// Terminal supervisor state reached by this foreground invocation.
     pub state: SupervisorState,
+    /// Restart-limit failure which requested terminal cleanup instead of persistent failure.
+    pub terminal_failure: Option<FailureReason>,
     /// Last reaped generation result, absent when shutdown preceded the first start.
     pub last_result: Option<ChildResult>,
     /// Whether the last recorded result represents a failed exec handshake.
@@ -685,6 +687,7 @@ async fn drive_service(
                 &execution.machine,
                 &execution.tracker,
                 &execution.status,
+                execution.terminal_failure,
             ));
         }
 
@@ -938,6 +941,7 @@ struct ExecutionContext {
     stop_kill_sent: bool,
     shutdown_requested: bool,
     tracker: RestartTracker,
+    terminal_failure: Option<FailureReason>,
 }
 
 impl ExecutionContext {
@@ -966,6 +970,7 @@ impl ExecutionContext {
             stop_kill_sent: false,
             shutdown_requested: false,
             tracker: RestartTracker::default(),
+            terminal_failure: None,
         }
     }
 
@@ -3222,6 +3227,9 @@ fn finish_completion(
             StopCompletion::Halt => RestartDecision::ExitSupervisor,
         },
     );
+    if let RestartDecision::ExitFailure(reason) = decision {
+        execution.terminal_failure = Some(reason);
+    }
     if after_hook {
         execution
             .machine
@@ -3246,9 +3254,10 @@ fn finish_completion(
                     client.process(),
                 ),
         ),
-        RestartDecision::StayDown | RestartDecision::ExitSupervisor | RestartDecision::Fail(_) => {
-            None
-        }
+        RestartDecision::StayDown
+        | RestartDecision::ExitSupervisor
+        | RestartDecision::ExitFailure(_)
+        | RestartDecision::Fail(_) => None,
     };
     Ok(())
 }
@@ -3301,9 +3310,11 @@ fn outcome(
     machine: &StateMachine,
     tracker: &RestartTracker,
     status: &RuntimeStatus,
+    terminal_failure: Option<FailureReason>,
 ) -> SupervisionOutcome {
     SupervisionOutcome {
         state: machine.state(),
+        terminal_failure,
         last_result: status.last_result,
         last_start_failed: status.last_start_failed,
         last_readiness_failed: status.last_readiness_failed,

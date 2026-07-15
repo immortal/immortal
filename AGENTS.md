@@ -41,19 +41,81 @@ The Cargo workspace contains:
 Keep process management, configuration, control protocols, logging, supervision,
 and platform behavior in `immortal-core`.
 
-CLI crates follow this one-way flow:
+### CLI source layout
+
+Use the `s3m`-inspired per-action layout demonstrated by `crates/immortal` for
+all new or substantially refactored CLI actions:
 
 ```text
-commands -> dispatch -> actions -> start -> main
+crates/<name>/src/
+|-- bin/
+|   `-- <name>.rs
+|-- lib.rs
+`-- cli/
+    |-- mod.rs
+    |-- start.rs
+    |-- commands/
+    |   `-- mod.rs
+    |-- dispatch/
+    |   `-- mod.rs
+    `-- actions/
+        |-- mod.rs
+        |-- <action>.rs
+        `-- <shared_helper>.rs
 ```
 
-- `commands` defines Clap syntax and help text only.
-- `dispatch` converts CLI matches into typed actions.
-- `actions` coordinates application operations.
-- `start` initializes diagnostics and runs dispatch.
-- `main` remains a thin process entry point.
+The execution flow is:
 
-Do not put operating-system or supervision logic in CLI modules.
+```text
+src/bin/<name>.rs
+  -> cli::start
+      -> commands
+      -> dispatch
+      -> actions::Action
+  -> exhaustive Action match
+      -> actions::<action>::execute
+      -> immortal-core
+  -> shared CLI completion and exit mapping
+```
+
+- `commands` defines Clap syntax, defaults, conflicts, and help text only.
+- `dispatch` converts CLI matches into action-owned types. It must not execute
+  operations or define a competing action contract.
+- Keep `commands`, `dispatch`, and `start` modules private. Expose only
+  `actions` and the deliberate startup/completion re-exports needed by the
+  separate binary target.
+- `actions/mod.rs` owns `Action`, shared action inputs, and shared typed errors.
+  It declares focused action modules; do not hide binary routing in a central
+  `actions::execute` match.
+- Each user-visible operation has a `snake_case` action file whose public handler
+  accepts typed values and coordinates only that operation. Put genuinely
+  shared coordination in a narrowly named private module rather than duplicating
+  it across handlers.
+- `start` initializes diagnostics, parses arguments, runs dispatch, and returns
+  the typed action. It does not execute the action.
+- `src/bin/<name>.rs` makes the installed executable name explicit, calls
+  `start`, exhaustively matches `Action`, delegates each variant to its action
+  module, and translates the final result. The compiler must make a newly added
+  variant fail to build until its route is wired.
+- Keep the binary match declarative: no configuration parsing, runtime
+  construction, process behavior, business logic, or duplicated validation.
+- Keep executable entry points synchronous. Tokio runtimes belong in the action
+  or core boundary after all required fork, daemon, broker, signal, and
+  descriptor setup. Do not use `#[tokio::main]` where it can create a runtime
+  before those boundaries.
+- Preserve each executable's typed exit contract. A generic
+  `main() -> anyhow::Result<()>` and `?` are not substitutes when they collapse
+  usage, configuration, temporary, permission, I/O, and OS failures to status
+  1; use shared startup reporting and completion helpers instead.
+
+CLI action modules may coordinate calls into `immortal-core`, but process
+management, configuration semantics, control protocols, logging, supervision,
+and platform behavior remain implemented and validated in `immortal-core`.
+
+Test dispatch independently from action handlers. Every new action needs
+dispatch coverage, handler success and failure coverage, and a black-box CLI
+contract proving that the named binary routes the variant and preserves its
+exit status.
 
 ## Documentation requirements
 
@@ -78,10 +140,18 @@ change without synchronized documentation is incomplete.
 - Keep `README.md`, `DESIGN.md`, configuration examples, and implementation
   checklists synchronized with implemented behavior.
 - Document and test every public CLI, configuration, and protocol field.
+- Start every maintained YAML document with `---` and keep it compliant with
+  the repository yamllint policy.
 
 ## Coding style and naming conventions
 
 - Use Rust 2024 and let `rustfmt` determine layout.
+- When multiple styles remain valid after `rustfmt`, prefer the Rust API
+  Guidelines, then conventions used by the standard library and `rust-lang`
+  projects, and keep the choice consistent across the workspace.
+- Write child-module re-exports through `self::`, for example
+  `pub use self::start::start`; group multiple items and retain `rustfmt`'s
+  version-sorted order.
 - Clippy `all` and `pedantic` are denied. Warnings, unsafe code, `unwrap`,
   `expect`, panics, and unchecked indexing are denied by workspace policy.
 - Production code must not contain `#[allow(...)]`, `#![allow(...)]`,

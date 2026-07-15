@@ -1,6 +1,6 @@
 [package]
 name = "immortallog"
-description = "Replaceable file logging compatibility adapter for immortal"
+description = "File logging adapter and archive inspector for immortal"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -13,6 +13,14 @@ publish.workspace = true
 [dependencies]
 clap.workspace = true
 immortal-core.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[[test]]
+name = "archives_contract"
+path = "tests/archives_contract.rs"
+harness = false

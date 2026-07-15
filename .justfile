@@ -1,22 +1,43 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+tools_manifest := "tools/Cargo.toml"
+tools_target := "tools/target"
+
 default:
     @just --list
 
 fmt:
     cargo fmt --all
+    cargo fmt --manifest-path {{tools_manifest}} --all
 
 fmt-check:
     cargo fmt --all -- --check
+    cargo fmt --manifest-path {{tools_manifest}} --all -- --check
+
+yaml-lint:
+    yamllint .
 
 clippy:
     cargo clippy --workspace --all-targets --all-features
+    CARGO_TARGET_DIR={{tools_target}} cargo clippy --manifest-path {{tools_manifest}} --workspace --all-targets --all-features --locked
 
 check:
     cargo check --workspace --all-targets --all-features
+    CARGO_TARGET_DIR={{tools_target}} cargo check --manifest-path {{tools_manifest}} --workspace --all-targets --all-features --locked
 
 test:
     cargo test --workspace
+    CARGO_TARGET_DIR={{tools_target}} cargo test --manifest-path {{tools_manifest}} --workspace --locked
+
+tools-build:
+    CARGO_TARGET_DIR={{tools_target}} cargo build --manifest-path {{tools_manifest}} --workspace --locked
+
+tools-check:
+    yamllint tools
+    cargo fmt --manifest-path {{tools_manifest}} --all -- --check
+    CARGO_TARGET_DIR={{tools_target}} cargo clippy --manifest-path {{tools_manifest}} --workspace --all-targets --all-features --locked
+    CARGO_TARGET_DIR={{tools_target}} cargo check --manifest-path {{tools_manifest}} --workspace --all-targets --all-features --locked
+    CARGO_TARGET_DIR={{tools_target}} cargo test --manifest-path {{tools_manifest}} --workspace --locked
 
 soak iterations="10":
     scripts/soak "{{ iterations }}"
@@ -41,14 +62,14 @@ deny:
     cargo deny --all-features check
 
 lint-policy:
-    @matches="$(rg -n '#!?\[(allow|expect)\(' crates --glob '*.rs' --glob '!**/tests/**' || true)"; \
+    @matches="$(rg -n '#!?\[(allow|expect)\(' crates tools --glob '*.rs' --glob '!**/tests/**' || true)"; \
         if [[ -n "$matches" ]]; then \
             printf '%s\n' "$matches"; \
-            echo "production lint exceptions are forbidden; refactor the code or keep a narrow exception in crates/*/tests/" >&2; \
+            echo "production lint exceptions are forbidden; refactor the code or keep a narrow exception in a tests directory" >&2; \
             exit 1; \
         fi
 
-ci: lint-policy fmt-check clippy check test audit deny install-check
+ci: lint-policy yaml-lint fmt-check clippy check test audit deny install-check
 
 build:
     cargo build --workspace --release --locked

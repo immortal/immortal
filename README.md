@@ -149,8 +149,8 @@ See [DESIGN.md](DESIGN.md) for module ownership and implementation rules.
 - `immortalctl`: inspect supervisors, change desired state, and deliver signals.
 - `immortaldir`: reconcile a directory of service definitions.
 - `immortallog`: minimal, replaceable stdin-to-file adapter with bounded-memory
-  streaming, rotation, retention, timestamps, and optional raw byte
-  pass-through.
+  streaming, rotation, retention, timestamps, optional raw byte pass-through,
+  and archive inspection.
 
 ```mermaid
 flowchart TB
@@ -186,11 +186,22 @@ Solid arrows are Rust/Cargo dependencies. Dashed arrows are runtime
 relationships. CLI crates never call `fork` directly: all process behavior
 crosses the `immortal-core::process` boundary.
 
-Each CLI follows the one-way flow:
+CLI code keeps parsing, routing, and execution separate:
 
 ```text
-commands -> dispatch -> actions -> start -> main
+src/bin/<name>.rs -> start -> commands -> dispatch -> actions::Action
+src/bin/<name>.rs -> actions::<operation> -> immortal-core
 ```
+
+Each executable remains its own Cargo package and exposes one explicitly named,
+thin entry point under `src/bin/`; reusable behavior stays in its package library
+or `immortal-core`. `actions` owns each typed action contract and its execution;
+private `commands` and `dispatch` modules only define syntax and convert matches
+into those types. Every binary exhaustively routes variants to focused action
+files: three supervision paths in `immortal`, eight control operations in
+`immortalctl`, reconciliation in `immortaldir`, and writing or archive
+inspection in `immortallog`. These matches contain no runtime, transport,
+process, logging, or supervision policy.
 
 Every executable's `--version` output includes the shared package version and
 the full source commit, for example `immortal 0.1.0 - 446209f...`. Builds made
@@ -256,6 +267,7 @@ contain both and canonical output always uses `environment`. The complete
 currently implemented shape is:
 
 ```yaml
+---
 version: 2
 enabled: true
 command: [/usr/local/bin/api, --foreground]
@@ -333,6 +345,7 @@ Self-daemonizing software which cannot run in the foreground must instead use
 the explicit descriptor contract:
 
 ```yaml
+---
 version: 2
 command: [/usr/local/sbin/legacy-daemon]
 process_mode: descriptor-tracking
@@ -347,7 +360,11 @@ descriptor_tracking:
 ```
 
 All shown sections except `version` and `command` have defaults. Absent restart
-limits mean retry forever. A burst value requires both nonzero fields.
+limits mean retry forever. `max_retries` counts starts after the initial start.
+Exhausting a restart limit normally leaves the controlled supervisor in
+`Failed`; with `exit_when_done: true`, it instead drains its logging graph and
+exits with the preserved failure reason and temporary-failure status. A burst
+value requires both nonzero fields.
 `success_exit_codes` cannot be empty. Lifecycle, readiness, and condition
 deadlines are capped at 24 hours; scheduled delay/backoff values are capped at
 one year so monotonic deadline construction remains representable. `notify-fd` publishes
@@ -453,6 +470,7 @@ Local files and centralized forwarding have separate names. The simplest local
 configuration combines stdout and stderr:
 
 ```yaml
+---
 log:
   file: /var/log/api.log
   age: 1d
@@ -466,6 +484,7 @@ stderr; it never silently redirects stdout. Defining both routes creates
 independent files:
 
 ```yaml
+---
 log:
   stdout:
     file: /var/log/api.log
@@ -477,6 +496,7 @@ One top-level logger argv always receives combined stdout and stderr without
 shell parsing:
 
 ```yaml
+---
 logger: [/usr/bin/logger, -t, api]
 ```
 
@@ -488,6 +508,44 @@ external logger process receives both streams. Local timestamping never changes
 the forwarded bytes, and relative ordering between concurrent stdout and stderr
 writes is unspecified.
 
+The Go implementation performed local fan-out and rotation inside the
+supervisor with `multiwriter` and `logrotate`. Rust v2 instead gives each local
+file route a separate adapter process. `immortallog` is the default;
+`log_adapter` replaces only that local file writer, not the optional external
+`logger`.
+
+```mermaid
+flowchart LR
+    service["Supervised service"] -->|"stdout (fd 1)"| broker["Broker-owned stream routes"]
+    service -->|"stderr (fd 2)"| broker
+    broker -->|"configured stream(s) via stdin"| adapter["File adapter process(es)<br/>immortallog or log_adapter"]
+    adapter -->|"local copy"| files["Live file and rotated archives"]
+    adapter -. "original bytes via stdout<br/>(--passthrough)" .-> pipe["Shared kernel pipe"]
+    broker -. "streams without a local route" .-> pipe
+    pipe -. "combined stream via stdin" .-> logger["Optional external logger"]
+```
+
+A combined `log.file` creates one adapter whose standard input receives both
+service streams. Split `log.stdout` and `log.stderr` routes create one adapter
+per configured file, and each adapter receives only its selected stream. Without
+an external `logger`, the adapter only writes its local file. When `logger` is
+also configured, Immortal adds `--passthrough`; the adapter must copy every
+original input byte to standard output, which feeds the shared logger pipe.
+
+A custom `log_adapter` must implement the `immortallog` write-mode command-line
+contract:
+
+```text
+ADAPTER [--max-age SECONDS] [--keep COUNT] [--max-bytes BYTES]
+        [--timestamp] [--passthrough] FILE
+```
+
+It must read until standard-input EOF, report write or rotation failures with a
+nonzero exit status, and preserve the original byte stream on standard output
+when `--passthrough` is present. Moving this work out of the supervisor removes
+an in-supervisor byte-copy and fan-out loop; actual throughput still depends on
+the adapter, storage, and downstream logger.
+
 `age` accepts bare seconds or `s`, `m`, `h`, `d`, and `w`. `size` accepts bare
 MiB or `B`, `KiB`, `MiB`, and `GiB`. Values must be positive whole numbers.
 `age` and `size` are independent rotation triggers, checked when output arrives.
@@ -496,6 +554,35 @@ present and `keep` is omitted, seven archives are retained. `keep` without a
 trigger is rejected. `num` remains a deprecated input alias for `keep`, and a
 top-level `stderr` remains a deprecated input alias for `log.stderr`;
 `--check-config` emits only canonical names and explicit units.
+
+Rotated files use this sibling namespace:
+
+```text
+<live-file>.@<unix-nanoseconds>.<immortallog-pid>.<sequence>
+```
+
+For example, `/var/log/api.log.@1784103427741753038.297839.1` records the
+rotation instant, the adapter which performed it, and a per-adapter collision
+sequence. The `@` is a compact rotation marker inspired by multilog; the value
+remains Unix time, not TAI64N, and Immortal does not claim multilog's `.s` or
+`.u` processing states.
+
+Inspect one live-file namespace in chronological order without requiring the
+live file itself to exist:
+
+```sh
+immortallog archives /var/log/api.log
+immortallog archives --output json /var/log/api.log
+```
+
+The default space-aligned table places the path first, followed by readable
+UTC, bytes, and adapter PID; numeric columns are right-aligned. Sequence remains
+available in the path and as a structured JSON field. JSON also preserves the
+exact Unix-nanosecond identity as a string. Both forms ignore malformed names,
+directories, symbolic links, unrelated files, and the earlier prototype
+`.immortal-archive.` names.
+`archives` is reserved as the first positional token; write a relative live
+file with that literal name as `./archives`.
 
 Logging routes are broker-owned process graphs, not in-supervisor byte
 multiwriters. `immortallog --passthrough` writes the original unbounded stream
@@ -514,8 +601,7 @@ the service running and reports failed logger health. An accepted `start`,
 `once`, or `restart` resets the external logger retry history. A logged service
 currently rejects control `Exit`, because abandoning only the service would
 break ownership of its logging graph; use `Halt` until whole-graph detach is
-implemented. `log_adapter` may select another file adapter path; otherwise
-Immortal uses `immortallog` beside its own executable.
+implemented.
 
 The resilience contracts execute a non-executable logger target, stream 16 MiB
 through a deliberately paused logger, and run a logger which consumes EOF but
@@ -963,6 +1049,7 @@ failure tests, and required CI pass.
 - [x] Keep byte fan-out out of the supervisor.
 - [x] Sync before rotation and use atomic timestamped archives.
 - [x] Recover interrupted rotation and enforce count/total-size retention.
+- [x] Expose readable table and JSON archive inspection.
 - [x] Inject disk-write/sync failure and broken downstream pipes.
 - [x] Stream huge and partial lines without unbounded line buffering.
 - [x] Test a real logger crash loop through exhaustion and manual recovery.
@@ -991,6 +1078,33 @@ The dedicated GitHub Actions workflow runs both targets for one minute after
 relevant pushes and pull requests, and for ten minutes on its weekly schedule.
 Every run has per-input, memory, job, and overall campaign bounds so malformed
 input cannot consume CI indefinitely.
+
+## Developer diagnostic tools
+
+The [`tools`](tools/README.md) directory is a separate, dependency-free Cargo
+workspace for manually exercised workloads. These binaries are checked by
+normal CI but remain outside the released product workspace and installation
+set. Automated process contracts continue to own their hermetic fixtures.
+
+The first workload, `immortal-log-probe`, emits flushed records to stdout and
+stderr on a configurable cadence and can exit with a chosen status after a
+deadline. Its process IDs, sequences, and final records make logging, restart,
+rotation, and drain behavior easy to inspect:
+
+```sh
+scripts/dev-ssh just tools-build
+scripts/dev-ssh cargo run --quiet --locked -p immortal -- \
+  -f -c tools/log-probe-split.yml
+```
+
+The split definition exercises independent stdout/stderr files; the companion
+`tools/log-probe-combined.yml` sends both streams through one `log.file`.
+The split and combined failure definitions retain seven archives and keep the
+failed supervisor available after three retries. The
+`log-probe-combined-exit-on-success.yml` definition demonstrates terminal
+success, while `log-probe-combined-exit-after-retries.yml` demonstrates terminal
+failure after the same retry count. See the tools documentation for the complete
+exercises and direct `--logfile`/`--logger` scenarios.
 
 ## Performance baselines
 
@@ -1127,6 +1241,9 @@ scripts/dev-up
 scripts/dev-ssh just ci
 scripts/dev-ssh cargo check --workspace --target x86_64-unknown-freebsd --locked
 ```
+
+Every maintained YAML document starts with `---`. The pinned yamllint policy is
+part of `just ci` and the hosted quality job.
 
 For repeated release-candidate exercise, run the complete contract suite between
 1 and 100 times. Every process contract retains its own hard deadline and

@@ -1,0 +1,15 @@
+---
+extends: default
+
+ignore: |
+  .git/
+  target/
+  tools/target/
+
+rules:
+  document-start:
+    present: true
+  line-length:
+    max: 120
+  truthy:
+    check-keys: false

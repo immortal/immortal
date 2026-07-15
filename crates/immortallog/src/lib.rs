@@ -1,3 +1,3 @@
-//! Small external file-logging adapter for Immortal pipelines.
+//! Small external file-logging adapter and archive inspector.
 
 pub mod cli;

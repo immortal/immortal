@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["log-probe"]
+
+[workspace.package]
+version = "0.0.0"
+authors = ["Nicolas Embriz <nbari@tequila.io>"]
+edition = "2024"
+rust-version = "1.97"
+license = "BSD-3-Clause"
+repository = "https://github.com/immortal/immortal"
+publish = false
+
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+nursery = { level = "allow", priority = -1 }
+pedantic = "deny"
+all = "deny"
+correctness = "deny"
+suspicious = "deny"
+perf = "deny"
+complexity = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+await_holding_lock = "deny"
+needless_borrow = "deny"
+needless_collect = "deny"
+large_stack_arrays = "deny"

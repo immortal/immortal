@@ -200,7 +200,7 @@ pub struct RestartConfig {
     pub policy: RestartPolicy,
     /// Exit codes treated as successful.
     pub success_exit_codes: BTreeSet<u8>,
-    /// Exit the supervisor after a result for which no restart is required.
+    /// Exit after terminal completion or exhaustion of a configured service restart limit.
     pub exit_when_done: bool,
     /// Explicit safeguards against unbounded crash loops.
     pub limits: RestartLimits,

@@ -27,7 +27,7 @@ use immortal_core::{
     runtime::{RuntimeOwner, discover, supervisor_is_active},
     shutdown::TerminationSignals,
 };
-use immortaldir::cli::{actions, dispatch::Action};
+use immortaldir::cli::actions::{ActionError, ReconcileAction as DirectoryAction, reconcile};
 use tokio::{
     runtime::Builder,
     sync::mpsc::{self, error::TrySendError},
@@ -67,7 +67,7 @@ fn run_manager(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             .ok_or("missing manager runtime directory")?,
     );
     let endpoint = start_process_broker()?;
-    let action = Action {
+    let action = DirectoryAction {
         directory,
         runtime_directory,
         scan_interval_seconds: 30,
@@ -77,7 +77,7 @@ fn run_manager(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         dry_run: false,
     };
     let tokio = Builder::new_current_thread().enable_all().build()?;
-    tokio.block_on(actions::execute(&action, Some(endpoint)))?;
+    tokio.block_on(reconcile::execute_with_endpoint(&action, Some(endpoint)))?;
     Ok(())
 }
 
@@ -219,7 +219,7 @@ fn prove_operational_lifecycle() -> Result<(), Box<dyn Error>> {
     write_parallel_definitions(&definitions)?;
     prepare_broken_supervisor(&definitions, &runtime)?;
     let definition = definitions.join("api.yml");
-    let action = Action {
+    let action = DirectoryAction {
         directory: definitions,
         runtime_directory: runtime.clone(),
         scan_interval_seconds: 1,
@@ -247,7 +247,7 @@ fn prove_operational_lifecycle() -> Result<(), Box<dyn Error>> {
 }
 
 async fn run_reconciliation_contract(
-    action: Action,
+    action: DirectoryAction,
     limit_endpoint: immortal_core::process::ProcessBrokerEndpoint,
     endpoint: immortal_core::process::ProcessBrokerEndpoint,
     broken_control: StdUnixListener,
@@ -258,7 +258,10 @@ async fn run_reconciliation_contract(
     prove_batch_limit(limit_endpoint).await?;
     let (attempt_sender, mut attempts) = mpsc::channel(32);
     let broken_task = tokio::spawn(reject_control_clients(broken_control, attempt_sender));
-    let task = tokio::spawn(async move { actions::execute(&action, Some(endpoint)).await });
+    let task =
+        tokio::spawn(
+            async move { reconcile::execute_with_endpoint(&action, Some(endpoint)).await },
+        );
     let result = exercise_reconciliation(definition, &runtime, &mut attempts, locked_owner).await;
     let mut signal_observer = TerminationSignals::new()?;
     let process = ProcessId::try_from(i32::try_from(std::process::id())?)?;
@@ -282,7 +285,7 @@ async fn observe_termination(signals: &mut TerminationSignals) -> Result<(), Box
 }
 
 async fn wait_for_reconciler_shutdown(
-    mut task: tokio::task::JoinHandle<Result<(), actions::ActionError>>,
+    mut task: tokio::task::JoinHandle<Result<(), ActionError>>,
 ) -> Result<(), Box<dyn Error>> {
     match timeout(DEADLINE, &mut task).await {
         Ok(Ok(Ok(()))) => Ok(()),

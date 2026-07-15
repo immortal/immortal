@@ -35,24 +35,44 @@ filesystem watcher delivering every event.
 
 ## CLI architecture
 
-Every executable uses the same one-way flow inspired by the `cron-when` CLI
-layout:
+The CLI layers use the following flow, inspired by the `cron-when` and `s3m`
+layouts:
 
 ```text
-main
+src/bin/<name>.rs
   -> cli::start
       -> commands: define Clap commands and options
-      -> dispatch: validate matches and construct a typed action
-      -> actions: execute the selected application operation
+      -> dispatch: validate matches and construct an actions-owned type
+  -> exhaustive Action match
+      -> actions/<operation>.rs: execute one typed operation
+          -> immortal-core: reusable process and operating-system behavior
 ```
 
 The layers have strict responsibilities:
 
 - `commands` contains only CLI syntax and help text.
-- `dispatch` converts untyped matches into typed values and reports usage errors.
-- `actions` coordinates application operations without embedding OS primitives.
-- `start` initializes diagnostics and connects the layers.
-- `main` translates the final result into process output and an exit status.
+- `dispatch` converts untyped matches into `actions` types and reports usage
+  errors; it owns no action contract.
+- `actions/mod.rs` owns shared typed contracts and errors; focused action files
+  coordinate individual operations without embedding OS primitives.
+- `start` initializes diagnostics and returns the dispatched action.
+- `src/bin/<name>.rs` makes the installed name visible in the source tree and
+  contains only exhaustive action routing and process-exit translation.
+
+All executable crates implement the per-action form. `immortal` routes
+configuration checks and both supervision inputs; `immortalctl` routes each
+control operation to a focused handler backed by one private transport engine;
+`immortaldir` routes reconciliation through a handler which creates its process
+broker before Tokio; and `immortallog` separates stream writing from archive
+inspection. `commands`, `dispatch`, and `start` remain private implementation
+modules, while `actions` and the deliberate startup/completion contract are the
+only CLI surfaces needed by each separate binary target.
+
+Entrypoints deliberately use explicit startup and completion handling rather
+than `anyhow::Result` and `?`. This preserves the public usage, configuration,
+temporary-failure, permission, I/O, and operating-system exit classes. Binary
+matches contain routing only; runtime creation, daemonization, transport, and
+supervision remain in action or core boundaries.
 
 `immortal` uses the Go options as a requirements inventory while adopting typed
 Clap names, validation, value hints, and conventions. Parsing an option does not
