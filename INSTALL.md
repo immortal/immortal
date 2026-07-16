@@ -70,7 +70,7 @@ descriptor-tracking contract. Immortal gives the launched generation
 `IMMORTAL_LIFETIME_FD`; application forks inherit that capability, and its final
 close—not a PID-file value—ends the logical generation. Because no background
 PID is adopted, bounded stop and reload hooks provide application control. See
-the complete [descriptor-tracking example and lifecycle](README.md#configuration-schema).
+the complete [descriptor-tracking example and lifecycle](README.md#descriptor-tracking).
 
 A representative legacy definition:
 

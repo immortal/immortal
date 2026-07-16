@@ -1,9 +1,9 @@
 # immortal
 
-Immortal is being rebuilt in Rust as a focused Unix process supervisor for
-Linux, macOS, and FreeBSD. It is not an init system and will not run as PID 1.
-The operating system's init system starts `immortaldir`; Immortal then owns the
-lifecycle of configured application processes.
+Immortal is a focused Unix process supervisor for Linux, macOS, and FreeBSD. It
+does not replace the host init system or run as PID 1. The host starts
+`immortaldir`; Immortal then reconciles service definitions and owns each
+configured application process group.
 
 ```text
 OS init (PID 1)
@@ -16,132 +16,73 @@ OS init (PID 1)
 immortalctl -------- authenticated local control --------> immortal
 ```
 
-The Go implementation remains available on `master` and `develop` as a
-requirements and historical reference. Those branches are read-only during the
-Rust rewrite. The Rust generation deliberately does not promise drop-in
-configuration or protocol compatibility.
+> [!IMPORTANT]
+> The Rust rewrite is a release candidate, not a drop-in replacement for the Go
+> release and not yet declared production-ready. Release claims require the
+> retained evidence in [VALIDATION.md](VALIDATION.md) and [RELEASE.md](RELEASE.md).
 
-## Design direction
+The Go implementation remains on `master` and `develop` as a read-only
+requirements reference. Rust accepts only strict `version: 2` definitions and
+uses a new bounded control protocol.
 
-The rewrite keeps the useful product shape of the Go release while correcting
-the process-management problems identified in the original
-[Hacker News review](https://news.ycombinator.com/item?id=14003971), the
-[Lobsters discussion](https://lobste.rs/s/svv0kz/nix_cross_platform_os_agnostic),
-and the design documentation for
-[daemontools](https://cr.yp.to/daemontools/supervise.html),
-[runit](https://smarden.org/runit/benefits), and
-[s6](https://skarnet.org/software/s6/overview.html).
+## Quick start
 
-- Owned services remain direct children until they are reaped. PID files are
-  output-only metadata, never process identity.
-- Each service generation owns a process group. Lifecycle cleanup targets the
-  group; compatibility signal commands target the main process unless stated
-  otherwise.
-- Each active group is armed with an out-of-group owner-loss helper. Forced
-  broker death therefore kills running and stopped group members instead of
-  leaving a live service behind.
-- Self-daemonizing applications use an explicit descriptor-based compatibility
-  mode with application control hooks. PID adoption is not considered safe.
-- Tokio is used for timers, signals, pipes, and Unix sockets, but process
-  supervisors use a current-thread runtime so `fork` never runs from a
-  multithreaded runtime.
-- Logger commands are separately supervised processes. Immortal preserves the
-  pipes so a service and its logger can restart independently.
-- The privileged HTTP server is replaced by a bounded, versioned local control
-  protocol. A future web gateway must be a separate unprivileged component.
-- Filesystem notifications only trigger reconciliation. A complete desired
-  versus current-state scan remains authoritative.
-- Restarting forever with capped backoff is the default. Explicit attempt,
-  burst/window, or elapsed-time limits can place a crash loop in `Failed`.
-- Readiness and portable start conditions handle dependencies without copying
-  systemd targets into Immortal.
+Build and validate inside the repository DevPod:
 
-### Canonical fork-library gate
+```sh
+scripts/dev-up
+scripts/dev-ssh cargo build --workspace --locked
+scripts/dev-ssh cargo run --quiet --locked -p immortal -- \
+  --config examples/services/sleep.yml --check-config
+scripts/dev-ssh cargo run --quiet --locked -p immortaldir -- \
+  --once --dry-run examples/services
+```
 
-The reviewed `fork` 0.9.0 registry release developed under
-[`immortal/fork#16`](https://github.com/immortal/fork/issues/16) supplies
-checked process and process-group identifiers, full nonblocking child events,
-explicit signal targets, prepared direct execution, descriptor allow-lists,
-and checked daemon startup.
+Run the example supervisor in one terminal and inspect it from another:
 
-Broker-death containment additionally uses the additive API developed under
-[`immortal/fork#17`](https://github.com/immortal/fork/issues/17). It is released
-in `fork` 0.9.1 after native Linux, macOS, and FreeBSD review. Immortal locks
-that exact crates.io release and checksum without a Git or local patch override.
+```sh
+scripts/dev-ssh examples/run-immortal.sh
+scripts/dev-ssh examples/run-immortalctl.sh
+scripts/dev-ssh examples/run-immortalctl.sh halt sleep
+```
 
-`immortal-core::process` has adopted those APIs. It translates
-the fork crate's typed `Exited`, `Signalled`, `Stopped`, and `Continued` events
-without decoding raw wait statuses or exposing fork-library types to the rest
-of Immortal. Its blocking broker mechanism also materializes direct commands,
-creates a dedicated process group, reports exec failure before start, and uses
-typed process or group signal targets. Its owned descriptor allow-list preserves
-only deliberate mappings across `exec`; readiness uses the same general path.
-A single-threaded native contract proves exit, exec failure, descriptor
-inheritance and omission, stop/continue, group termination, bounded waits, and
-cleanup.
-For every service, logger, or hook group, the broker now reserves the group
-with a short-lived anchor, starts an out-of-group helper, joins the workload,
-and retires the anchor. The armed helper owns only one lifetime socket: broker
-loss closes it and triggers group `SIGKILL`; normal terminal cleanup or explicit
-detach disarms and reaps it. This costs two helper forks at group creation and
-one sleeping helper per active group, with no shared locks or configuration
-copies. A deliberate `setsid` or process-group change leaves this portable
-boundary and is not claimed as contained.
-The private broker IPC is now bounded and versioned. The supervisor addresses
-only monotonic generations across it; raw PIDs remain broker-owned observations.
-A pre-Tokio broker contract proves readiness, spawn and failure responses,
-signal acknowledgement, complete child-event draining, residual descendant
-cleanup, bounded shutdown, and broker reaping. Foreground and checked daemon
-launches share the same executor. Daemon mode materializes configuration and
-account data first, detaches before Tokio, and reports success only after the
-broker and optional authenticated control socket are ready. The executor also
-applies pre-resolved numeric credentials and publishes replacement-safe atomic
-supervisor/main PID files as observation only. Broker reads use one persistent
-task and bounded queue so cancellation cannot split a frame. Logger routes,
-pre-start conditions, and post-exit hooks use the same broker boundary;
-descriptor-tracking uses an independently monitored lifetime capability and
-never promotes a PID-file value into process identity.
+See [INSTALL.md](INSTALL.md) for source installation, init-system integration,
+definition migration, and rollback.
 
-Every `immortal` launch owns a service runtime. A configuration launch without
-`--control-dir` derives its service name from the configuration filename stem;
-a direct command instead requires `-n`/`--name`. Both resolve below the
-effective user's `$HOME/.immortal`, which is created safely when absent. An
-exact absolute `--control-dir ROOT/SERVICE` overrides that default. Immortal
-acquires and retains a mode-`0600` advisory lock before broker creation, removes
-only a proven owned stale socket after locking, creates a mode-`0600`
-authenticated control socket, and serializes broker events, timers, Unix
-shutdown signals, and control work through one lifecycle owner. Status, start,
-stop, once, restart, halt, raw signals, and deliberate live-child exit are
-operational. `exit` uses an explicit generation-bound broker detach; it never
-turns a PID file into process identity. A black-box contract covers exclusion
-of a duplicate supervisor, stale-generation and wrong-service rejection,
-status publication, USR1, the persistent Down state, manual starts, restart,
-halt, socket cleanup, and live-child detachment.
+## Documentation map
 
-Immortal will not add direct `libc` calls or a second process library to work
-around this boundary. `fork` owns the safety-sensitive Unix mechanisms;
-Immortal owns the broker protocol, lifecycle generations, supervision policy,
-readiness, logging, control, status, and reconciliation. The registry-backed
-dependency checkpoint has passed Immortal's native Linux, macOS, and FreeBSD
-lifecycle matrix. Complete native, fuzzing, security, audit, and FreeBSD
-validation remains mandatory for every Immortal release candidate.
+| Document | Purpose |
+|---|---|
+| [README.md](README.md) | Operator overview, configuration, logging, runtime, and CLI contracts |
+| [INSTALL.md](INSTALL.md) | Installation, init integration, migration, and rollback |
+| [DESIGN.md](DESIGN.md) | Architecture, ownership boundaries, and process-safety rationale |
+| [TRACEABILITY.md](TRACEABILITY.md) | Public contract to automated test mapping |
+| [VALIDATION.md](VALIDATION.md) | Correctness, resilience, performance, and platform evidence |
+| [RELEASE.md](RELEASE.md) | Release-candidate gates and procedure |
+| [AGENTS.md](AGENTS.md) | Mandatory contributor and coding-agent rules |
 
-Dependency planning is deterministic and portable. Enabled services are
-topologically sorted into start waves, and the next wave waits for its
-requirements to become Ready. Within a wave, `immortaldir` submits bounded
-checked-launch batches through its one pre-Tokio broker; the default limit is
-8, `--max-concurrent-starts` can select 1 through 64, and
-`IMMORTAL_MAX_CONCURRENT_STARTS` provides the equivalent environment input.
-Missing or disabled requirements and cycles reject the plan. A requirement
-gates start only—later dependency failure does not cascade a stop.
-Per-service `start_condition` execution remains inside the launched
-supervisor's process broker. `immortaldir` observes `WaitingCondition` and waits
-for Ready; failed conditions consume neither a service start nor its retry
-limits.
+## Safety model
 
-See [DESIGN.md](DESIGN.md) for module ownership and implementation rules.
+- The process broker remains the direct parent and sole reaper of managed
+  children. Tokio starts only after required fork and daemonization boundaries.
+- A service generation is identified by a monotonic generation, never by a PID
+  file or signal-0 probe.
+- Each foreground generation owns a process group; lifecycle cleanup targets the
+  owned group and broker loss triggers bounded containment.
+- PID files are observation-only metadata.
+- Foreground execution is preferred. Self-daemonizing software requires explicit
+  descriptor tracking and lifecycle hooks; numeric PID adoption is unsupported.
+- Logger processes are supervised independently over broker-owned pipes with
+  lossless kernel backpressure.
+- Control uses a bounded, versioned, authenticated Unix-socket protocol.
+- Filesystem notifications are hints; complete reconciliation scans remain
+  authoritative.
 
-## Workspace
+Detailed process-broker, ownership, containment, and module invariants live in
+[DESIGN.md](DESIGN.md). Their automated coverage is indexed in
+[TRACEABILITY.md](TRACEABILITY.md).
+
+## Components and architecture
 
 - `immortal-core`: reusable configuration, process, supervision, logging,
   control-protocol, reconciliation, and platform behavior.
@@ -186,22 +127,42 @@ Solid arrows are Rust/Cargo dependencies. Dashed arrows are runtime
 relationships. CLI crates never call `fork` directly: all process behavior
 crosses the `immortal-core::process` boundary.
 
-CLI code keeps parsing, routing, and execution separate:
+### CLI organization
+
+Every executable uses the same per-action flow:
 
 ```text
-src/bin/<name>.rs -> start -> commands -> dispatch -> actions::Action
-src/bin/<name>.rs -> actions::<operation> -> immortal-core
+src/bin/<name>.rs
+  -> cli::start
+      -> commands
+      -> dispatch
+      -> actions::Action
+  -> exhaustive Action match
+      -> actions::<operation>::execute
+      -> immortal-core
+  -> shared completion and exit mapping
 ```
 
-Each executable remains its own Cargo package and exposes one explicitly named,
-thin entry point under `src/bin/`; reusable behavior stays in its package library
-or `immortal-core`. `actions` owns each typed action contract and its execution;
-private `commands` and `dispatch` modules only define syntax and convert matches
-into those types. Every binary exhaustively routes variants to focused action
-files: three supervision paths in `immortal`, eight control operations in
-`immortalctl`, reconciliation in `immortaldir`, and writing or archive
-inspection in `immortallog`. These matches contain no runtime, transport,
-process, logging, or supervision policy.
+| Layer | Responsibility |
+|---|---|
+| `commands` | Define Clap syntax, defaults, conflicts, and help text |
+| `dispatch` | Convert parsed matches into the typed `actions::Action` contract |
+| `actions/mod.rs` | Own `Action`, shared action inputs, and typed action errors |
+| `actions/<operation>.rs` | Execute one user-visible operation with typed inputs |
+| `src/bin/<name>.rs` | Exhaustively route each action and preserve its exit class |
+| `immortal-core` | Own reusable process, protocol, logging, and supervision behavior |
+
+`commands`, `dispatch`, and `start` remain private implementation modules.
+Keeping one action per file makes a CLI path easy to trace and lets dispatch,
+handler, and black-box routing tests cover separate boundaries. The exhaustive
+match belongs in the named binary rather than a central `actions::execute`
+function, so adding an action fails to compile until its executable route is
+wired.
+
+Entrypoints stay synchronous. An action may create a Tokio runtime only after
+the required daemon, broker, signal, and descriptor setup. Binary matches remain
+declarative and contain no configuration parsing, runtime construction,
+transport, process, logging, or supervision policy.
 
 Every executable's `--version` output includes the shared package version and
 the full source commit, for example `immortal 0.1.0 - 446209f...`. Builds made
@@ -257,7 +218,7 @@ Two historical requests are explicit contracts:
   readiness and start conditions. OS-specific boot ordering remains the init
   system's responsibility.
 
-### Configuration schema
+## Configuration
 
 The only accepted schema is `version: 2`. The version marker is mandatory,
 unknown fields fail validation, commands are argv arrays, durations state their
@@ -341,23 +302,7 @@ pid_files:
 process_mode: foreground  # foreground | descriptor-tracking
 ```
 
-Self-daemonizing software which cannot run in the foreground must instead use
-the explicit descriptor contract:
-
-```yaml
----
-version: 2
-command: [/usr/local/sbin/legacy-daemon]
-process_mode: descriptor-tracking
-descriptor_tracking:
-  stop:
-    command: [/usr/local/sbin/legacy-daemonctl, stop]
-    timeout_seconds: 30
-  reload:
-    command: [/usr/local/sbin/legacy-daemonctl, reload]
-    timeout_seconds: 30
-  lifetime_timeout_seconds: 30
-```
+### Defaults and readiness
 
 All shown sections except `version` and `command` have defaults. Absent restart
 limits mean retry forever. `max_retries` counts starts after the initial start.
@@ -367,12 +312,15 @@ exits with the preserved failure reason and temporary-failure status. A burst
 value requires both nonzero fields.
 `success_exit_codes` cannot be empty. Lifecycle, readiness, and condition
 deadlines are capped at 24 hours; scheduled delay/backoff values are capped at
-one year so monotonic deadline construction remains representable. `notify-fd` publishes
-`IMMORTAL_READY_FD=3`. The child must write the exact six-byte `READY\n` token
-before its configured deadline; fragmented writes are accepted, while invalid
-tokens, early EOF, and timeout fail that generation. The broker creates the
-CLOEXEC descriptor channel before spawning, maps only the child endpoint, and
-monitors the supervisor endpoint asynchronously without creating worker threads.
+one year so monotonic deadline construction remains representable. `notify-fd`
+publishes `IMMORTAL_READY_FD=3`. The child must write the exact six-byte
+`READY\n` token before its configured deadline; fragmented writes are accepted,
+while invalid tokens, early EOF, and timeout fail that generation. The broker
+creates the CLOEXEC descriptor channel before spawning, maps only the child
+endpoint, and monitors the supervisor endpoint asynchronously without creating
+worker threads.
+
+### Example service
 
 The repository includes a minimal portable definition at
 [`examples/services/sleep.yml`](examples/services/sleep.yml). Validate it with
@@ -398,6 +346,9 @@ when called without arguments; supplied arguments are forwarded to
 `immortalctl`. Both helpers accept `IMMORTAL_EXAMPLE_RUNTIME_DIR` and
 `IMMORTAL_EXAMPLE_SERVICE`; setting either makes the start helper use an exact
 control directory. The start helper also accepts `IMMORTAL_EXAMPLE_CONFIG`.
+
+### Hooks and conditions
+
 `start_condition` runs before a generation is allocated and has its own retry
 history, so a failing dependency check cannot consume service restart limits.
 `post_exit` runs after the service generation has ended and before the
@@ -408,6 +359,34 @@ service environment also contains `IMMORTAL_EXIT_KIND` (`exit`, `signal`,
 `IMMORTAL_READINESS_FAILED`. Hook exec failure or a nonzero hook result does not
 replace the service result; timeout or supervisor shutdown kills and reaps the
 hook process group.
+
+`start_condition` executes through the same single-threaded process broker with
+the service's resolved environment, working directory, and credentials. Exit
+status zero permits one service generation; nonzero exit, signal termination,
+or spawn failure retries with the condition's independent backoff. A timeout
+kills and reaps the condition process group before retrying. Condition attempts
+never consume service restart limits or increment the service start count.
+
+### Descriptor tracking
+
+Self-daemonizing software which cannot run in the foreground must instead use
+the explicit descriptor contract:
+
+```yaml
+---
+version: 2
+command: [/usr/local/sbin/legacy-daemon]
+process_mode: descriptor-tracking
+descriptor_tracking:
+  stop:
+    command: [/usr/local/sbin/legacy-daemonctl, stop]
+    timeout_seconds: 30
+  reload:
+    command: [/usr/local/sbin/legacy-daemonctl, reload]
+    timeout_seconds: 30
+  lifetime_timeout_seconds: 30
+```
+
 Descriptor tracking requires both bounded lifecycle hooks. The broker maps only
 the service endpoint to descriptor 4 and publishes `IMMORTAL_LIFETIME_FD=4`.
 The application must keep that descriptor open across its own fork and close it
@@ -435,12 +414,7 @@ process-group control. Common upstream-supported forms include:
 Descriptor tracking is a compatibility boundary for software without a usable
 foreground mode, not the default supervision model.
 
-`start_condition` executes through the same single-threaded process broker with
-the service's resolved environment, working directory, and credentials. Exit
-status zero permits one service generation; nonzero exit, signal termination,
-or spawn failure retries with the condition's independent backoff. A timeout
-kills and reaps the condition process group before retrying. Condition attempts
-never consume service restart limits or increment the service start count.
+### Paths and environment
 
 When reading a file, Immortal resolves working directories, PID/log paths,
 hook/logger executables containing `/`, and service executables containing `/`
@@ -465,6 +439,8 @@ The scan is limited to 4,096 directory entries, 256 KiB per first line, and
 inherited supervisor environment and remain fixed across service restarts.
 `--env-dir` is a direct-command option and conflicts with `--config`; definitions
 use `environment` or its `env` input alias instead.
+
+### Logging
 
 Local files and centralized forwarding have separate names. The simplest local
 configuration combines stdout and stderr:
@@ -611,6 +587,8 @@ TERM to KILL before the broker is reaped. Logger stages which have already
 failed or entered backoff own no drainable child and normalize to Down so
 shutdown does not spend grace periods waiting for nonexistent work.
 
+### Direct commands and precedence
+
 Exactly one service source is accepted. With `--config`, direct service-policy
 options are rejected instead of overriding or silently merging with definition
 fields; change the definition directly. The launch-only `-f`/`--foreground` and
@@ -642,7 +620,7 @@ shorthand `-n` becomes `-f`/`--foreground`. `--follow-pid` remains unsupported;
 use foreground execution or descriptor tracking because runtime identity never
 comes from a PID file or transient process identifier.
 
-### Runtime and control boundary
+## Runtime and control
 
 The system runtime root is `/run/immortal` on Linux and `/var/run/immortal` on
 macOS and FreeBSD; the latter follows their native hierarchy while Linux uses
@@ -763,7 +741,7 @@ its safe boundary before `immortaldir` shuts down and reaps its otherwise
 childless launcher broker. The independent service supervisors it previously
 started remain running.
 
-### Boot and network ordering
+## Boot and network ordering
 
 The host init system starts and stops `immortaldir`; Immortal does not replace
 PID 1 or duplicate machine boot policy. Use coarse OS ordering only to ensure
@@ -790,7 +768,7 @@ boot, so “the network target ran” is not application readiness.
   notes that network availability can come and go. See
   [Creating launchd jobs](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
 
-### Exit status contract
+## Exit status
 
 Clap retains `0` for help/version and `2` for syntax errors. After typed
 dispatch, every executable uses a shared BSD `sysexits(3)`-style contract:
@@ -811,250 +789,20 @@ dispatch, every executable uses a shared BSD `sysexits(3)`-style contract:
 | 78 | invalid service/runtime configuration |
 | 79 | partial multi-service failure |
 
-## Implementation status
+## Implementation and release status
 
-An item is checked only after implementation, documentation, success and
-failure tests, and required CI pass.
+The supported configuration, process lifecycle, control, reconciliation, and
+logging surfaces are implemented and mapped to success and failure coverage in
+[TRACEABILITY.md](TRACEABILITY.md). This includes the strict v2 schema,
+fork-backed service ownership, readiness and hooks, authenticated lifecycle
+control, dependency-aware reconciliation, replaceable logging adapters, and
+archive inspection.
 
-### General foundation
-
-- [x] Rust workspace and one-way CLI layering.
-- [x] Initial CLI parsers and parser unit tests.
-- [x] Include the source Git commit in every executable's long version output.
-- [x] DevPod CI and FreeBSD cross-check baseline.
-- [x] Document focused-supervisor scope and reject PID 1 ambitions.
-- [x] Record research findings and compatibility decisions.
-- [x] Capture relevant released Go behavior as requirements research.
-- [x] Add fork-backed process/path lifecycle contract fixtures.
-- [x] Add resource-bounded strict `version: 2` configuration parsing.
-- [x] Reject unversioned Go definitions and every unsupported version.
-- [x] Add normalized configuration resolution and canonical output.
-- [x] Define stable application errors and CLI exit codes.
-- [x] Add safe runtime-directory ownership and permission policy.
-- [x] Add process-generation identifiers independent of PIDs.
-- [x] Wrap terminated-child waits as typed exited/signalled results.
-- [x] Add typed stopped/continued collection to `fork` and consume it through `immortal-core`.
-- [x] Add native Linux, macOS, and FreeBSD lifecycle jobs.
-- [x] Add deterministic arbitrary/truncation/byte-mutation decoder corpora.
-- [x] Add continuous coverage-guided configuration and protocol fuzzing.
-- [x] Add release baselines for configuration and control codecs.
-- [x] Add a bounded repeatable soak runner over the complete contract suite.
-- [x] Add bounded signal-storm and descriptor-exhaustion broker contracts.
-- [x] Define an evidence-based validation charter and comparative scope.
-- [x] Complete the [public-contract-to-test traceability audit](TRACEABILITY.md).
-- [ ] Close every P0 adversarial ownership and cleanup finding.
-- [ ] Add cross-platform lifecycle benchmarks and reviewed regression budgets.
-- [ ] Retain 30 comparative runs across three days on dedicated hosts.
-- [ ] Pass 24-hour Linux, macOS, and FreeBSD fault campaigns.
-- [ ] Pass the seven-day FreeBSD release-candidate canary.
-
-### immortal
-
-#### CLI and configuration
-
-- [x] Remove Go flags which advertised behavior that was never operational in Rust.
-- [x] Preserve option-looking child arguments after the command begins.
-- [x] Define configuration versus CLI precedence explicitly.
-- [x] Implement `--check-config` success and failure behavior.
-- [x] Emit the canonical supported schema without modifying the input file.
-- [x] Validate command, cwd, environment, PID outputs, logger, hooks, readiness,
-  restart policy, and start conditions.
-- [x] Resolve configured users against the target OS account database.
-- [x] Resolve absolute paths before daemonization changes cwd.
-- [x] Make environment inheritance, clearing, and override order deterministic.
-- [x] Load bounded direct-command `-e` / `--env-dir` snapshots before daemonization.
-- [x] Accept `env` as a scalar-map alias and emit canonical `environment`.
-- [x] Derive config identities, require direct `-n`/`--name`, and safely create
-  the effective user's owner-only runtime root.
-- [x] Reject empty commands, invalid durations, duplicate keys, conflicting
-  options, oversized files, and excessive YAML nesting/aliases.
-- [x] Reject unknown users and enforce UID/GID transition policy.
-
-#### Process lifecycle
-
-- [x] Run and reap foreground direct children through the supervisor state machine.
-- [x] Fork only through `immortal-core::process` and the `fork` crate.
-- [x] Start a dedicated single-threaded process broker before Tokio.
-- [x] Bound and version broker IPC without accepting raw PID targets.
-- [x] Daemonize before creating Tokio or any other thread.
-- [x] Implement double-fork/session detachment and safe stdio redirection.
-- [x] Preserve inherited descriptors through an explicit allow-list.
-- [x] Report daemon startup success or failure to the invoking process.
-- [x] Hold the service lock descriptor for the supervisor lifetime.
-- [x] Remove stale sockets only after acquiring the service lock.
-- [x] Create every service generation in its own process group.
-- [x] Distinguish exec failure from a successfully executed process.
-- [x] Drain all child wait events after each coalesced `SIGCHLD`.
-- [x] Recover missed child notifications with an ownership-checked delayed reap sweep.
-- [x] Clean remaining process-group members before generation reuse.
-- [x] Contain running and stopped owned groups after forced broker death on all
-  three native platforms.
-- [x] Prove and document deliberate session/process-group escape as outside the
-  portable containment contract.
-- [x] Write and invalidate configured parent/child PID files atomically.
-- [x] Never use signal 0 or PID files to identify an owned service.
-
-#### State and restart policy
-
-- [x] Model and encode `Initializing`, `WaitingCondition`, `Starting`, `Running`,
-  `Ready`, `Paused`, `Stopping`, `Backoff`, `Completed`, `Failed`, and `Exited`.
-- [x] Publish `Initializing` while runtime resources are being acquired.
-- [x] Keep desired state separate from observed state.
-- [x] Implement Up, Down, Once, Restart, Halt, and Exit transitions.
-- [x] Implement `always`, `on-failure`, and `never` restart policies.
-- [x] Implement configurable successful exit codes and `exit_when_done`.
-- [x] Implement exponential backoff with a stable-runtime reset.
-- [x] Implement attempt, burst/window, and elapsed retry limits.
-- [x] Keep condition failure/backoff separate from service attempts.
-- [x] Ensure manual start/restart resets Backoff and Failed.
-- [x] Return valid status in every state, including before the first child.
-- [x] Gracefully halt on supervisor `SIGTERM` and `SIGINT`.
-
-#### Readiness, hooks, and self-daemonizing applications
-
-- [x] Support immediate readiness after successful exec.
-- [x] Define and test the bounded `IMMORTAL_READY_FD` token and timeout reader.
-- [x] Create, inherit, and monitor the readiness descriptor through `fork`.
-- [x] Define and validate argv conditions with independent timeout/backoff.
-- [x] Execute pre-start conditions through the process broker.
-- [x] Run bounded post-exit hooks with exit/signal and generation context.
-- [x] Implement descriptor-based fghack lifetime tracking.
-- [x] Require stop/reload hooks for fghack and reject raw adopted-PID signals.
-- [x] Document foreground invocations for common self-daemonizing software.
-
-### immortalctl
-
-#### Discovery, status, and output
-
-- [x] Discover system and user supervisors from documented runtime roots.
-- [x] Validate ownership and ignore malformed/unknown entries.
-- [x] Avoid broad stale-directory deletion.
-- [x] Show all services when no command is supplied.
-- [x] Support one service, `--all`, and legacy `*`.
-- [x] Provide stable table and JSON output without terminal escapes in JSON.
-- [x] Define, bound, transport, and render discovery scope, supervisor/main PID,
-  generation, desired/state, readiness, uptime/down time, starts, failures,
-  last result, backoff, logger health, and command.
-- [x] Populate typed status fields from the supported fork-backed foreground runtime.
-- [x] Represent childless states without assuming a PID exists.
-- [x] Define nonzero exits for missing targets, partial failure, authorization,
-  timeout, and protocol mismatch.
-
-#### Lifecycle commands
-
-- [x] `status`: inspect without mutation.
-- [x] `start` / `up`: set Up and reset configured failure.
-- [x] `stop` / `down`: TERM+CONT the group, escalate, remain supervised Down.
-- [x] `once`: start one generation and remain Down after it exits.
-- [x] `restart`: stop/reap then start a new generation in the same supervisor.
-- [x] `exit`: explicitly leave the service running and warn about orphaning.
-- [x] `halt`: stop and reap the group, drain logger chains through EOF, and exit the supervisor.
-- [x] Wait deterministically for typed lifecycle completion with a hard timeout.
-- [x] Provide `--no-wait` for explicitly asynchronous control.
-
-#### Signal delivery
-
-- [x] `-1` / `signal usr1` -> main process.
-- [x] `-2` / `signal usr2` -> main process.
-- [x] `-a` / `signal alrm` -> main process.
-- [x] `-c` / `signal cont` -> main process.
-- [x] `-h` / `signal hup` -> main process.
-- [x] `-i` / `signal int` -> main process.
-- [x] `-k` / `signal kill` -> service process group.
-- [x] `-in` / `signal ttin` -> main process.
-- [x] `-ou` / `signal ttou` -> main process.
-- [x] `-q` / `signal quit` -> main process.
-- [x] `-s` / `signal stop` -> main process.
-- [x] `-t` / `signal term` -> main process.
-- [x] `-w` / `signal winch` -> main process.
-- [x] Reject multiple conflicting legacy signal flags.
-- [x] Reject absent, exited, stale-generation, and descriptor-unowned targets.
-- [x] Support explicit `--scope main|group`.
-- [x] Confirm STOP/TTIN/TTOU/CONT through child wait events.
-- [x] Preserve the signal exit reason for restart-policy decisions.
-
-#### Control protocol
-
-- [x] Replace HTTP with a fixed versioned request and bounded response codec.
-- [x] Authenticate root or the supervisor UID using Unix peer credentials.
-- [x] Restrict runtime-directory and socket modes.
-- [x] Bound frames, clients, reads, writes, and idle time.
-- [x] Forward authenticated requests to one lifecycle owner over a bounded channel.
-- [x] Run the authenticated control-server loop inside controlled foreground `immortal`.
-- [x] Reject malformed, truncated, oversized, unknown-version, and unknown-op
-  requests.
-- [x] Bind mutations to an expected service generation.
-- [x] Keep JSON on the client/output side, not privileged server input.
-
-### immortaldir
-
-#### Reconciliation
-
-- [x] Validate and canonicalize the definitions directory.
-- [x] Scan only top-level non-hidden regular `*.yml` files.
-- [x] Ignore editor swap/temp files and unrelated extensions.
-- [x] Reject unsafe names, duplicate names, symlinks, path traversal, oversized
-  files, and excessive definition counts.
-- [x] Read each definition as a stable snapshot before parsing.
-- [x] Retain the last-known-good service after an invalid/partial replacement.
-- [x] Compare semantic configuration rather than mtimes.
-- [x] Use native inotify, FSEvents, and kqueue notifications.
-- [x] Treat notifications only as full-reconciliation triggers.
-- [x] Debounce editor write/rename sequences.
-- [x] Perform a 30-second safety reconciliation.
-- [x] Recover from dropped and coalesced filesystem notifications.
-- [x] Implement mutation-free `--once --dry-run` output.
-- [x] Shut down and reap the launcher broker on `SIGTERM` and `SIGINT`.
-- [x] Never remove unknown runtime files or directories.
-- [x] Detect stale supervisors via lock/control state rather than PID guessing.
-
-#### Desired state and dependencies
-
-- [x] Start enabled definitions missing from runtime state.
-- [x] Preserve healthy unchanged supervisors.
-- [x] Plan restart only after a valid semantic configuration change.
-- [x] Apply a planned restart through the supervisor control boundary.
-- [x] Confirm stable deletion across two complete authoritative scans.
-- [x] Stop and exit a service after confirmed deletion.
-- [x] Retain persistent `enabled: false` in desired state.
-- [x] Apply disabled desired state to a live supervisor.
-- [x] Preserve an operator-requested Down state while its supervisor lives.
-- [x] Restart an exited supervisor whose definition remains enabled.
-- [x] Prevent duplicate semantic plan actions from watcher and periodic scans.
-- [x] Retain and retry one pending mutation per service after partial failure.
-- [x] Isolate per-service mutation failures within a complete scan.
-- [x] Bound concurrent starts/restarts.
-- [x] Validate `requires`, missing dependencies, and cycles.
-- [x] Start independent services concurrently.
-- [x] Gate dependent starts on Ready without later cascading stops.
-- [x] Keep waiting dependents from consuming retry limits.
-- [x] Plan portable start conditions with independent timeout/backoff.
-- [x] Gate operational starts on broker-executed condition success.
-- [x] Document Linux, FreeBSD, and macOS boot/network ordering.
-- [x] Add issue #68 readiness and condition regression fixtures.
-
-### Logging
-
-- [x] Supervise external logger commands as independent children.
-- [x] Use argv rather than implicit shell strings.
-- [x] Confirm logger exec success before starting its service.
-- [x] Preserve stable pipe endpoints across service/logger restarts.
-- [x] Restart service and logger independently without losing the pipe.
-- [x] Expose logger Starting, Ready, and Backoff health in status.
-- [x] Add configurable logger retry exhaustion and expose Failed health.
-- [x] Default to lossless backpressure instead of silent dropping.
-- [x] Stop the service before draining and stopping its logging chain.
-- [x] Provide a small, replaceable `immortallog` file compatibility adapter.
-- [x] Support combined output, separate stderr, and file-plus-command chains.
-- [x] Keep byte fan-out out of the supervisor.
-- [x] Sync before rotation and use atomic timestamped archives.
-- [x] Recover interrupted rotation and enforce count/total-size retention.
-- [x] Expose readable table and JSON archive inspection.
-- [x] Inject disk-write/sync failure and broken downstream pipes.
-- [x] Stream huge and partial lines without unbounded line buffering.
-- [x] Test a real logger crash loop through exhaustion and manual recovery.
-- [x] Test real permission failures, pipe backpressure, and shutdown drain
-  timeouts.
+That coverage establishes the current repository contract; it does not declare
+production readiness. Sustained adversarial campaigns, reviewed cross-platform
+performance budgets, comparative retained runs, 24-hour platform fault
+campaigns, and the seven-day FreeBSD canary remain governed by
+[VALIDATION.md](VALIDATION.md) and [RELEASE.md](RELEASE.md).
 
 ## Coverage-guided fuzzing
 
@@ -1106,96 +854,19 @@ success, while `log-probe-combined-exit-after-retries.yml` demonstrates terminal
 failure after the same retry count. See the tools documentation for the complete
 exercises and direct `--logfile`/`--logger` scenarios.
 
-## Performance baselines
+## Performance and release evidence
 
-Run the dependency-free release harnesses inside DevPod:
+Run the dependency-free benchmark harnesses inside DevPod:
 
 ```sh
 scripts/dev-ssh cargo bench -p immortal-core --bench core_contracts
 scripts/dev-ssh cargo bench -p immortal-core --bench lifecycle_contracts
 ```
 
-The initial Linux x86_64 DevPod medians recorded on 2026-07-11 are
-informational reference points:
-
-| Contract | Median |
-|---|---:|
-| Representative configuration parse | 82,602 ns/op |
-| Control request encode + decode | 39 ns/op |
-| Typed status encode + decode | 130 ns/op |
-
-The first local fork-backed run on the same DevPod class, recorded on
-2026-07-12, produced these additional reference points:
-
-| Contract | Median |
-|---|---:|
-| Broker spawn + normal exit + reap | 504,126 ns/op |
-| Broker spawn + `SIGTERM` + reap | 333,174 ns/op |
-
-The local `fork#17` guarded-group review run on 2026-07-13 measured the same
-complete paths after adding two helper forks and one steady sleeping helper per
-active group:
-
-| Contract | Median |
-|---|---:|
-| Guarded broker spawn + normal exit + reap | 734,303 ns/op |
-| Guarded broker spawn + `SIGTERM` + reap | 681,932 ns/op |
-
-An initial fixed 5 ms helper poll made both paths exceed 10 ms; the reviewed
-adaptive bounded wait removed that scheduler delay. These local values remain
-provisional and do not justify a regression budget until native retained runs
-cover the released dependency on all three platforms.
-
-These are not portable CI thresholds. Regression budgets will be set only after
-the fork-backed spawn/wait/signal path is measurable on Linux, macOS, and
-FreeBSD and normal host variance is known. The native lifecycle jobs now record
-median fork-spawn-wait and fork-spawn-signal-wait latency on all three operating
-systems. The lifecycle harness includes command materialization, broker IPC,
-process creation, acknowledgement, and terminal reaping; it uses hard event and
-cleanup deadlines and retains the active process-group identity until reaping.
-Each native job uploads a 90-day `lifecycle-benchmark-*` artifact containing the
-two medians plus commit, workflow-run, runner, kernel, and pinned-toolchain
-metadata. Collect each sample through a separate `workflow_dispatch` run so it
-has an independent run ID and retained artifact. GitHub replaces artifacts and
-logs from earlier attempts when a run is rerun, so rerun attempts are not
-independent retained evidence and must not be counted. After extracting
-artifacts for one platform, calculate the retained run count, median, maximum,
-nearest-rank p95, and conservative initial ceiling with:
-
-```sh
-scripts/summarize-lifecycle-benchmarks Linux artifacts/linux-*/lifecycle.txt
-```
-
-The summarizer rejects empty reports, unknown or duplicate metrics, malformed
-measurements, and missing metric pairs. Its suggested ceiling is the smallest
-integer not below 125% of the observed maximum; recording that suggestion as a
-budget still requires the review process below.
-The checklist remains pending until multiple remote runs establish reviewed
-per-platform budgets rather than thresholds inferred from one Linux machine.
-
-Budget acceptance follows a recorded process:
-
-1. Collect at least ten successful runs for each metric and platform across at
-   least three days, using the same pinned toolchain, runner image, and commit.
-2. Retain every valid result. Exclude a run only when a documented runner or
-   platform incident invalidated the complete job, never because its latency is
-   inconvenient.
-3. Record the median, maximum, and nearest-rank p95 of the per-run medians. Set
-   the initial ceiling no lower than 125% of the observed maximum so ordinary
-   shared-runner variance does not become a correctness gate.
-4. Store separate Linux, macOS, and FreeBSD ceilings; the QEMU-backed FreeBSD
-   result must never inherit a Linux or macOS threshold.
-5. Investigate one ceiling breach and confirm it with a clean rerun before
-   treating it as a regression. Loosen a ceiling only with linked measurements
-   explaining the environmental or architectural change.
-
-The accepted evidence and ceilings will replace this pending table:
-
-| Platform | Runner | Runs | Spawn/reap ceiling | Signal/reap ceiling |
-|---|---|---:|---:|---:|
-| Linux | Ubuntu 24.04 | pending | pending | pending |
-| macOS | macOS 15 | pending | pending | pending |
-| FreeBSD | Recorded v1-action QEMU guest | pending | pending | pending |
+Local results are diagnostic, not portable thresholds or production evidence.
+The retained Linux, macOS, and FreeBSD measurements, acceptance method, pending
+budgets, comparative campaigns, and candidate evidence are maintained in
+[VALIDATION.md](VALIDATION.md).
 
 ## Build and validation
 
@@ -1204,35 +875,11 @@ in [INSTALL.md](INSTALL.md). Maintainers must follow the evidence-based
 [release-candidate procedure](RELEASE.md); these documents do not imply current
 production readiness.
 
-The repository pins Rust 1.97.0, matching `rust-version`. The quality job tracks
-the current stable compiler so new compiler and Clippy diagnostics are visible,
-while lifecycle, benchmark, and FreeBSD jobs remain pinned to 1.97.0 for minimum
-version coverage and comparable measurements. GitHub Actions runs the complete
-workspace test suite on Ubuntu 24.04 and macOS 15. The existing FreeBSD
-cross-check remains a fast compile gate, while a separate
-[FreeBSD VM action](https://github.com/vmactions/freebsd-vm) tracks v1 and runs
-the same lifecycle suite on its current default FreeBSD guest. The VM job has
-an explicit deadline, installs the pinned toolchain through FreeBSD's
-`rustup-init` package, records the exact guest release in benchmark metadata,
-and copies the benchmark evidence back to the Linux host for artifact upload.
-
-The native lifecycle matrix first completed successfully on 2026-07-12 at
-commit `f27be55` in [Rust CI run 29208627595](https://github.com/immortal/immortal/actions/runs/29208627595).
-Linux and macOS use GitHub-hosted native VMs, while FreeBSD runs as a QEMU guest
-because GitHub-hosted and self-hosted runner support is limited to Linux,
-Windows, and macOS. Every native job runs the workspace tests, fork-backed
-lifecycle benchmark, and executable version smoke checks; the separate FreeBSD
-cross-check remains a fast compile gate.
-
-The registry-backed dependency checkpoint at commit `b1d1799`, locked to
-`fork` 0.9.1, passed the complete native matrix in
-[Rust CI run 29319666973](https://github.com/immortal/immortal/actions/runs/29319666973)
-and the audit and dependency-policy jobs in
-[security run 29319666972](https://github.com/immortal/immortal/actions/runs/29319666972).
-Earlier independent FreeBSD evidence and the exact fork release evidence are
-linked from [VALIDATION.md](VALIDATION.md#current-candidate-evidence). These
-results prove the current repository contracts but do not replace the longer
-release-candidate campaigns.
+The repository pins Rust 1.97.0, matching `rust-version`. Hosted validation
+covers Ubuntu, macOS, and a FreeBSD VM; a locked FreeBSD cross-check remains the
+fast compile gate. Exact candidate revisions, workflow runs, toolchains, and
+retained artifacts are recorded in
+[VALIDATION.md](VALIDATION.md#current-candidate-evidence).
 
 Run project commands inside DevPod:
 
@@ -1256,7 +903,7 @@ scripts/dev-ssh just soak 10
 Process changes require native lifecycle tests on Linux, macOS, and FreeBSD.
 Every process test must have a hard timeout and clean up every child and process
 group on both success and failure. Dependency changes must pass `cargo audit`
-and `cargo deny check` before their checklist item is complete.
+and `cargo deny check`.
 
 ## Contributing
 
@@ -1268,13 +915,12 @@ documentation needed to justify the behavior.
 
 Before submitting a change:
 
-1. Read the [Agent and Contributor Contract](AGENTS.md) completely. It applies
+1. Read the [Contributor and Agent Contract](AGENTS.md) completely. It applies
    equally to human and AI contributors.
 2. Read the relevant architecture and safety boundaries in
    [DESIGN.md](DESIGN.md).
-3. Confirm the current implementation and tests before choosing an unchecked
-   roadmap item; the checklist describes direction, not permission to assume
-   missing behavior.
+3. Confirm the current implementation and its contract coverage before changing
+   behavior; roadmap text is not evidence that a feature is absent.
 4. Run the complete DevPod validation described above, including the FreeBSD
    target check.
 5. Keep public CLI, configuration, and control-protocol changes deliberate and

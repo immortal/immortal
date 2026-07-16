@@ -1,32 +1,43 @@
-# Agent guidance
+# Contributor and agent contract
 
 These rules are mandatory for contributors and coding agents. Their purpose is
 to preserve process-safety invariants, keep public contracts deliberate, and
 ensure every change remains reviewable.
 
-## Agent contract
-
-- Follow this file strictly. If a request conflicts with it, explain the
-  conflict and propose a compliant alternative.
-- Keep diffs focused. Do not rename, reorder, refactor, or clean up unrelated
-  code.
-- Do not weaken validation, ownership checks, protocol bounds, cleanup, signal,
-  or descriptor-safety guarantees.
-- Do not hardcode runtime policy in entry points. Define CLI inputs in
-  `commands`, convert them to typed values in `dispatch`, and validate them at
-  the owning `immortal-core` boundary.
-- When an invariant is unclear, inspect its contracts and documentation before
-  changing behavior; do not silently guess across a process or trust boundary.
-
-## Project direction
+## Start here
 
 Immortal is being rebuilt from Go to Rust on the `rust` branch.
 
+- Follow this contract strictly. If a request conflicts with it, explain the
+  conflict and propose a compliant alternative.
 - Work only on the Rust implementation unless explicitly instructed otherwise.
 - Treat `master` and `develop` as read-only references for the Go implementation.
 - Never modify, merge, rebase, delete, or force-push `master` or `develop`.
 - Do not restore old Go code or the previous Rust prototype into this branch.
-- Do not claim production readiness or compatibility without passing contract tests.
+- Keep diffs focused. Do not rename, reorder, refactor, or clean up unrelated
+  code.
+- Do not weaken validation, ownership checks, protocol bounds, cleanup, signal,
+  or descriptor-safety guarantees.
+- Do not hardcode runtime policy in executable entrypoints.
+- When an invariant is unclear, inspect its contracts and documentation before
+  changing behavior; never guess across a process or trust boundary.
+- Do not claim production readiness or compatibility without the evidence
+  required by `VALIDATION.md` and `RELEASE.md`.
+
+## Documentation ownership
+
+Update the document which owns the changed contract instead of repeating the
+same detail everywhere.
+
+| Document | Owns |
+|---|---|
+| `README.md` | Operator overview, supported configuration, logging, runtime, and CLI behavior |
+| `INSTALL.md` | Installation, init integration, migration, and rollback |
+| `DESIGN.md` | Architecture, ownership boundaries, and safety rationale |
+| `TRACEABILITY.md` | Public inputs and outputs mapped to success and failure tests |
+| `VALIDATION.md` | Correctness, resilience, performance, and platform evidence |
+| `RELEASE.md` | Release-candidate gates and procedure |
+| `AGENTS.md` | Mandatory contribution and implementation rules |
 
 ## Workspace architecture
 
@@ -43,8 +54,8 @@ and platform behavior in `immortal-core`.
 
 ### CLI source layout
 
-Use the `s3m`-inspired per-action layout demonstrated by `crates/immortal` for
-all new or substantially refactored CLI actions:
+Every executable crate uses the `s3m`-inspired per-action layout. Preserve it
+for new and changed CLI actions:
 
 ```text
 crates/<name>/src/
@@ -137,8 +148,8 @@ change without synchronized documentation is incomplete.
 - Public functions returning `Result` must document their failure contract;
   functions with safety, cleanup, or authorization effects must state them.
 - Do not duplicate module-level rationale on every item.
-- Keep `README.md`, `DESIGN.md`, configuration examples, and implementation
-  checklists synchronized with implemented behavior.
+- Keep the owning documents above and maintained examples synchronized with
+  implemented behavior.
 - Document and test every public CLI, configuration, and protocol field.
 - Start every maintained YAML document with `---` and keep it compliant with
   the repository yamllint policy.
@@ -183,13 +194,14 @@ change without synchronized documentation is incomplete.
   behavior rather than restating implementation constants.
 - Group imports by root: standard library, external crates, then local `crate`
   or `super` modules, with a blank line between groups.
-- When importing more than one path from the same crate, use one nested import
-  tree such as `use immortal_core::{config::parse_str, control::{...}};` instead
-  of repeating `use immortal_core::...` statements. Separate trees are allowed
-  when they have different `cfg` conditions.
-- Keep grouped entries in a predictable lexical order where practical and let
+- If a module is used repeatedly, import the module and qualify uses
+  consistently, for example `use std::env;` followed by `env::args_os()`. Do not
+  mix that form with `std::env::args_os()` in the same module.
+- Prefer module imports over individual functions when qualification makes
+  ownership clearer. Combine imports from one root when that remains readable;
+  do not force nested trees or braces around a single import.
+- Keep grouped entries in predictable lexical order where practical and let
   `rustfmt` determine the final layout.
-- Do not add braces around a single import merely for visual symmetry.
 
 ## Zero tolerance for panics
 
