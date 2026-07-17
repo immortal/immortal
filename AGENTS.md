@@ -192,16 +192,21 @@ change without synchronized documentation is incomplete.
 - Prefer small functions and strong domain types whose observable behavior can
   be tested independently. Tests must prove useful properties and failure
   behavior rather than restating implementation constants.
-- Group imports by root: standard library, external crates, then local `crate`
-  or `super` modules, with a blank line between groups.
+- Organize each Rust import section into three visual groups, omitting groups
+  that are empty: standard library roots (`std`, `core`, and `alloc`), external
+  and workspace crates, then local roots (`crate`, `self`, and `super`). Separate
+  groups with exactly one blank line.
+- Within each import group, sort declarations alphabetically, combine imports
+  from the same crate into one nested declaration where that improves
+  readability, and remove duplicates. Preserve aliases and attached comments,
+  and retain `rustfmt`'s ordering within nested declarations.
+- Import-only cleanups must not modify code outside the import section.
 - If a module is used repeatedly, import the module and qualify uses
   consistently, for example `use std::env;` followed by `env::args_os()`. Do not
   mix that form with `std::env::args_os()` in the same module.
 - Prefer module imports over individual functions when qualification makes
   ownership clearer. Combine imports from one root when that remains readable;
   do not force nested trees or braces around a single import.
-- Keep grouped entries in predictable lexical order where practical and let
-  `rustfmt` determine the final layout.
 
 ## Zero tolerance for panics
 

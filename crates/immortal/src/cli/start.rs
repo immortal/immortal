@@ -13,9 +13,8 @@ use std::{
 };
 
 use clap::Error as ClapError;
-use tracing_subscriber::EnvFilter;
-
 use immortal_core::exit::ExitClass;
+use tracing_subscriber::EnvFilter;
 
 use crate::cli::{
     actions::{Action, ActionError},
