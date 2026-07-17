@@ -767,11 +767,7 @@ struct ConfigFile(PathBuf);
 
 impl ConfigFile {
     fn new(name: &str, contents: &str) -> std::io::Result<Self> {
-        let path = std::env::temp_dir().join(format!(
-            "immortal-foreground-{name}-{}-{}.yml",
-            std::process::id(),
-            Instant::now().elapsed().as_nanos()
-        ));
+        let path = std::env::temp_dir().join(format!("im-{name}-{}.yml", std::process::id()));
         fs::write(&path, contents)?;
         Ok(Self(path))
     }
@@ -800,7 +796,7 @@ struct TemporaryDirectory(PathBuf);
 
 impl TemporaryDirectory {
     fn new(name: &str) -> std::io::Result<Self> {
-        let path = std::env::temp_dir().join(format!("im-fg-{name}-{}", std::process::id()));
+        let path = Path::new("/tmp").join(format!("im-fg-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path)?;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
@@ -808,7 +804,7 @@ impl TemporaryDirectory {
     }
 
     fn test_home_path() -> PathBuf {
-        std::env::temp_dir().join(format!("im-fg-home-{}", std::process::id()))
+        Path::new("/tmp").join(format!("im-fg-home-{}", std::process::id()))
     }
 
     fn path_str(&self) -> Result<&str, Box<dyn Error>> {
