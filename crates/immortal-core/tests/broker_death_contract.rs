@@ -47,6 +47,7 @@ fn broker_death_contains_group(stop_first: bool) -> Result<(), Box<dyn Error>> {
     require_broker_killed(broker.wait()?, broker_process)?;
     wait_for_group_absence(group.group())?;
     group.mark_absent();
+    drain_subtree()?;
     Ok(())
 }
 
@@ -112,7 +113,9 @@ fn broker_death_without_workload_is_bounded() -> Result<(), Box<dyn Error>> {
         }
     })?;
     drop(runtime);
-    require_broker_killed(broker.wait()?, broker_process)
+    require_broker_killed(broker.wait()?, broker_process)?;
+    drain_subtree()?;
+    Ok(())
 }
 
 async fn next_event(
@@ -187,6 +190,7 @@ fn require_broker_killed(
 fn wait_for_group_absence(group: ProcessGroupId) -> io::Result<()> {
     let deadline = Instant::now() + EVENT_TIMEOUT;
     loop {
+        reap_orphans()?;
         match signal(SignalTarget::Group(group), ProcessSignal::WindowChange) {
             Err(error) if error.raw_os_error() == Some(libc::ESRCH) => return Ok(()),
             Ok(()) => {}
@@ -196,6 +200,46 @@ fn wait_for_group_absence(group: ProcessGroupId) -> io::Result<()> {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "workload group survived forced broker death",
+            ));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Reap any workload-subtree zombie reparented to this supervising process.
+///
+/// The forced broker held the child-subreaper role, so its killed workloads
+/// reparent to this process — the broker's own reaper — rather than init. On
+/// FreeBSD init never reaps a process orphaned from an exited reaper, so the
+/// supervisor must drain those zombies itself for the owned group to empty.
+/// `ECHILD` (no children remain) is benign here.
+fn reap_orphans() -> io::Result<()> {
+    match reap_any_event() {
+        Ok(Some(_) | None) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(libc::ECHILD) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Drain the remaining reparented subtree until no child of this process exists.
+///
+/// After the owned group is gone the broker's out-of-group group guard is still
+/// a zombie reparented to this process; leaving it unreaped would leak it to
+/// init, which on FreeBSD never collects a reaper's orphan. Draining to
+/// `ECHILD` proves the whole supervised subtree was reaped, matching the
+/// executor's post-broker-death reap.
+fn drain_subtree() -> io::Result<()> {
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    loop {
+        match reap_any_event() {
+            Ok(Some(_) | None) => {}
+            Err(error) if error.raw_os_error() == Some(libc::ECHILD) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "supervised subtree not fully reaped after broker death",
             ));
         }
         thread::sleep(POLL_INTERVAL);
@@ -253,12 +297,10 @@ impl ForcedBrokerGuard {
                     self.reaped = true;
                     return Ok(event);
                 }
-                Some(event) => {
-                    return Err(io::Error::other(format!(
-                        "supervisor reaped unexpected child event {event:?}"
-                    )));
-                }
-                None => {}
+                // An orphaned workload-subtree process reparented here after the
+                // broker died, or an idle poll; keep waiting for the broker's
+                // own terminal event.
+                Some(_) | None => {}
             }
             if Instant::now() >= deadline {
                 return Err(io::Error::new(

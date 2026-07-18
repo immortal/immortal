@@ -9,6 +9,23 @@
 //! role while still single-threaded and pre-runtime keeps that process-wide
 //! attribute owned by the one task that reaps the subtree; a platform without
 //! the role degrades to ordinary supervision.
+//!
+//! The two ends form nested reapers. The broker owns and reaps the service
+//! subtree while it runs, and the supervisor of the broker acquires the same
+//! role so that an abnormal broker exit reparents the broker's surviving
+//! children to the supervisor rather than init. The supervisor then reaps those
+//! orphans during broker teardown, which is essential on FreeBSD, whose init
+//! never reaps a process orphaned from an already-exited reaper and would
+//! otherwise leak the workload zombie and its process group permanently.
+//!
+//! The supervisor must acquire the role *before* forking the broker. On FreeBSD
+//! a process inherits its reaper at fork and keeps it even if an ancestor later
+//! acquires the role (see [`super::acquire_subreaper`]); acquiring after the
+//! fork would leave the broker's reaper set to init, so the broker's orphaned
+//! workloads would reparent to init and leak. Acquiring first makes the
+//! supervisor the broker's reaper, so the broker's orphans reparent to the
+//! supervisor. The role is not inherited across fork, so the broker still
+//! acquires its own role for the subtree it owns while alive.
 
 use std::io;
 use std::os::fd::OwnedFd;
@@ -60,6 +77,7 @@ pub(crate) fn start_process_broker_with_logging(
 ) -> io::Result<ProcessBrokerEndpoint> {
     let pair = fork::socket_pair_cloexec()?;
     let (supervisor_socket, broker_socket) = pair.into_parts();
+    acquire_supervisor_subreaper();
     match fork::fork_process()? {
         fork::ProcessFork::Parent(process) => {
             drop(broker_socket);
@@ -121,5 +139,25 @@ fn acquire_broker_subreaper() -> bool {
             eprintln!("immortal process broker: subreaper unavailable: {error}");
             false
         }
+    }
+}
+
+/// Acquire the child-subreaper role for the process supervising the broker.
+///
+/// Call this before forking the broker. The broker owns and reaps the service
+/// subtree while it runs, but an abnormal broker exit reparents the broker's
+/// surviving children to *the broker's* reaper. On FreeBSD that reaper is fixed
+/// when the broker is forked, so acquiring the role first makes the supervisor
+/// the broker's reaper: the workload zombies the out-of-group group guard leaves
+/// behind then reparent to the supervisor and are reaped during broker teardown.
+/// Acquiring after the fork would leave the broker's reaper set to init, whose
+/// FreeBSD implementation never reaps a process orphaned from an already-exited
+/// reaper, leaking the zombie and its process group forever. Missing platform
+/// support degrades to ordinary supervision exactly like the broker's own
+/// acquisition; a genuine failure is reported on stderr and, like the broker's,
+/// never aborts supervision.
+fn acquire_supervisor_subreaper() {
+    if let Err(error) = acquire_subreaper() {
+        eprintln!("immortal supervisor: subreaper unavailable: {error}");
     }
 }

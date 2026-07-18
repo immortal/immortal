@@ -20,6 +20,7 @@ tmux = "latest"
 tree-sitter = "latest"
 uv = "latest"
 glow = "latest"
+fd = "latest"
 
 [env]
 EDITOR = "nvim"

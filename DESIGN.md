@@ -186,9 +186,17 @@ capabilities and stop/reload hooks, but the group guard must not be represented
 as containing the escaped daemon after forced broker death. The child-subreaper
 role is a complementary hygiene mechanism, not stronger containment: while the
 broker is alive it reaps descendants orphaned inside its subtree so their
-zombies never leak to init, but it neither signals nor tracks them as owned work
-and does not survive forced broker death. Platform-specific stronger containment
-remains future work and cannot silently change this portable guarantee.
+zombies never leak to init, but it neither signals nor tracks them as owned
+work. The broker's own role ends when the broker does, so the supervisor claims
+a backing child-subreaper role before it forks the broker; on forced broker
+death the broker's orphaned subtree reparents to the supervisor, which drains it
+to exhaustion instead of leaking zombies to init. This nesting still provides
+only reaping hygiene, not signal-level containment of a workload that has
+deliberately escaped its reserved group. On FreeBSD the backing role must be
+acquired before the broker fork because a process's reaper is fixed at fork
+time; [FreeBSD.md](FreeBSD.md) explains that platform rule with a diagram and a
+runnable reproducer. Platform-specific stronger containment remains future work
+and cannot silently change this portable guarantee.
 
 The implemented initial broker channel never accepts a PID from the supervisor.
 Spawn and signal requests carry the supervisor's monotonic generation, and the

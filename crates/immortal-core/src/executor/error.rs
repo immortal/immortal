@@ -24,7 +24,6 @@ pub enum ExecutorError {
     BrokerTimedOut(&'static str),
     ContainmentFailed(ProcessBrokerEvent),
     UnexpectedBrokerEvent(ProcessBrokerEvent),
-    UnexpectedChildEvent(ChildEvent),
     BrokerExited(ChildEvent),
     ControlServerStopped,
 }
@@ -51,9 +50,6 @@ impl Display for ExecutorError {
             Self::UnexpectedBrokerEvent(event) => {
                 write!(formatter, "unexpected process broker event: {event:?}")
             }
-            Self::UnexpectedChildEvent(event) => {
-                write!(formatter, "unexpected direct child event: {event:?}")
-            }
             Self::BrokerExited(event) => {
                 write!(formatter, "process broker exited unsuccessfully: {event:?}")
             }
@@ -75,7 +71,6 @@ impl Error for ExecutorError {
             | Self::BrokerTimedOut(_)
             | Self::ContainmentFailed(_)
             | Self::UnexpectedBrokerEvent(_)
-            | Self::UnexpectedChildEvent(_)
             | Self::BrokerExited(_)
             | Self::ControlServerStopped => None,
         }

@@ -60,13 +60,17 @@ definition migration, and rollback.
 | [VALIDATION.md](VALIDATION.md) | Correctness, resilience, performance, and platform evidence |
 | [RELEASE.md](RELEASE.md) | Release-candidate gates and procedure |
 | [AGENTS.md](AGENTS.md) | Mandatory contributor and coding-agent rules |
+| [FreeBSD.md](FreeBSD.md) | FreeBSD process-reaping model, nested reapers, and a runnable reproducer |
 
 ## Safety model
 
 - The process broker remains the direct parent and sole reaper of managed
   children, and where the platform supports it also reaps descendants orphaned
-  inside its subtree so they never leak to init. Tokio starts only after required
-  fork and daemonization boundaries.
+  inside its subtree so they never leak to init. If the broker is force-killed,
+  the supervisor acts as a backing reaper for the orphaned subtree; on FreeBSD
+  this requires acquiring the role before forking the broker (see
+  [FreeBSD.md](FreeBSD.md)). Tokio starts only after required fork and
+  daemonization boundaries.
 - A service generation is identified by a monotonic generation, never by a PID
   file or signal-0 probe.
 - Each foreground generation owns a process group; lifecycle cleanup targets the

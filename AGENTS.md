@@ -38,6 +38,7 @@ same detail everywhere.
 | `VALIDATION.md` | Correctness, resilience, performance, and platform evidence |
 | `RELEASE.md` | Release-candidate gates and procedure |
 | `AGENTS.md` | Mandatory contribution and implementation rules |
+| `FreeBSD.md` | FreeBSD process-reaping model, nested-reaper rationale, and reproducer |
 
 ## Workspace architecture
 
