@@ -42,7 +42,7 @@ Requirement identifiers are grouped by prefix: COR (correctness), RES
 | RES-002 | Lost or coalesced child notifications cannot leave an owned zombie. | Delayed reap sweep and native lifecycle contracts | All | Proven |
 | RES-003 | Logger failure, backpressure, and shutdown preserve the configured lossless contract. | Logger restart, file-adapter, drain, and foreground contracts | All | Proven |
 | RES-004 | Interrupted reconciliation retains last-known-good state and retries independent failures. | Reconcile unit and operational contracts | All | Proven |
-| RES-005 | Signal storms, control-client saturation, descriptor exhaustion, and interrupted system calls remain bounded. | `resource_fault_contract`, bounded control-listener and `fork` EINTR contracts, plus the adversarial resource campaign | All | Pending |
+| RES-005 | Signal storms, control-client saturation, descriptor exhaustion, and interrupted system calls remain bounded. | `resource_fault_contract`, `resource_soak_contract`, bounded control-listener and `fork` EINTR contracts, plus the adversarial resource campaign | All | Pending |
 | SEC-001 | Runtime discovery and control authenticate ownership without following unsafe filesystem entries. | Runtime and control contracts | All | Proven |
 | SEC-002 | Dependencies pass audit, license, source, and duplicate-version policy. | `cargo audit` and `cargo deny --all-features check` | All | Proven |
 
@@ -67,9 +67,15 @@ release and checksum; no Git or local patch overrides the reviewed source.
 RES-005 has deterministic contracts for a bounded stop/continue storm,
 descriptor exhaustion before broker creation, active control-client limits,
 and interrupted waits. Those contracts pass natively on all three platforms.
-RES-005 remains Pending until the retained resource campaign confirms bounded
-descriptor, process, memory, scheduling, and cleanup behavior under sustained
-load.
+A restart-storm soak (`resource_soak_contract`) additionally drives a real
+forked broker through a bounded spawn, signal, and reap storm on every platform
+while sampling the broker's own resident memory, open descriptors, and surviving
+children at rest. It fails on growth past a generous absolute tolerance, a
+retained child, a stalled round trip, or any orphan after shutdown, and records
+schema-checked resource trends when an `IMMORTAL_SOAK_*` override scales it into
+a long run. RES-005 remains Pending until the retained resource campaign
+confirms bounded descriptor, process, memory, scheduling, and cleanup behavior
+under sustained load on real hosts.
 
 ### Current candidate evidence
 
@@ -220,6 +226,21 @@ Validate any copied result before review:
 ```sh
 scripts/dev-ssh just validation-evidence /tmp/immortal-validation-24h/results.tsv
 ```
+
+A focused single-supervisor resource soak complements that broad runner. It
+drives one forked broker through a sustained restart storm and samples that
+supervisor's own resident memory, descriptors, children, and restart latency, so
+its evidence isolates supervisor resource trends from the compiler and harness.
+Run it from a clean candidate worktree with a report path outside the
+repository:
+
+```sh
+scripts/dev-ssh just resource-soak 86400 /tmp/immortal-resource-soak-24h
+```
+
+It writes and self-validates schema-checked evidence with a SHA-256 manifest and
+fails on any unbounded trend or leftover. Use `604800` seconds for the FreeBSD
+canary, and review the retained trend before changing RES-005.
 
 ## Finding priority
 

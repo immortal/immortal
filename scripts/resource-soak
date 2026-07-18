@@ -1,0 +1,90 @@
+#!/bin/sh
+set -eu
+
+usage() {
+    echo "usage: sh scripts/resource-soak DURATION_SECONDS REPORT_DIRECTORY" >&2
+    exit 64
+}
+
+[ "$#" -eq 2 ] || usage
+duration=$1
+report_directory=$2
+
+case "$duration" in
+    ''|*[!0-9]*) usage ;;
+esac
+if [ "$duration" -lt 1 ] || [ "$duration" -gt 604800 ]; then
+    usage
+fi
+if [ -e "$report_directory" ]; then
+    echo "resource-soak report directory already exists: $report_directory" >&2
+    exit 73
+fi
+if [ -n "$(git status --porcelain)" ]; then
+    echo "resource-soak campaigns require a clean worktree" >&2
+    exit 65
+fi
+
+mkdir -p "$report_directory"
+results=$report_directory/results.tsv
+metadata=$report_directory/metadata.txt
+
+commit=$(git rev-parse HEAD)
+platform=$(uname -s)
+kernel=$(uname -r)
+cpu=$(uname -m)
+toolchain=$(rustc --version)
+
+{
+    printf 'commit\t%s\n' "$commit"
+    printf 'duration_seconds\t%s\n' "$duration"
+    printf 'platform\t%s\n' "$platform"
+    printf 'kernel\t%s\n' "$kernel"
+    printf 'cpu\t%s\n' "$cpu"
+    printf 'toolchain\t%s\n' "$toolchain"
+    printf 'scenario\tbroker-restart-soak\n'
+    printf 'command\tcargo test -p immortal-core --test resource_soak_contract --locked\n'
+    printf 'configuration\tone forked process broker sampled at rest between restart cycles\n'
+    uname -a
+    cargo --version
+} > "$metadata"
+
+finalize_evidence() {
+    manifest=$report_directory/SHA256SUMS
+    if command -v sha256sum > /dev/null 2>&1; then
+        (
+            cd "$report_directory"
+            sha256sum metadata.txt results.tsv
+        ) > "$manifest"
+    elif command -v shasum > /dev/null 2>&1; then
+        (
+            cd "$report_directory"
+            shasum -a 256 metadata.txt results.tsv
+        ) > "$manifest"
+    elif command -v sha256 > /dev/null 2>&1; then
+        for artifact in metadata.txt results.tsv; do
+            digest=$(sha256 -q "$report_directory/$artifact")
+            printf '%s  %s\n' "$digest" "$artifact"
+        done > "$manifest"
+    else
+        echo "a SHA-256 utility is required to finalize resource-soak evidence" >&2
+        exit 69
+    fi
+}
+
+status=0
+env \
+    IMMORTAL_SOAK_DURATION_SECONDS="$duration" \
+    IMMORTAL_SOAK_EVIDENCE="$results" \
+    IMMORTAL_SOAK_TOOLCHAIN="$toolchain" \
+    cargo test -p immortal-core --test resource_soak_contract --locked || status=$?
+
+if [ ! -f "$results" ]; then
+    echo "resource-soak did not record evidence at $results" >&2
+    exit 70
+fi
+
+awk -f scripts/validate-evidence.awk "$results"
+finalize_evidence
+
+exit "$status"

@@ -66,6 +66,11 @@ path = "tests/resource_fault_contract.rs"
 harness = false
 
 [[test]]
+name = "resource_soak_contract"
+path = "tests/resource_soak_contract.rs"
+harness = false
+
+[[test]]
 name = "executor_contract"
 path = "tests/executor_contract.rs"
 harness = false
