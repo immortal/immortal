@@ -30,5 +30,5 @@ harness = false
 
 [[test]]
 name = "controlled_contract"
-path = "tests/controlled_contract.rs"
+path = "tests/controlled_contract/main.rs"
 harness = false
