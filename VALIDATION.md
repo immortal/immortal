@@ -34,6 +34,7 @@ earlier artifact is not an independent sample.
 | COR-004 | Configuration, control, broker, and status inputs are bounded and fail closed. | Unit mutation corpora, fuzz workflows, and protocol contracts | All | Proven |
 | COR-005 | Unexpected broker death cannot create a duplicate replacement or leave a live member in an owned process group. | `broker_death_contract` plus `fork` group-guard contracts | All | Proven |
 | COR-006 | Deliberate process-group or session escape is never misrepresented as portable containment. | Documented limitation and `fork` escape fixture | All | Proven |
+| COR-007 | An orphaned descendant adopted after process-group or session escape is reaped as hygiene and never becomes a workload event or aborts the broker. | `broker_subreaper_orphan_contract` and `fork` subreaper acquisition | All | Pending |
 | RES-001 | Supervisor loss makes the broker stop and clean every owned group. | Broker supervisor-loss contract | All | Proven |
 | RES-002 | Lost or coalesced child notifications cannot leave an owned zombie. | Delayed reap sweep and native lifecycle contracts | All | Proven |
 | RES-003 | Logger failure, backpressure, and shutdown preserve the configured lossless contract. | Logger restart, file-adapter, drain, and foreground contracts | All | Proven |
@@ -48,9 +49,14 @@ must still pass the real-host gates below for its exact commit.
 COR-005 is deliberately bounded by COR-006. A process which creates a new
 session or joins another process group has escaped the portable ownership unit;
 the project must expose that limitation rather than claiming cgroup- or
-subreaper-equivalent containment. The released `fork` 0.9.1 crate passes its
-running, stopped, empty-startup, descriptor-isolation, and cleanup contracts on
-native Linux, macOS, and FreeBSD, including an explicit session-escape fixture.
+subreaper-equivalent containment. COR-007 is the complementary hygiene
+guarantee: where the platform provides the role the broker adopts and reaps such
+escaped descendants once they are orphaned, so their zombies never leak to init,
+but it neither signals nor tracks them as owned work. The released `fork` 0.10.0
+crate passes its running, stopped, empty-startup, descriptor-isolation,
+subreaper-acquisition, and cleanup contracts on native Linux, macOS, and
+FreeBSD, including an explicit session-escape fixture; Linux and FreeBSD acquire
+the child-subreaper role while macOS retains init reparenting.
 The combined Immortal candidate passes its broker-death and complete workspace
 contracts on the same three native platforms. Immortal locks the exact crates.io
 release and checksum; no Git or local patch overrides the reviewed source.
@@ -84,6 +90,11 @@ The 2026-07-14 review binds the process-containment claims to exact revisions:
   `e735120c4fca7686d3f8b758b9e81fe54232ac87`, with clean outcomes in 43 and 42
   seconds. The schema-validated records and SHA-256 manifest are retained in
   [`validation/evidence/freebsd-15.1-e735120`](validation/evidence/freebsd-15.1-e735120).
+- The child-subreaper wiring (COR-007, `broker_subreaper_orphan_contract`) moves
+  the candidate to the crates.io `fork` 0.10.0 release. Its containment-hygiene
+  contract is proven natively on Linux; the full three-platform matrix,
+  lifecycle benchmarks, and FreeBSD cross-check for the 0.10.0 candidate commit
+  remain the outstanding binding gate, so COR-007 stays Pending until they pass.
 
 This evidence proves the repository contracts above. It does not replace the
 24-hour campaigns, seven-day canary, comparative runs, or release drills.

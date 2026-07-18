@@ -51,9 +51,10 @@ Fuzzing targets the same public configuration byte boundary.
 
 The private broker protocol is not a public compatibility surface, but its
 version, generation and task identities, argv/environment/path bytes,
-credentials, descriptor plans, logging plans, requests, events, truncation,
-bounds, and unknown values are covered by `broker_protocol` unit tests and the
-broker, process, resource-fault, and supervisor-loss contract executables.
+credentials, descriptor plans, logging plans, requests, events, adopted-orphan
+reaping, truncation, bounds, and unknown values are covered by `broker_protocol`
+unit tests and the broker, subreaper-orphan, process, resource-fault, and
+supervisor-loss contract executables.
 
 ## Maintenance rule
 

@@ -64,7 +64,9 @@ definition migration, and rollback.
 ## Safety model
 
 - The process broker remains the direct parent and sole reaper of managed
-  children. Tokio starts only after required fork and daemonization boundaries.
+  children, and where the platform supports it also reaps descendants orphaned
+  inside its subtree so they never leak to init. Tokio starts only after required
+  fork and daemonization boundaries.
 - A service generation is identified by a monotonic generation, never by a PID
   file or signal-0 probe.
 - Each foreground generation owns a process group; lifecycle cleanup targets the

@@ -56,6 +56,11 @@ path = "tests/broker_death_contract.rs"
 harness = false
 
 [[test]]
+name = "broker_subreaper_orphan_contract"
+path = "tests/broker_subreaper_orphan_contract.rs"
+harness = false
+
+[[test]]
 name = "resource_fault_contract"
 path = "tests/resource_fault_contract.rs"
 harness = false

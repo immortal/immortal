@@ -57,12 +57,17 @@ impl ChildEvent {
 
 /// Drain one pending child state change without blocking.
 ///
-/// The process broker must call this repeatedly after a coalesced `SIGCHLD`
-/// until it returns `Ok(None)` or the OS reports that no children remain.
+/// Returns `Ok(None)` when at least one child still exists but none has a
+/// pending state change. When no children remain at all the operating system
+/// reports `ECHILD`, which is surfaced unchanged so callers can distinguish
+/// "no children exist" from "children exist but are idle"; the broker's drain
+/// loop treats that error as the end of a sweep, while probes rely on it to
+/// prove that no child was left behind.
 ///
 /// # Errors
 ///
-/// Returns an operating-system wait error or invalid event data from `fork`.
+/// Returns an operating-system wait error (including `ECHILD` when no children
+/// remain) or invalid event data from `fork`.
 pub fn reap_any_event() -> io::Result<Option<ChildEvent>> {
     fork::wait_any_event_nohang()?
         .map(child_event_from_fork)

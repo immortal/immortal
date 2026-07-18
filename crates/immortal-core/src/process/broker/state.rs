@@ -48,6 +48,9 @@ pub(super) struct BrokerRuntimeState {
     pub(super) lifetime_sender: mpsc::Sender<LifetimeObservation>,
     pub(super) processes: BTreeMap<ProcessId, BrokerOwnedProcess>,
     pub(super) readiness_sender: mpsc::Sender<ReadinessObservation>,
+    /// Whether this broker holds the child-subreaper role and therefore reaps
+    /// adopted orphans instead of treating an unowned reap as a fatal error.
+    pub(super) subreaper_active: bool,
 }
 
 pub(super) struct ReadinessObservation {

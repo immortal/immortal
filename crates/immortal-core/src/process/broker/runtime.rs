@@ -41,6 +41,7 @@ pub(super) async fn run_broker(
     stream: UnixStream,
     logging: BrokerLogging,
     lifetime_cleanup: Option<BrokerLifetimePlan>,
+    subreaper_active: bool,
 ) -> Result<(), ProcessBrokerError> {
     let (mut reader, mut writer) = stream.into_split();
     let mut child_signal = listen_for_signal(SignalKind::child())?;
@@ -55,6 +56,7 @@ pub(super) async fn run_broker(
         lifetime_sender,
         processes: BTreeMap::new(),
         readiness_sender,
+        subreaper_active,
     };
     write_event(&mut writer, &BrokerEvent::Ready).await?;
 
@@ -71,6 +73,7 @@ pub(super) async fn run_broker(
                             &mut state.logging,
                             &mut lifetime_events,
                             state.lifetime_cleanup.take(),
+                            state.subreaper_active,
                         ).await?;
                         return Ok(());
                     }
@@ -89,14 +92,16 @@ pub(super) async fn run_broker(
                     &mut state.generations,
                     &mut state.processes,
                     &mut state.logging,
+                    state.subreaper_active,
                 ).await?;
             }
-            _ = child_reap.tick(), if !state.processes.is_empty() => {
+            _ = child_reap.tick(), if !state.processes.is_empty() || state.subreaper_active => {
                 forward_child_events(
                     &mut writer,
                     &mut state.generations,
                     &mut state.processes,
                     &mut state.logging,
+                    state.subreaper_active,
                 ).await?;
             }
             Some(observation) = readiness_events.recv() => {

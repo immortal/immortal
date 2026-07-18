@@ -26,6 +26,13 @@ use super::state::{BrokerGeneration, BrokerOwnedProcess, LifetimeObservation, Li
 use super::types::BrokerLifetimePlan;
 use super::{ProcessId, ProcessSignal, SignalTarget, signal, spawn_process};
 
+/// A descriptor-tracked generation paired with the plan for cleaning it up
+/// after the supervisor connection is lost.
+struct SupervisorLossCleanup {
+    generation: Generation,
+    plan: BrokerLifetimePlan,
+}
+
 pub(super) async fn cleanup_after_supervisor_loss(
     child_signal: &mut ChildSignal,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
@@ -33,6 +40,7 @@ pub(super) async fn cleanup_after_supervisor_loss(
     logging: &mut BrokerLogging,
     lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
     lifetime_cleanup: Option<BrokerLifetimePlan>,
+    subreaper_active: bool,
 ) -> Result<(), ProcessBrokerError> {
     signal_every_group(generations, ProcessSignal::Kill);
     if !reap_without_events(
@@ -41,6 +49,7 @@ pub(super) async fn cleanup_after_supervisor_loss(
         generations,
         processes,
         logging,
+        subreaper_active,
     )
     .await?
     {
@@ -63,15 +72,15 @@ pub(super) async fn cleanup_after_supervisor_loss(
         .into());
     }
     let complete = match (generation, lifetime_cleanup) {
-        (Some(generation), Some(cleanup)) => {
+        (Some(generation), Some(plan)) => {
             run_supervisor_loss_hook(
-                generation,
-                cleanup,
+                SupervisorLossCleanup { generation, plan },
                 child_signal,
                 generations,
                 processes,
                 logging,
                 lifetime_events,
+                subreaper_active,
             )
             .await?
         }
@@ -90,19 +99,20 @@ pub(super) async fn cleanup_after_supervisor_loss(
 }
 
 async fn run_supervisor_loss_hook(
-    generation: Generation,
-    cleanup: BrokerLifetimePlan,
+    cleanup: SupervisorLossCleanup,
     child_signal: &mut ChildSignal,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
     lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
+    subreaper_active: bool,
 ) -> Result<bool, ProcessBrokerError> {
+    let SupervisorLossCleanup { generation, plan } = cleanup;
     let BrokerLifetimePlan {
         stop,
         stop_timeout,
         lifetime_timeout,
-    } = cleanup;
+    } = plan;
     let hook = match spawn_process(stop, SHUTDOWN_GRACE) {
         Ok(hook) => {
             processes.insert(hook.process(), BrokerOwnedProcess::Generation(generation));
@@ -121,6 +131,7 @@ async fn run_supervisor_loss_hook(
         generations,
         processes,
         logging,
+        subreaper_active,
     )
     .await?;
     if let Some(hook) = hook
@@ -133,6 +144,7 @@ async fn run_supervisor_loss_hook(
             generations,
             processes,
             logging,
+            subreaper_active,
         )
         .await?;
         if !reaped {
@@ -156,12 +168,13 @@ async fn reap_without_events(
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
+    subreaper_active: bool,
 ) -> Result<bool, ProcessBrokerError> {
-    let _ = collect_child_events(generations, processes, logging)?;
+    let _ = collect_child_events(generations, processes, logging, subreaper_active)?;
     while has_workload_processes(processes) {
         match timeout_at(deadline, child_signal.recv()).await {
             Ok(Some(())) => {
-                let _ = collect_child_events(generations, processes, logging)?;
+                let _ = collect_child_events(generations, processes, logging, subreaper_active)?;
             }
             Ok(None) => {
                 return Err(ProcessBrokerError(

@@ -30,6 +30,7 @@ pub(super) async fn shutdown_owned<W>(
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
+    subreaper_active: bool,
 ) -> Result<bool, ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
@@ -42,6 +43,7 @@ where
         generations,
         processes,
         logging,
+        subreaper_active,
     )
     .await?
     {
@@ -55,6 +57,7 @@ where
         generations,
         processes,
         logging,
+        subreaper_active,
     )
     .await
 }
@@ -66,15 +69,17 @@ async fn reap_until<W>(
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     logging: &mut BrokerLogging,
+    subreaper_active: bool,
 ) -> Result<bool, ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
 {
-    forward_child_events(writer, generations, processes, logging).await?;
+    forward_child_events(writer, generations, processes, logging, subreaper_active).await?;
     while has_workload_processes(processes) {
         match timeout_at(deadline, child_signal.recv()).await {
             Ok(Some(())) => {
-                forward_child_events(writer, generations, processes, logging).await?;
+                forward_child_events(writer, generations, processes, logging, subreaper_active)
+                    .await?;
             }
             Ok(None) => {
                 return Err(ProcessBrokerError(

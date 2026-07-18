@@ -5,7 +5,10 @@
 //! logical ownership after their launcher exits; EOF and the pre-runtime stop
 //! plan are handled without adopting an application PID. `SIGCHLD` drives
 //! immediate reaping, while a low-frequency sweep closes platform notification
-//! gaps through the same ownership-checked wait path.
+//! gaps through the same ownership-checked wait path. On platforms that support
+//! it the broker also holds the child-subreaper role, so descendants that
+//! escape the supervised subtree reparent to it and are reaped as hygiene
+//! rather than leaking to init; adopted orphans never enter restart policy.
 //!
 //! Each spawn first reserves a process group with a short-lived anchor, joins
 //! the workload, and then activates one out-of-group lifetime helper. The broker
@@ -36,7 +39,8 @@
 //!   loop, dispatch, spawn, and reap boundaries.
 //! - `dispatch` routes one decoded request to its handler.
 //! - `spawn` owns service/logger spawn preparation and group containment.
-//! - `reap` owns child reaping, guard disarming, and group signaling.
+//! - `reap` owns child reaping, adopted-orphan hygiene, guard disarming, and
+//!   group signaling.
 //! - `shutdown` owns bounded terminate-then-kill shutdown.
 //! - `supervisor_loss` owns descriptor-tracked cleanup after supervisor loss.
 //! - `wire` owns the bounded frame read/write pairing used by every request
@@ -63,6 +67,7 @@ mod wire;
 use super::{
     ChildEvent, ProcessCommand, ProcessDescriptor, ProcessGroupGuard, ProcessGroupId, ProcessId,
     ProcessSignal, SignalTarget, SpawnError, SpawnFailure, SpawnStage, SpawnedProcess,
+    acquire_subreaper,
     broker_protocol::{
         BrokerEvent, BrokerProtocolError, BrokerReadinessFailure, BrokerRequest,
         BrokerSignalTarget, HEADER_BYTES, MAX_FRAME_BYTES, declared_frame_length,

@@ -123,11 +123,13 @@ Tokio supervisor <---- bounded typed IPC ----> single-threaded broker
                                                -> wait/reap events
 ```
 
-The broker remains the direct parent and sole reaper of every managed child. It
-assigns no durable meaning to a PID: every request and event includes the
-supervisor's monotonic generation identity. The supervisor owns policy and
-desired state; the broker owns operating-system process handles and performs
-only requested mechanisms.
+The broker remains the direct parent and sole reaper of every managed child.
+Where the platform offers a child-subreaper role it also claims that role, so
+descendants orphaned inside its subtree reparent to the broker and are reaped as
+containment hygiene rather than leaking to init. It assigns no durable meaning to
+a PID: every request and event includes the supervisor's monotonic generation
+identity. The supervisor owns policy and desired state; the broker owns
+operating-system process handles and performs only requested mechanisms.
 
 Before each broker fork, argv, environment, user/group transition, working
 directory, descriptor actions, and process-group identity are fully validated
@@ -181,9 +183,12 @@ reaper. A workload which deliberately calls `setsid`, changes process group, or
 otherwise escapes the reserved group has left the contract. Descriptor tracking
 can intentionally support such self-daemonizing software through lifetime
 capabilities and stop/reload hooks, but the group guard must not be represented
-as containing the escaped daemon after forced broker death. Platform-specific
-stronger containment remains future work and cannot silently change this
-portable guarantee.
+as containing the escaped daemon after forced broker death. The child-subreaper
+role is a complementary hygiene mechanism, not stronger containment: while the
+broker is alive it reaps descendants orphaned inside its subtree so their
+zombies never leak to init, but it neither signals nor tracks them as owned work
+and does not survive forced broker death. Platform-specific stronger containment
+remains future work and cannot silently change this portable guarantee.
 
 The implemented initial broker channel never accepts a PID from the supervisor.
 Spawn and signal requests carry the supervisor's monotonic generation, and the
@@ -191,12 +196,16 @@ broker resolves that generation against its live child and process-group table.
 Frames preserve non-UTF-8 Unix argv, environment, and path bytes while enforcing
 hard bounds on the frame, individual fields, collection counts, and startup
 deadline. The broker reports readiness only after its current-thread runtime and
-`SIGCHLD` source are installed. Malformed frames, unknown child ownership, and
-unexpected EOF fail closed; supervisor EOF triggers group kill and reaping.
-Each coalesced `SIGCHLD` drains every available wait event. While the broker
-owns children, a delayed 250 ms safety sweep performs the same drain so a lost
-or platform-specific notification edge cannot leave an exited child unreaped;
-the timer is disabled when no child is owned.
+`SIGCHLD` source are installed. Malformed frames and unexpected EOF fail closed;
+supervisor EOF triggers group kill and reaping. Each coalesced `SIGCHLD` drains
+every available wait event to exhaustion. A reaped process that matches no owned
+generation or guard is classified by role: when the broker holds the
+child-subreaper role it is an adopted orphan, reaped as hygiene and never
+forwarded as a workload event nor allowed to abort the broker; without that role
+an unowned reap remains a fatal ownership violation. A delayed 250 ms safety
+sweep performs the same drain so a lost or platform-specific notification edge
+cannot leave an exited child unreaped; it runs whenever the broker owns children
+or holds the subreaper role, and stays idle only when neither applies.
 The supervisor owns one persistent broker-reader task feeding a bounded queue;
 selecting between process events, control work, timers, and Unix signals can
 therefore cancel a queue receive without cancelling a partially read frame.

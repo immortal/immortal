@@ -104,6 +104,7 @@ where
                 &mut state.generations,
                 &mut state.processes,
                 &mut state.logging,
+                state.subreaper_active,
             )
             .await?;
             let event = if complete {

@@ -22,6 +22,9 @@
 //!   allow-listing, and the child startup handshake.
 //! - `wait` — blocking and non-blocking drains of the `fork` wait boundary
 //!   into Immortal's [`ChildEvent`].
+//! - `subreaper` — registers the broker as the reaper for orphaned descendants
+//!   so escaped grandchildren reparent to it and drain through `wait` instead
+//!   of leaking to init.
 //! - `broker` and `broker_protocol` — the dedicated single-threaded process
 //!   broker and the bounded wire contract it speaks with the supervisor.
 //!
@@ -36,6 +39,7 @@ mod daemon;
 mod identity;
 mod signal;
 mod spawn;
+mod subreaper;
 mod wait;
 
 pub(crate) use self::broker::{
@@ -66,4 +70,5 @@ pub use self::spawn::{
     ProcessDescriptor, SpawnError, SpawnFailure, SpawnStage, SpawnedProcess, spawn,
     spawn_with_descriptors,
 };
+pub use self::subreaper::{SubreaperStatus, acquire_subreaper, is_subreaper, release_subreaper};
 pub use self::wait::{ChildEvent, reap_any_event, wait_for_event};
