@@ -32,3 +32,8 @@ harness = false
 name = "controlled_contract"
 path = "tests/controlled_contract/main.rs"
 harness = false
+
+[[test]]
+name = "resource_binary_soak_contract"
+path = "tests/resource_binary_soak_contract.rs"
+harness = false

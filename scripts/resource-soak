@@ -26,8 +26,14 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 mkdir -p "$report_directory"
-results=$report_directory/results.tsv
+broker_results=$report_directory/results.tsv
+binary_results=$report_directory/binary-results.tsv
 metadata=$report_directory/metadata.txt
+
+broker_duration=$((duration / 2))
+binary_duration=$((duration - broker_duration))
+[ "$broker_duration" -ge 1 ] || broker_duration=1
+[ "$binary_duration" -ge 1 ] || binary_duration=1
 
 commit=$(git rev-parse HEAD)
 platform=$(uname -s)
@@ -38,6 +44,8 @@ toolchain=$(rustc --version)
 {
     printf 'commit\t%s\n' "$commit"
     printf 'duration_seconds\t%s\n' "$duration"
+    printf 'broker_duration_seconds\t%s\n' "$broker_duration"
+    printf 'binary_duration_seconds\t%s\n' "$binary_duration"
     printf 'platform\t%s\n' "$platform"
     printf 'kernel\t%s\n' "$kernel"
     printf 'cpu\t%s\n' "$cpu"
@@ -45,6 +53,9 @@ toolchain=$(rustc --version)
     printf 'scenario\tbroker-restart-soak\n'
     printf 'command\tcargo test -p immortal-core --test resource_soak_contract --locked\n'
     printf 'configuration\tone forked process broker sampled at rest between restart cycles\n'
+    printf 'scenario\tsupervisor-restart-soak\n'
+    printf 'command\tcargo test -p immortal --test resource_binary_soak_contract --locked\n'
+    printf 'configuration\tone immortal --foreground supervisor sampled under a self-driven restart storm\n'
     uname -a
     cargo --version
 } > "$metadata"
@@ -54,15 +65,15 @@ finalize_evidence() {
     if command -v sha256sum > /dev/null 2>&1; then
         (
             cd "$report_directory"
-            sha256sum metadata.txt results.tsv
+            sha256sum metadata.txt results.tsv binary-results.tsv
         ) > "$manifest"
     elif command -v shasum > /dev/null 2>&1; then
         (
             cd "$report_directory"
-            shasum -a 256 metadata.txt results.tsv
+            shasum -a 256 metadata.txt results.tsv binary-results.tsv
         ) > "$manifest"
     elif command -v sha256 > /dev/null 2>&1; then
-        for artifact in metadata.txt results.tsv; do
+        for artifact in metadata.txt results.tsv binary-results.tsv; do
             digest=$(sha256 -q "$report_directory/$artifact")
             printf '%s  %s\n' "$digest" "$artifact"
         done > "$manifest"
@@ -74,17 +85,25 @@ finalize_evidence() {
 
 status=0
 env \
-    IMMORTAL_SOAK_DURATION_SECONDS="$duration" \
-    IMMORTAL_SOAK_EVIDENCE="$results" \
+    IMMORTAL_SOAK_DURATION_SECONDS="$broker_duration" \
+    IMMORTAL_SOAK_EVIDENCE="$broker_results" \
     IMMORTAL_SOAK_TOOLCHAIN="$toolchain" \
     cargo test -p immortal-core --test resource_soak_contract --locked || status=$?
 
-if [ ! -f "$results" ]; then
-    echo "resource-soak did not record evidence at $results" >&2
-    exit 70
-fi
+env \
+    IMMORTAL_BINSOAK_DURATION_SECONDS="$binary_duration" \
+    IMMORTAL_BINSOAK_EVIDENCE="$binary_results" \
+    IMMORTAL_SOAK_TOOLCHAIN="$toolchain" \
+    cargo test -p immortal --test resource_binary_soak_contract --locked || status=$?
 
-awk -f scripts/validate-evidence.awk "$results"
+for artifact in "$broker_results" "$binary_results"; do
+    if [ ! -f "$artifact" ]; then
+        echo "resource-soak did not record evidence at $artifact" >&2
+        exit 70
+    fi
+    awk -f scripts/validate-evidence.awk "$artifact"
+done
+
 finalize_evidence
 
 exit "$status"
