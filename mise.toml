@@ -19,6 +19,7 @@ ripgrep = "latest"
 tmux = "latest"
 tree-sitter = "latest"
 uv = "latest"
+glow = "latest"
 
 [env]
 EDITOR = "nvim"
