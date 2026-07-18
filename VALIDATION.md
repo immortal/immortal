@@ -26,6 +26,9 @@ earlier artifact is not an independent sample.
 
 ## Correctness and resilience matrix
 
+Requirement identifiers are grouped by prefix: COR (correctness), RES
+(resilience), and SEC (security).
+
 | ID | Requirement | Evidence | Platforms | State |
 |---|---|---|---|---|
 | COR-001 | A service generation is identified independently of a reusable PID. | Supervisor, control, and broker generation contracts | All | Proven |
@@ -34,7 +37,7 @@ earlier artifact is not an independent sample.
 | COR-004 | Configuration, control, broker, and status inputs are bounded and fail closed. | Unit mutation corpora, fuzz workflows, and protocol contracts | All | Proven |
 | COR-005 | Unexpected broker death cannot create a duplicate replacement or leave a live member in an owned process group. | `broker_death_contract` plus `fork` group-guard contracts | All | Proven |
 | COR-006 | Deliberate process-group or session escape is never misrepresented as portable containment. | Documented limitation and `fork` escape fixture | All | Proven |
-| COR-007 | An orphaned descendant adopted after process-group or session escape is reaped as hygiene and never becomes a workload event or aborts the broker. | `broker_subreaper_orphan_contract` and `fork` subreaper acquisition | All | Pending |
+| COR-007 | An orphaned descendant adopted after process-group or session escape is reaped as hygiene and never becomes a workload event or aborts the broker. | `broker_subreaper_orphan_contract` and `fork` subreaper acquisition | All | Proven |
 | RES-001 | Supervisor loss makes the broker stop and clean every owned group. | Broker supervisor-loss contract | All | Proven |
 | RES-002 | Lost or coalesced child notifications cannot leave an owned zombie. | Delayed reap sweep and native lifecycle contracts | All | Proven |
 | RES-003 | Logger failure, backpressure, and shutdown preserve the configured lossless contract. | Logger restart, file-adapter, drain, and foreground contracts | All | Proven |
@@ -70,7 +73,8 @@ load.
 
 ### Current candidate evidence
 
-The 2026-07-14 review binds the process-containment claims to exact revisions:
+The 2026-07-14 and 2026-07-18 reviews bind the process-containment claims to
+exact revisions:
 
 - The signed `fork` 0.9.1 tag resolves to commit
   `08d50bf05cd0a63d1567b4f475eb701ff51a2907`, which passed its complete native
@@ -90,11 +94,19 @@ The 2026-07-14 review binds the process-containment claims to exact revisions:
   `e735120c4fca7686d3f8b758b9e81fe54232ac87`, with clean outcomes in 43 and 42
   seconds. The schema-validated records and SHA-256 manifest are retained in
   [`validation/evidence/freebsd-15.1-e735120`](validation/evidence/freebsd-15.1-e735120).
-- The child-subreaper wiring (COR-007, `broker_subreaper_orphan_contract`) moves
-  the candidate to the crates.io `fork` 0.10.0 release. Its containment-hygiene
-  contract is proven natively on Linux; the full three-platform matrix,
-  lifecycle benchmarks, and FreeBSD cross-check for the 0.10.0 candidate commit
-  remain the outstanding binding gate, so COR-007 stays Pending until they pass.
+- The child-subreaper wiring (COR-007, `broker_subreaper_orphan_contract`) locks
+  the candidate to the crates.io `fork` 0.10.0 release, checksum
+  `aafa2fb0e6b3b0886eb36b909c13a5e3dc9d7e0cf436376e43f095177050c029`. Immortal
+  commit `69cfa3c15222872924bfb639a0f5dd7357c53561` passed its complete native
+  Linux, macOS, and FreeBSD matrix, lifecycle benchmarks, version checks, and
+  FreeBSD cross-check in
+  [Rust CI run 29658374195](https://github.com/immortal/immortal/actions/runs/29658374195).
+  Its audit and dependency-policy jobs passed in
+  [security run 29658374231](https://github.com/immortal/immortal/actions/runs/29658374231),
+  and both bounded parser fuzz targets passed in
+  [fuzz run 29658374252](https://github.com/immortal/immortal/actions/runs/29658374252).
+  The workspace suite runs `broker_subreaper_orphan_contract` on all three native
+  platforms, so COR-007 is Proven at that commit.
 
 This evidence proves the repository contracts above. It does not replace the
 24-hour campaigns, seven-day canary, comparative runs, or release drills.
