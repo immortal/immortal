@@ -52,6 +52,31 @@ The Cargo workspace contains:
 Keep process management, configuration, control protocols, logging, supervision,
 and platform behavior in `immortal-core`.
 
+### File organization and module size
+
+Keep Rust source files cohesive and generally under 1000 lines, and treat 1000
+as a hard upper limit rather than a target. A file approaching it usually holds
+more than one responsibility.
+
+Split by responsibility, not by arbitrary size, and keep related types,
+implementations, errors, and tests together. Name each module for what it owns,
+such as `dispatch`, `errors`, `validation`, or `executor`; never create
+dumping-ground modules such as `utils`, `helpers`, `common`, or `misc`.
+
+When splitting a module, keep the original file as the module root and its
+canonical public path; do not rename it to `mod.rs`. Declare each extracted part
+as a private child module and re-export the exact prior surface through `self::`
+so every public type keeps one canonical path:
+
+- `mod errors;` holds production error types, re-exported with
+  `pub use self::errors::Type;` only where the parent already exposed them.
+- `#[cfg(test)] mod tests;` holds the file's unit tests.
+- A narrowly named private child module holds genuinely shared internal helpers.
+
+Keep child modules private (`mod`, not `pub mod`) unless an external caller needs
+the submodule path, and give items shared between the parent and its tests the
+narrowest visibility that works, normally `pub(super)`.
+
 ### CLI source layout
 
 Every executable crate uses the `s3m`-inspired per-action layout. Preserve it
@@ -297,6 +322,10 @@ The initial supported platforms are Linux, macOS, and FreeBSD.
 - Keep focused unit tests beside their module in `#[cfg(test)]` modules. Use
   standalone integration or harness-free contract executables for process,
   daemon, CLI, and cross-component behavior.
+- When an inline `#[cfg(test)]` module grows large enough to push a file toward
+  the size limit, move it unchanged into a sibling `tests.rs` child module
+  declared with `#[cfg(test)] mod tests;`, keeping tests beside the code they
+  exercise.
 - Name tests `<unit>_<behavior>`, for example
   `startup_handshake_rejects_truncated_record`.
 - Every behavior change requires success and failure coverage. Every bug fix
