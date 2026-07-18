@@ -2,10 +2,10 @@
 
 use std::{
     error::Error,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fs,
     io::{self, Read},
-    os::unix::{ffi::OsStringExt, fs::symlink},
+    os::unix::fs::symlink,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
     thread,
@@ -176,17 +176,27 @@ fn prove_stable_failures(binary: &Path, directory: &Path) -> Result<(), Box<dyn 
     )?;
     require_diagnostic(&range_output, "outside the supported UTC range")?;
 
-    let non_utf8_parent = directory.join(OsString::from_vec(b"non-utf8-\xff".to_vec()));
-    fs::create_dir(&non_utf8_parent)?;
-    fs::write(non_utf8_parent.join("app.log.@1.1.1"), b"path")?;
-    let non_utf8_live = non_utf8_parent.join("app.log");
-    let non_utf8_output = run(binary, &[OsStr::new("archives"), non_utf8_live.as_os_str()])?;
-    require_status(
-        non_utf8_output.status,
-        ExitClass::Data,
-        "non-UTF-8 archive path",
-    )?;
-    require_diagnostic(&non_utf8_output, "archive path is not valid UTF-8")
+    // macOS APFS and HFS+ reject filenames containing invalid UTF-8, so a
+    // non-UTF-8 archive path cannot exist there. Exercise that rejection only on
+    // platforms whose file systems can represent such a path.
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        let non_utf8_parent = directory.join(OsString::from_vec(b"non-utf8-\xff".to_vec()));
+        fs::create_dir(&non_utf8_parent)?;
+        fs::write(non_utf8_parent.join("app.log.@1.1.1"), b"path")?;
+        let non_utf8_live = non_utf8_parent.join("app.log");
+        let non_utf8_output = run(binary, &[OsStr::new("archives"), non_utf8_live.as_os_str()])?;
+        require_status(
+            non_utf8_output.status,
+            ExitClass::Data,
+            "non-UTF-8 archive path",
+        )?;
+        require_diagnostic(&non_utf8_output, "archive path is not valid UTF-8")?;
+    }
+
+    Ok(())
 }
 
 fn run(binary: &Path, arguments: &[&OsStr]) -> Result<Output, Box<dyn Error>> {
