@@ -17,12 +17,12 @@ workflow definition or an unreviewed local measurement is not sufficient.
 These gates cannot be checked by elapsed time, intention, or generated text.
 
 The process-library gate is complete. Immortal locks the published crates.io
-`fork` 0.9.1 release, including the broker-death containment API, without a Git
-or local patch override. The signed 0.9.1 tag and the combined Immortal
-dependency checkpoint pass their native Linux, macOS, and FreeBSD matrices;
-`Cargo.lock` records the registry source and checksum. Release eligibility
-remains blocked by the external real-host, campaign, and drill gates above,
-not by the process-library dependency.
+`fork` 0.10.0 release, including the broker-death containment and child-subreaper
+APIs, without a Git or local patch override. The combined Immortal dependency
+checkpoint passes its native Linux, macOS, and FreeBSD matrices, and `Cargo.lock`
+records the registry source and checksum. Release eligibility remains blocked by
+the external real-host, campaign, and drill gates above, not by the
+process-library dependency.
 
 ## Candidate validation
 
