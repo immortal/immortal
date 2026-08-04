@@ -42,6 +42,7 @@ pub use self::model::{
     ServiceConfig, StartConditionConfig,
 };
 pub use self::paths::resolve_paths;
+pub use self::validate::MAX_SCHEDULE_SECONDS;
 
 /// Maximum accepted size of one service definition.
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
@@ -141,6 +142,24 @@ pub fn parse_str(source: &str) -> Result<ServiceConfig, ConfigError> {
     };
     validate::validate(&config)?;
     Ok(config)
+}
+
+/// Validate one already-materialized, path-resolved service definition.
+///
+/// This applies exactly the policy and resolved-path checks the file parser
+/// runs, in the same order, for callers which build a [`ServiceConfig`]
+/// programmatically instead of parsing one. Command-line supervision mutates a
+/// definition after construction, so it must re-validate here before any field
+/// reaches process setup. Call it after [`resolve_paths`], since the resolved
+/// path checks inspect the filesystem.
+///
+/// # Errors
+///
+/// Returns a validation error listing every policy bound, field relationship,
+/// or resolved path the definition violates.
+pub fn validate_service(config: &ServiceConfig) -> Result<(), ConfigError> {
+    validate::validate(config)?;
+    paths::validate_resolved(config)
 }
 
 /// Serialize a validated configuration using the single supported schema.

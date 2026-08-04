@@ -26,7 +26,7 @@ pub(super) fn advance_childless_state(
     first_start: &mut bool,
     start_delay_seconds: u64,
     deadline: &mut Option<TokioInstant>,
-) -> Result<bool, TransitionError> {
+) -> Result<bool, ExecutorError> {
     if machine.state() == SupervisorState::Down
         && matches!(machine.desired(), DesiredState::Up | DesiredState::Once)
     {
@@ -37,7 +37,12 @@ pub(super) fn advance_childless_state(
             Duration::ZERO
         };
         *first_start = false;
-        *deadline = Some(TokioInstant::now() + delay);
+        // Validation bounds `start_delay_seconds`, so this only fails for a
+        // delay no monotonic clock can represent. Refusing the start beats
+        // aborting the supervisor on an unchecked addition.
+        *deadline = Some(TokioInstant::now().checked_add(delay).ok_or_else(|| {
+            io::Error::other("start delay exceeds the representable monotonic deadline")
+        })?);
         return Ok(true);
     }
     if matches!(

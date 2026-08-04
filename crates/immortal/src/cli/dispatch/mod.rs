@@ -80,6 +80,9 @@ pub fn action(matches: &ArgMatches) -> Result<Action, DispatchError> {
 mod tests {
     use std::{error::Error, path::PathBuf};
 
+    use clap::error::ErrorKind;
+    use immortal_core::config::MAX_SCHEDULE_SECONDS;
+
     use super::action;
     use crate::cli::{
         actions::{Action, DirectService, RuntimeIdentity},
@@ -222,5 +225,43 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn accepts_the_largest_supported_start_delay() -> Result<(), Box<dyn Error>> {
+        let matches = commands::new().try_get_matches_from([
+            "immortal",
+            "--name",
+            "delayed",
+            "--wait",
+            &MAX_SCHEDULE_SECONDS.to_string(),
+            "/bin/true",
+        ])?;
+        let Action::SuperviseCommand(command) = action(&matches)? else {
+            return Err("expected a direct command action".into());
+        };
+        assert_eq!(command.start_delay_seconds, MAX_SCHEDULE_SECONDS);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_a_start_delay_beyond_the_schedule_bound() {
+        for wait in [
+            MAX_SCHEDULE_SECONDS.saturating_add(1).to_string(),
+            u64::MAX.to_string(),
+        ] {
+            let parsed = commands::new().try_get_matches_from([
+                "immortal",
+                "--name",
+                "delayed",
+                "--wait",
+                &wait,
+                "/bin/true",
+            ]);
+            assert!(
+                parsed.is_err_and(|error| error.kind() == ErrorKind::ValueValidation),
+                "--wait {wait} was not rejected as an out-of-range value"
+            );
+        }
     }
 }

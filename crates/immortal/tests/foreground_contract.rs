@@ -243,6 +243,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         ExitClass::Usage,
         "removed nonoperational option",
     )?;
+    // Regression: an unbounded `--wait` reached the executor unvalidated and
+    // aborted the supervisor while scheduling its start deadline.
+    for wait in ["18446744073709551615", "31536001"] {
+        assert_status(
+            run(
+                binary,
+                [
+                    "--foreground",
+                    "--name",
+                    "delayed",
+                    "-w",
+                    wait,
+                    TRUE_PROGRAM,
+                ],
+            )?,
+            ExitClass::Usage,
+            "start delay beyond the schedule bound",
+        )?;
+    }
 
     let environment = TemporaryDirectory::new("environment")?;
     let environment_marker = MarkerFile::new("environment-loaded");

@@ -1,15 +1,19 @@
 //! Tests spanning executor logger state and foreground terminal detection.
 
-use std::{error::Error, time::Instant};
+use std::{
+    error::Error,
+    time::{Duration, Instant},
+};
 
 use tokio::time::Instant as TokioInstant;
 
 use super::{
-    LoggerExecution, LoggerExecutionState, LoggerShutdownTier, logger_status,
-    next_logger_shutdown_tier, schedule_logger_restart, supervision_finished,
+    DesiredState, ExecutorError, LoggerExecution, LoggerExecutionState, LoggerShutdownTier,
+    advance_childless_state, logger_status, next_logger_shutdown_tier, schedule_logger_restart,
+    supervision_finished,
 };
 use crate::{
-    config::{BackoffConfig, LoggerRestartConfig},
+    config::{BackoffConfig, LoggerRestartConfig, MAX_SCHEDULE_SECONDS},
     process::{BrokerLoggerId, BrokerTaskId, ProcessId},
     status::LoggerStatus,
     supervisor::{FailureReason, StateMachine},
@@ -134,5 +138,40 @@ fn foreground_terminal_detection_distinguishes_initial_down_from_prestart_failur
     failed.fail_without_child(FailureReason::LoggerRetryLimit)?;
     assert!(supervision_finished(&failed, false, true));
     assert!(!supervision_finished(&failed, true, true));
+    Ok(())
+}
+
+#[test]
+fn childless_start_schedules_a_bounded_start_delay() -> Result<(), Box<dyn Error>> {
+    let mut machine = StateMachine::default();
+    machine.set_desired(DesiredState::Up);
+    let mut first_start = true;
+    let mut deadline = None;
+    let before = TokioInstant::now();
+
+    assert!(advance_childless_state(
+        &mut machine,
+        &mut first_start,
+        MAX_SCHEDULE_SECONDS,
+        &mut deadline,
+    )?);
+    let scheduled = deadline.ok_or("bounded start delay did not schedule a deadline")?;
+    assert!(!first_start);
+    assert!(scheduled >= before + Duration::from_secs(MAX_SCHEDULE_SECONDS));
+    Ok(())
+}
+
+#[test]
+fn childless_start_refuses_an_unrepresentable_start_delay() -> Result<(), Box<dyn Error>> {
+    let mut machine = StateMachine::default();
+    machine.set_desired(DesiredState::Up);
+    let mut first_start = true;
+    let mut deadline = None;
+
+    let error = advance_childless_state(&mut machine, &mut first_start, u64::MAX, &mut deadline)
+        .err()
+        .ok_or("an unrepresentable start delay was scheduled")?;
+    assert!(matches!(error, ExecutorError::OperatingSystem(_)));
+    assert!(deadline.is_none());
     Ok(())
 }

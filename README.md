@@ -626,6 +626,14 @@ shorthand `-n` becomes `-f`/`--foreground`. `--follow-pid` remains unsupported;
 use foreground execution or descriptor tracking because runtime identity never
 comes from a PID file or transient process identifier.
 
+`-w SECONDS`/`--wait SECONDS` delays only the first start and sets the same
+`start_delay_seconds` field a definition would, so it shares the one-year
+scheduling cap above. A larger value is rejected as usage before any runtime
+state is created. Every direct option is materialized into one definition which
+is then validated exactly like a parsed file, so an invalid `--retries`,
+`--user`, `--working-dir`, `--logfile`, `--logger`, or pid-file path fails
+before process setup rather than during supervision.
+
 ## Runtime and control
 
 The system runtime root is `/run/immortal` on Linux and `/var/run/immortal` on

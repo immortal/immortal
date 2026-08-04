@@ -20,7 +20,14 @@ use super::{
 };
 
 const MAX_OPERATION_SECONDS: u64 = 86_400;
-const MAX_SCHEDULE_SECONDS: u64 = 31_536_000;
+/// Longest accepted scheduling interval, one year in seconds.
+///
+/// Bounds every field which delays or spaces out a lifecycle transition:
+/// `start_delay_seconds` and each backoff's `max_seconds` and
+/// `reset_after_seconds`. It is public so command-line parsing can reject an
+/// out-of-range value as usage rather than deferring to configuration
+/// validation, without duplicating the bound.
+pub const MAX_SCHEDULE_SECONDS: u64 = 31_536_000;
 
 pub(super) fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
     let mut errors = Vec::new();

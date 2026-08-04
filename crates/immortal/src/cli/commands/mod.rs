@@ -10,6 +10,7 @@ use clap::{
     builder::styling::{AnsiColor, Effects, Styles},
     error::ErrorKind,
 };
+use immortal_core::config::MAX_SCHEDULE_SECONDS;
 
 const CONFIG_CONFLICTS: [&str; 10] = [
     "env-dir",
@@ -259,7 +260,7 @@ fn arg_wait() -> Arg {
         .long("wait")
         .value_name("SECONDS")
         .help("Wait SECONDS before starting the command")
-        .value_parser(clap::value_parser!(u64))
+        .value_parser(clap::value_parser!(u64).range(0..=MAX_SCHEDULE_SECONDS))
         .conflicts_with("config")
 }
 
