@@ -221,7 +221,11 @@ A lost supervisor is recognized from either direction of that socket — a read
 observing end of file or a connection reset, and a write observing a broken
 pipe — and every such observation converges on one cleanup path, because a
 descriptor-tracked generation's configured stop command runs only there.
-Long-running components share one owned TERM/INT intake boundary. The service
+Long-running components share one owned TERM/INT intake boundary. The broker is
+forked into its own process group so a terminal interrupt, which is delivered
+to the whole foreground group, reaches only the supervisor: the broker has no
+terminal-signal handler, and its death fails every containment guard closed
+before the ordered shutdown can run. The service
 supervisor converts those signals into an ordered service/logger shutdown;
 `immortaldir` observes them only between complete reconciliation operations and
 then shuts down and reaps its launcher broker without cancelling a partial

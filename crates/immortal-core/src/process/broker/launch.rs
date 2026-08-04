@@ -10,6 +10,13 @@
 //! attribute owned by the one task that reaps the subtree; a platform without
 //! the role degrades to ordinary supervision.
 //!
+//! The child also leaves the supervisor's process group before it owns
+//! anything. That group is the terminal's foreground group under
+//! `--foreground`, so an inherited group delivers Ctrl-C to the broker, which
+//! has no terminal-signal handler; its death fails every containment guard
+//! closed and kills the workload immediately instead of letting the supervisor
+//! run its ordered shutdown. See [`isolate_broker_process_group`].
+//!
 //! The two ends form nested reapers. The broker owns and reaps the service
 //! subtree while it runs, and the supervisor of the broker acquires the same
 //! role so that an abnormal broker exit reparents the broker's surviving
@@ -81,6 +88,9 @@ pub(crate) fn start_process_broker_with_logging(
     match fork::fork_process()? {
         fork::ProcessFork::Parent(process) => {
             drop(broker_socket);
+            // Also isolate from this side so no terminal signal can reach the
+            // broker in the window before it runs its own call.
+            let _ = fork::create_process_group(process);
             Ok(ProcessBrokerEndpoint {
                 process: ProcessId(process.get()),
                 socket: supervisor_socket,
@@ -88,6 +98,7 @@ pub(crate) fn start_process_broker_with_logging(
         }
         fork::ProcessFork::Child => {
             drop(supervisor_socket);
+            isolate_broker_process_group();
             let subreaper_active = acquire_broker_subreaper();
             let exit = match run_broker_process(
                 broker_socket,
@@ -123,6 +134,27 @@ fn run_broker_process(
         let stream = UnixStream::from_std(stream)?;
         run_broker(stream, logging, lifetime_cleanup, subreaper_active).await
     })
+}
+
+/// Move the broker into its own process group before it owns any workload.
+///
+/// A forked child inherits the supervisor's process group, which under
+/// `--foreground` is the terminal's foreground group. Ctrl-C therefore reached
+/// the broker as well as the supervisor. The broker installs no terminal-signal
+/// handler, so it died by default action, and every containment guard then
+/// failed closed and killed its workload group immediately — bypassing the
+/// ordered stop command, `SIGTERM`, grace period, and `SIGKILL` escalation the
+/// supervisor was about to run. Isolating the group makes the supervisor the
+/// only recipient, so it can shut the broker down through the control protocol.
+///
+/// A failure degrades to the inherited group rather than aborting: supervision
+/// still works and only the terminal-signal ordering is lost, whereas losing
+/// the broker loses supervision entirely. It is reported on stderr like every
+/// other broker diagnostic.
+fn isolate_broker_process_group() {
+    if let Err(error) = fork::create_current_process_group() {
+        eprintln!("immortal process broker: process group isolation unavailable: {error}");
+    }
 }
 
 /// Acquire the child-subreaper role for the broker's supervised subtree.

@@ -3,7 +3,10 @@
 use std::{
     error::Error,
     fs,
-    os::unix::fs::{PermissionsExt, symlink},
+    os::unix::{
+        fs::{PermissionsExt, symlink},
+        process::CommandExt,
+    },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -16,7 +19,7 @@ use immortal_core::{
         write_request,
     },
     exit::ExitClass,
-    process::{ProcessId, ProcessSignal, SignalTarget, signal as deliver_signal},
+    process::{ProcessGroupId, ProcessId, ProcessSignal, SignalTarget, signal as deliver_signal},
     runtime::{CONTROL_SOCKET_NAME, SUPERVISOR_LOCK_NAME},
     status::ServiceState,
 };
@@ -403,6 +406,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ExitClass::Success,
         "graceful supervisor SIGINT",
     )?;
+    prove_terminal_interrupt_runs_ordered_shutdown(binary)?;
     prove_direct_logfile_and_logger_receive_both_streams(binary)?;
     prove_logger_exec_permission_denial(binary)?;
     prove_lossless_pipe_backpressure(binary)?;
@@ -896,4 +900,49 @@ impl Drop for MarkerFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
+}
+
+/// Regression: a terminal interrupt must reach only the supervisor.
+///
+/// Ctrl-C is delivered to the whole foreground process group. The broker was
+/// forked into the supervisor's group and installs no terminal-signal handler,
+/// so it died by default action; every containment guard then failed closed and
+/// killed the workload group outright, bypassing the ordered `SIGTERM` and
+/// grace period. Trapping `SIGTERM` in the service makes the difference
+/// observable: the marker exists only when the ordered shutdown actually ran.
+fn prove_terminal_interrupt_runs_ordered_shutdown(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let ready = MarkerFile::new("group-interrupt-ready");
+    let stopped = MarkerFile::new("group-interrupt-stopped");
+    let config = ConfigFile::new(
+        "group-interrupt",
+        &format!(
+            "version: 2\ncommand: [/bin/sh, -c, 'trap \"printf stopped > \\\"$STOPPED\\\"; exit 0\" TERM; printf ready > \"$READY\"; while true; do sleep 0.05; done']\nenvironment:\n  READY: '{}'\n  STOPPED: '{}'\n",
+            ready.path_str()?,
+            stopped.path_str()?
+        ),
+    )?;
+
+    // Stand in for the terminal's foreground process group so the interrupt
+    // cannot reach this test runner.
+    let child = Command::new(binary)
+        .args(["--foreground", "--config", config.path_str()?])
+        .env("HOME", TemporaryDirectory::test_home_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()?;
+    let child = ChildGuard::new(child);
+    ready.wait(COMMAND_TIMEOUT)?;
+
+    let group = ProcessGroupId::try_from(i32::try_from(child.id())?)?;
+    deliver_signal(SignalTarget::Group(group), ProcessSignal::Interrupt)?;
+
+    assert_status(
+        child.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "terminal interrupt to the supervisor process group",
+    )?;
+    stopped.wait(COMMAND_TIMEOUT)?;
+    Ok(())
 }
