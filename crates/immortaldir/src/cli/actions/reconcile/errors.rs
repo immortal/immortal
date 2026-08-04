@@ -13,7 +13,7 @@ use std::{
 
 use immortal_core::{
     control::{ResponseCode, TransportError},
-    reconcile::LauncherError,
+    reconcile::{DependencyError, LauncherError},
     runtime::RuntimeRootError,
 };
 
@@ -49,6 +49,7 @@ impl Error for ServiceFailure {
 #[derive(Debug)]
 pub(super) enum ServiceFailureKind {
     Io(io::Error),
+    Dependency(DependencyError),
     Launcher(LauncherError),
     Transport(TransportError),
     Remote(ResponseCode),
@@ -60,6 +61,7 @@ impl Display for ServiceFailureKind {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => Display::fmt(error, formatter),
+            Self::Dependency(error) => Display::fmt(error, formatter),
             Self::Launcher(error) => Display::fmt(error, formatter),
             Self::Transport(error) => Display::fmt(error, formatter),
             Self::Remote(code) => write!(formatter, "mutation rejected: {}", code.name()),
@@ -75,10 +77,17 @@ impl Error for ServiceFailureKind {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
+            Self::Dependency(error) => Some(error),
             Self::Launcher(error) => Some(error),
             Self::Transport(error) => Some(error),
             Self::Remote(_) | Self::LifecycleTimeout | Self::ActiveWithoutControl => None,
         }
+    }
+}
+
+impl From<DependencyError> for ServiceFailureKind {
+    fn from(error: DependencyError) -> Self {
+        Self::Dependency(error)
     }
 }
 

@@ -48,9 +48,154 @@ fn main() -> Result<(), Box<dyn Error>> {
         let root = TestRoot::new()?;
         return prove_cross_restart_deletion(root.path());
     }
+    if arguments.get(1).map(String::as_str) == Some("--dependency-contract") {
+        let root = TestRoot::new()?;
+        return prove_dependency_isolation(root.path());
+    }
 
     prove_cross_restart_in_subprocess()?;
+    prove_dependency_isolation_in_subprocess()?;
     prove_operational_lifecycle()
+}
+
+fn prove_dependency_isolation_in_subprocess() -> Result<(), Box<dyn Error>> {
+    let executable = std::env::current_exe()?;
+    let mut contract = TestProcess::spawn_dependency_contract(&executable)?;
+    // Two authoritative passes over four services need more than one phase
+    // deadline, so this contract owns a deadline covering both passes.
+    contract.wait_for_success_within("dependency-isolation contract", DEADLINE * 4)
+}
+
+/// Regression: one unresolvable `requires` must not wedge the whole pass.
+///
+/// `dependency_plan` used to fail on the first unavailable dependency, and the
+/// `?` aborted reconciliation before `apply_stops`. Every unrelated service
+/// then stayed unstarted and every pending stop stayed pending, on that pass
+/// and on every later one, because the graph never healed on its own.
+fn prove_dependency_isolation(root: &Path) -> Result<(), Box<dyn Error>> {
+    let definitions = root.join("dependency-definitions");
+    let runtime = root.join("dependency-runtime");
+    fs::create_dir(&definitions)?;
+    fs::create_dir(&runtime)?;
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700))?;
+    for name in ["db", "web", "retired"] {
+        fs::write(
+            definitions.join(format!("{name}.yml")),
+            "version: 2\ncommand: [/bin/sleep, '30']\n",
+        )?;
+    }
+    fs::write(
+        definitions.join("api.yml"),
+        "version: 2\ncommand: [/bin/sleep, '30']\nrequires: [db]\n",
+    )?;
+
+    // Both brokers are created before any Tokio runtime exists, matching the
+    // daemon-startup ordering the reconciler requires.
+    let first = start_process_broker()?;
+    let second = start_process_broker()?;
+    let third = start_process_broker()?;
+    let tokio = Builder::new_current_thread().enable_all().build()?;
+    let result = tokio.block_on(run_dependency_contract(
+        &definitions,
+        &runtime,
+        [first, second, third],
+    ));
+    let cleanup = tokio.block_on(async {
+        for name in ["api", "db", "web", "retired"] {
+            halt_if_present(&runtime, name).await?;
+        }
+        Ok::<(), Box<dyn Error>>(())
+    });
+    drop(tokio);
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), _) | (Ok(()), Err(error)) => Err(error),
+    }
+}
+
+async fn run_dependency_contract(
+    definitions: &Path,
+    runtime: &Path,
+    endpoints: [immortal_core::process::ProcessBrokerEndpoint; 3],
+) -> Result<(), Box<dyn Error>> {
+    let [first, second, third] = endpoints;
+    let action = dependency_action(definitions, runtime)?;
+    reconcile::execute_with_endpoint(&action, Some(first)).await?;
+    for name in ["api", "db", "web", "retired"] {
+        wait_for_ready_command(runtime, name, "30").await?;
+    }
+
+    // Disable the requirement and delete an unrelated service in the same pass.
+    // The deletion is the half that a fail-fast plan stranded, because the old
+    // graph computation ran before stops drained.
+    fs::write(
+        definitions.join("db.yml"),
+        "version: 2\ncommand: [/bin/sleep, '30']\nenabled: false\n",
+    )?;
+    fs::remove_file(definitions.join("retired.yml"))?;
+
+    let action = dependency_action(definitions, runtime)?;
+    let failures = match reconcile::execute_with_endpoint(&action, Some(second)).await {
+        Err(ActionError::Partial(failures)) => failures,
+        Ok(()) => return Err("unresolvable dependency was not reported".into()),
+        Err(error) => {
+            return Err(format!("unresolvable dependency aborted the pass: {error}").into());
+        }
+    };
+    let reported: Vec<String> = failures
+        .iter()
+        .map(ToString::to_string)
+        .filter(|failure| failure.contains("api"))
+        .collect();
+    if reported.len() != 1 {
+        return Err(format!("expected exactly one isolated `api` failure: {failures:?}").into());
+    }
+    if !reported
+        .iter()
+        .any(|failure| failure.contains("unavailable service `db`"))
+    {
+        return Err(format!("`api` failure did not name its requirement: {reported:?}").into());
+    }
+
+    // The unrelated service keeps running and both stops still drained: the
+    // disabled requirement is stopped in place, and the deleted service is
+    // stopped and its deletion confirmed rather than stranded behind the
+    // broken graph.
+    wait_for_ready_command(runtime, "web", "30").await?;
+    wait_for_service_state(runtime, "db", immortal_core::status::ServiceState::Down).await?;
+    wait_for_first_deletion_confirmation(runtime, "retired").await?;
+
+    // A confirmed deletion is completed by the next authoritative pass, which
+    // must still report only the isolated `api` failure.
+    let action = dependency_action(definitions, runtime)?;
+    match reconcile::execute_with_endpoint(&action, Some(third)).await {
+        Err(ActionError::Partial(failures))
+            if failures
+                .iter()
+                .all(|failure| failure.to_string().contains("api")) => {}
+        Ok(()) => return Err("unresolvable dependency stopped being reported".into()),
+        Err(error) => {
+            return Err(format!("confirming pass reported unrelated failures: {error}").into());
+        }
+    }
+    wait_for_service_absence(runtime, "retired").await?;
+    wait_for_ready_command(runtime, "web", "30").await?;
+    Ok(())
+}
+
+fn dependency_action(
+    definitions: &Path,
+    runtime: &Path,
+) -> Result<DirectoryAction, Box<dyn Error>> {
+    Ok(DirectoryAction {
+        directory: definitions.to_path_buf(),
+        runtime_directory: runtime.to_path_buf(),
+        scan_interval_seconds: 1,
+        supervisor_binary: std::env::current_exe()?,
+        launch_concurrency: LaunchConcurrency::new(8)?,
+        once: true,
+        dry_run: false,
+    })
 }
 
 fn prove_cross_restart_in_subprocess() -> Result<(), Box<dyn Error>> {
@@ -158,6 +303,13 @@ impl TestProcess {
             .map(|child| Self { child })
     }
 
+    fn spawn_dependency_contract(executable: &Path) -> io::Result<Self> {
+        Command::new(executable)
+            .arg("--dependency-contract")
+            .spawn()
+            .map(|child| Self { child })
+    }
+
     fn terminate(&mut self) -> Result<(), Box<dyn Error>> {
         if let Some(status) = self.child.try_wait()? {
             return successful_status(status, "manager");
@@ -168,7 +320,15 @@ impl TestProcess {
     }
 
     fn wait_for_success(&mut self, context: &str) -> Result<(), Box<dyn Error>> {
-        let deadline = Instant::now() + DEADLINE;
+        self.wait_for_success_within(context, DEADLINE)
+    }
+
+    fn wait_for_success_within(
+        &mut self,
+        context: &str,
+        limit: Duration,
+    ) -> Result<(), Box<dyn Error>> {
+        let deadline = Instant::now() + limit;
         loop {
             if let Some(status) = self.child.try_wait()? {
                 return successful_status(status, context);

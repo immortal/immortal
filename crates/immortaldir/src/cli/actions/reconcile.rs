@@ -279,7 +279,9 @@ async fn scan_and_apply(
         }
     }
 
-    let plan = dependency_plan(desired)?;
+    // Stops drain before start planning so a broken dependency graph can never
+    // strand a deletion; the graph is then computed from the post-stop desired
+    // set.
     let stopped = apply_stops(action, desired, snapshots, operational, &discovery).await?;
     failures.extend(stopped.failures);
     if !stopped.deleted.is_empty() {
@@ -289,6 +291,14 @@ async fn scan_and_apply(
         snapshots.record_tracker(tracker)?;
     }
     let desired = tracker.desired();
+    let plan = dependency_plan(desired);
+    for unresolvable in plan.unresolvable {
+        operational.pending.remove(&unresolvable.service);
+        failures.push(ServiceFailure::new(
+            &unresolvable.service,
+            unresolvable.reason.into(),
+        ));
+    }
     failures.extend(
         apply_start_waves(
             action,

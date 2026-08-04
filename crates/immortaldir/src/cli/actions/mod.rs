@@ -13,7 +13,7 @@ use std::{
 
 use immortal_core::{
     exit::ExitClass,
-    reconcile::{DependencyError, LaunchConcurrency, LauncherError, ScanError},
+    reconcile::{LaunchConcurrency, LauncherError, ScanError},
     runtime::RuntimeRootError,
     watch::WatchError,
 };
@@ -61,8 +61,6 @@ pub enum ActionError {
     Watch(WatchError),
     /// Runtime root was absent or unsafe.
     Runtime(RuntimeRootError),
-    /// Desired dependencies are missing or cyclic.
-    Dependency(DependencyError),
     /// Checked supervisor launcher failed.
     Launcher(LauncherError),
     /// One or more services failed without preventing independent work.
@@ -87,7 +85,6 @@ impl Display for ActionError {
             }
             Self::Watch(error) => Display::fmt(error, formatter),
             Self::Runtime(error) => Display::fmt(error, formatter),
-            Self::Dependency(error) => Display::fmt(error, formatter),
             Self::Launcher(error) => Display::fmt(error, formatter),
             Self::Partial(failures) => {
                 write!(formatter, "{} service mutation(s) failed", failures.len())?;
@@ -117,7 +114,6 @@ impl Error for ActionError {
             Self::Scan(error) => Some(error),
             Self::Watch(error) => Some(error),
             Self::Runtime(error) => Some(error),
-            Self::Dependency(error) => Some(error),
             Self::Launcher(error) => Some(error),
             Self::Partial(_) | Self::MissingBroker => None,
         }
@@ -148,12 +144,6 @@ impl From<RuntimeRootError> for ActionError {
     }
 }
 
-impl From<DependencyError> for ActionError {
-    fn from(error: DependencyError) -> Self {
-        Self::Dependency(error)
-    }
-}
-
 impl From<LauncherError> for ActionError {
     fn from(error: LauncherError) -> Self {
         Self::Launcher(error)
@@ -167,7 +157,7 @@ impl ActionError {
         match self {
             Self::RuntimeInitialization(_) => ExitClass::Software,
             Self::Broker(_) | Self::Launcher(_) => ExitClass::OsError,
-            Self::Scan(_) | Self::Runtime(_) | Self::Dependency(_) => ExitClass::Configuration,
+            Self::Scan(_) | Self::Runtime(_) => ExitClass::Configuration,
             Self::Io(_) => ExitClass::IoError,
             Self::Partial(_) => ExitClass::PartialFailure,
             Self::Watch(_) | Self::MissingBroker => ExitClass::Unavailable,

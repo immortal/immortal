@@ -26,7 +26,7 @@ mod snapshots;
 mod tests;
 mod tracker;
 
-pub use self::dependency::{DependencyError, DependencyPlan, dependency_plan};
+pub use self::dependency::{DependencyError, DependencyPlan, UnresolvableService, dependency_plan};
 pub use self::launcher::{LauncherError, LauncherTaskError, SupervisorLaunch, SupervisorLauncher};
 pub use self::limits::{
     DEFAULT_DELETION_CONFIRMATIONS, DEFAULT_MAX_CONCURRENT_LAUNCHES, DEFAULT_MAX_DEFINITIONS,

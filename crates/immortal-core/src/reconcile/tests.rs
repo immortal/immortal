@@ -14,8 +14,9 @@ use std::{
 use super::{
     DefinitionSnapshots, DependencyError, DesiredStateTracker, LaunchConcurrency,
     MAX_CONCURRENT_LAUNCHES, MAX_TRACKER_STATE_BYTES, ReconcileAction, ScanLimits, ScanProblem,
-    ScanProblemKind, ScanResult, TRACKER_STATE_FILE, canonical_definitions_directory, compare,
-    dependency_plan, metadata_changed, retain_last_known_good, scan_directory,
+    ScanProblemKind, ScanResult, TRACKER_STATE_FILE, UnresolvableService,
+    canonical_definitions_directory, compare, dependency_plan, metadata_changed,
+    retain_last_known_good, scan_directory,
 };
 use crate::config::MAX_CONFIG_BYTES;
 
@@ -517,30 +518,46 @@ fn dependency_plan_groups_independent_services() -> Result<(), Box<dyn Error>> {
     let scan = scan_directory(directory.path(), ScanLimits::default())?;
     let desired = retain_last_known_good(&BTreeMap::default(), &scan);
 
+    let plan = dependency_plan(&desired);
     assert_eq!(
-        dependency_plan(&desired)?.waves,
+        plan.waves,
         [
             vec!["cache".to_owned(), "database".to_owned()],
             vec!["api".to_owned(), "worker".to_owned()],
         ]
     );
+    assert!(plan.unresolvable.is_empty());
     Ok(())
 }
 
 #[test]
-fn dependency_plan_rejects_missing_disabled_and_cycles() -> Result<(), Box<dyn Error>> {
+fn dependency_plan_isolates_missing_disabled_and_cyclic_services() -> Result<(), Box<dyn Error>> {
     let directory = TestDirectory::new()?;
     fs::write(
         directory.path().join("api.yml"),
         "version: 2\ncommand: [api]\nrequires: [database]\n",
     )?;
+    fs::write(
+        directory.path().join("web.yml"),
+        "version: 2\ncommand: [web]\n",
+    )?;
     let scan = scan_directory(directory.path(), ScanLimits::default())?;
     let mut desired = retain_last_known_good(&BTreeMap::default(), &scan);
-    assert!(matches!(
-        dependency_plan(&desired),
-        Err(DependencyError::Unavailable { .. })
-    ));
 
+    // A missing requirement excludes only its dependent; `web` still starts.
+    let plan = dependency_plan(&desired);
+    assert_eq!(plan.waves, [vec!["web".to_owned()]]);
+    assert_eq!(
+        plan.unresolvable,
+        [UnresolvableService {
+            service: "api".to_owned(),
+            reason: DependencyError::Unavailable {
+                dependency: "database".to_owned()
+            },
+        }]
+    );
+
+    // A disabled requirement is treated exactly like a missing one.
     let mut database = desired
         .get("api")
         .ok_or_else(|| io::Error::other("api fixture missing"))?
@@ -549,24 +566,105 @@ fn dependency_plan_rejects_missing_disabled_and_cycles() -> Result<(), Box<dyn E
     database.command = vec!["database".to_owned()];
     database.requires.clear();
     desired.insert("database".to_owned(), database);
-    assert!(matches!(
-        dependency_plan(&desired),
-        Err(DependencyError::Unavailable { .. })
-    ));
+    let plan = dependency_plan(&desired);
+    assert_eq!(plan.waves, [vec!["web".to_owned()]]);
+    assert_eq!(
+        plan.unresolvable,
+        [UnresolvableService {
+            service: "api".to_owned(),
+            reason: DependencyError::Unavailable {
+                dependency: "database".to_owned()
+            },
+        }]
+    );
 
-    let api = desired
-        .get_mut("api")
-        .ok_or_else(|| io::Error::other("api fixture missing"))?;
-    api.requires = vec!["worker".to_owned()];
-    let mut worker = api.clone();
+    // A transitive dependent of an unresolvable service is excluded too, so it
+    // never waits in an unreachable wave.
+    let mut edge = desired
+        .get("web")
+        .ok_or_else(|| io::Error::other("web fixture missing"))?
+        .clone();
+    edge.command = vec!["edge".to_owned()];
+    edge.requires = vec!["api".to_owned()];
+    desired.insert("edge".to_owned(), edge);
+    let plan = dependency_plan(&desired);
+    assert_eq!(plan.waves, [vec!["web".to_owned()]]);
+    assert_eq!(
+        plan.unresolvable,
+        [
+            UnresolvableService {
+                service: "api".to_owned(),
+                reason: DependencyError::Unavailable {
+                    dependency: "database".to_owned()
+                },
+            },
+            UnresolvableService {
+                service: "edge".to_owned(),
+                reason: DependencyError::Blocked {
+                    dependency: "api".to_owned()
+                },
+            },
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn dependency_plan_isolates_cycles_and_self_requirements() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    fs::write(
+        directory.path().join("api.yml"),
+        "version: 2\ncommand: [api]\nrequires: [worker]\n",
+    )?;
+    fs::write(
+        directory.path().join("web.yml"),
+        "version: 2\ncommand: [web]\n",
+    )?;
+    let scan = scan_directory(directory.path(), ScanLimits::default())?;
+    let mut desired = retain_last_known_good(&BTreeMap::default(), &scan);
+    let mut worker = desired
+        .get("api")
+        .ok_or_else(|| io::Error::other("api fixture missing"))?
+        .clone();
     worker.command = vec!["worker".to_owned()];
     worker.requires = vec!["api".to_owned()];
     desired.insert("worker".to_owned(), worker);
+
+    let cycle = vec!["api".to_owned(), "worker".to_owned()];
+    let plan = dependency_plan(&desired);
+    assert_eq!(plan.waves, [vec!["web".to_owned()]]);
     assert_eq!(
-        dependency_plan(&desired),
-        Err(DependencyError::Cycle {
-            services: vec!["api".to_owned(), "worker".to_owned()]
-        })
+        plan.unresolvable,
+        [
+            UnresolvableService {
+                service: "api".to_owned(),
+                reason: DependencyError::Cycle {
+                    services: cycle.clone()
+                },
+            },
+            UnresolvableService {
+                service: "worker".to_owned(),
+                reason: DependencyError::Cycle { services: cycle },
+            },
+        ]
+    );
+
+    // A service requiring itself is a one-member cycle, not a fatal scan error.
+    desired.remove("worker");
+    let api = desired
+        .get_mut("api")
+        .ok_or_else(|| io::Error::other("api fixture missing"))?;
+    api.requires = vec!["api".to_owned()];
+    let plan = dependency_plan(&desired);
+    assert_eq!(plan.waves, [vec!["web".to_owned()]]);
+    assert_eq!(
+        plan.unresolvable,
+        [UnresolvableService {
+            service: "api".to_owned(),
+            reason: DependencyError::Cycle {
+                services: vec!["api".to_owned()]
+            },
+        }]
     );
     Ok(())
 }

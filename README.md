@@ -747,7 +747,13 @@ healthy supervisor, stops an enabled supervisor when the definition becomes
 disabled, relaunches on re-enable, preserves an operator-requested Down state
 across configuration changes, and halts a supervisor only after stable
 deletion. A failed service retains one typed pending mutation for a later scan
-without blocking independent services in the current scan. Operational stops
+without blocking independent services in the current scan. A `requires:` target
+which is missing, disabled, or part of a dependency cycle does not stop the
+pass: the affected service and everything that transitively requires it are
+skipped and reported as isolated failures, every other service still starts,
+and pending stops still drain. Dependencies gate initial starts only, so a
+service already running when its requirement becomes unavailable is left
+alone rather than cascaded down. Operational stops
 and replacement preparation remain serialized for generation safety;
 independent checked starts run in bounded batches. `SIGTERM` and `SIGINT` are
 observed while idle or during reconciliation; an in-flight mutation reaches
