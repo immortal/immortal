@@ -253,7 +253,11 @@ service immortaldir status
 ```
 
 The pre-start hook recreates the runtime root with mode `0755` after boot. The
-definitions directory must already exist. Adjust the `REQUIRE` line locally if
+definitions directory must already exist, and must be owned by `root` or the
+user `immortaldir` runs as with no group or world write permission — mode
+`0755` or stricter. Create it with an explicit mode rather than relying on the
+umask; a directory left group writable is rejected at startup. Adjust the
+`REQUIRE` line locally if
 the definitions filesystem has additional mount ordering requirements.
 
 ## Linux systemd

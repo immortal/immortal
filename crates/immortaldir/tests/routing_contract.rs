@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let definitions = root.path().join("definitions");
     let runtime = root.path().join("runtime");
     fs::create_dir(&definitions)?;
+    fs::set_permissions(&definitions, fs::Permissions::from_mode(0o755))?;
     fs::create_dir(&runtime)?;
     fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700))?;
     fs::write(

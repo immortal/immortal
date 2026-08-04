@@ -3,6 +3,7 @@
 use std::{
     error::Error,
     fs, io,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -30,6 +31,9 @@ impl TestDirectory {
             std::process::id()
         ));
         fs::create_dir(&path)?;
+        // Definitions directories are a trust boundary, so fixtures must not
+        // inherit a group-writable umask.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
         Ok(Self(fs::canonicalize(path)?))
     }
 

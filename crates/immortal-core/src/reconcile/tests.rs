@@ -42,6 +42,9 @@ impl TestDirectory {
             std::process::id()
         ));
         fs::create_dir(&path)?;
+        // Definitions directories are a trust boundary, so fixtures must not
+        // inherit a group-writable umask.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
         Ok(Self(fs::canonicalize(path)?))
     }
 
@@ -666,5 +669,43 @@ fn dependency_plan_isolates_cycles_and_self_requirements() -> Result<(), Box<dyn
             },
         }]
     );
+    Ok(())
+}
+
+/// Regression: anyone who can write here chooses what every service runs.
+///
+/// The directory validated only its type and identity, so a group- or
+/// world-writable definitions directory was accepted even though the per-file
+/// checks prove only that a file did not change while being read — never that
+/// an untrusted principal was unable to place it.
+#[test]
+fn rejects_a_writable_definitions_directory() -> Result<(), Box<dyn Error>> {
+    for mode in [0o775, 0o757, 0o777, 0o1777] {
+        let directory = TestDirectory::new()?;
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(mode))?;
+        assert!(
+            canonical_definitions_directory(directory.path()).is_err(),
+            "mode {mode:o} must be rejected"
+        );
+        assert!(
+            scan_directory(directory.path(), ScanLimits::default()).is_err(),
+            "mode {mode:o} must be rejected on the scan path"
+        );
+    }
+    Ok(())
+}
+
+/// An owner-only directory owned by the effective user stays usable.
+#[test]
+fn accepts_an_owner_only_definitions_directory() -> Result<(), Box<dyn Error>> {
+    for mode in [0o700, 0o750, 0o755] {
+        let directory = TestDirectory::new()?;
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(mode))?;
+        assert_eq!(
+            canonical_definitions_directory(directory.path())?,
+            fs::canonicalize(directory.path())?,
+            "mode {mode:o} must be accepted"
+        );
+    }
     Ok(())
 }

@@ -724,7 +724,12 @@ FSEvents, or kqueue) only as hints. Hints are nonrecursive and debounced for
 because a complete scan runs at startup and every 30 seconds regardless of
 notifications.
 
-`immortaldir` can reconcile once or continuously. It creates one dedicated
+`immortaldir` can reconcile once or continuously. The definitions directory is
+a trust boundary: whoever can write there chooses the command, user, and
+working directory of every supervised service, so it must be a real directory
+that is not group or world writable and is owned by `root` or the effective
+user. A directory failing any of those checks is rejected before the scan, not
+reported as a per-file problem. It creates one dedicated
 launcher broker before Tokio, publishes normalized launch snapshots in an
 owner-only `.definitions` directory below the runtime root, and starts each
 missing supervisor through checked `immortal --config ... --control-dir ...`

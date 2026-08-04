@@ -76,6 +76,7 @@ fn prove_dependency_isolation(root: &Path) -> Result<(), Box<dyn Error>> {
     let definitions = root.join("dependency-definitions");
     let runtime = root.join("dependency-runtime");
     fs::create_dir(&definitions)?;
+    fs::set_permissions(&definitions, fs::Permissions::from_mode(0o755))?;
     fs::create_dir(&runtime)?;
     fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700))?;
     for name in ["db", "web", "retired"] {
@@ -230,6 +231,7 @@ fn prove_cross_restart_deletion(root: &Path) -> Result<(), Box<dyn Error>> {
     let definitions = root.join("restart-definitions");
     let runtime = root.join("restart-runtime");
     fs::create_dir(&definitions)?;
+    fs::set_permissions(&definitions, fs::Permissions::from_mode(0o755))?;
     fs::create_dir(&runtime)?;
     fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700))?;
     let definition = definitions.join("restart.yml");
@@ -366,6 +368,7 @@ fn prove_operational_lifecycle() -> Result<(), Box<dyn Error>> {
     let definitions = root.path().join("definitions");
     let runtime = root.path().join("runtime");
     fs::create_dir(&definitions)?;
+    fs::set_permissions(&definitions, fs::Permissions::from_mode(0o755))?;
     fs::create_dir(&runtime)?;
     fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700))?;
     fs::write(

@@ -5,6 +5,14 @@
 //! service cannot hide other valid desired state. File contents are read through
 //! metadata checks before and after parsing to reject symlinks, replacements, and
 //! size changes across the trust boundary.
+//!
+//! A definition names the command, user, and working directory a supervisor
+//! will run, so write access to the directory is write access to whatever the
+//! reconciler can start. The per-file checks cannot establish that on their
+//! own: they prove a file did not change while being read, not that an
+//! untrusted principal was unable to place it. The directory's own ownership
+//! and permissions are therefore the load-bearing trust boundary, validated
+//! once per scan alongside its identity.
 
 use std::{
     collections::BTreeMap,
@@ -12,6 +20,7 @@ use std::{
     fmt::{self, Display, Formatter},
     fs::{self, File, Metadata},
     io::{self, Read},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -162,13 +171,19 @@ pub fn scan_directory(directory: &Path, limits: ScanLimits) -> Result<ScanResult
     })
 }
 
-/// Resolve a definitions directory once and reject a symlink or non-directory
-/// final component.
+/// Resolve a definitions directory once and prove it is a trusted source.
+///
+/// Rejects a symlink or non-directory final component, an identity change
+/// during validation, a group- or world-writable directory, and an owner other
+/// than `root` or the effective user. The last two matter because anyone who
+/// can write here chooses the command, user, and working directory every
+/// supervised service runs with.
 ///
 /// # Errors
 ///
 /// Returns an error when the path cannot be inspected or canonicalized, is not
-/// a real directory, or changes identity during validation.
+/// a real directory, changes identity during validation, is writable beyond its
+/// owner, or is owned by an untrusted user.
 pub fn canonical_definitions_directory(directory: &Path) -> Result<PathBuf, ScanError> {
     let before = fs::symlink_metadata(directory).map_err(ScanError)?;
     if before.file_type().is_symlink() || !before.is_dir() {
@@ -185,7 +200,26 @@ pub fn canonical_definitions_directory(directory: &Path) -> Result<PathBuf, Scan
             "definitions directory changed during validation",
         )));
     }
+    validate_definitions_trust(&after)?;
     Ok(canonical)
+}
+
+/// Reject a definitions directory any untrusted principal could write into.
+fn validate_definitions_trust(metadata: &Metadata) -> Result<(), ScanError> {
+    if metadata.mode() & 0o022 != 0 {
+        return Err(ScanError(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "definitions directory must not be group or world writable",
+        )));
+    }
+    let effective = nix::unistd::geteuid().as_raw();
+    if metadata.uid() != 0 && metadata.uid() != effective {
+        return Err(ScanError(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "definitions directory must be owned by root or the effective user",
+        )));
+    }
+    Ok(())
 }
 
 pub(in crate::reconcile) fn is_candidate(path: &Path) -> bool {
