@@ -41,7 +41,7 @@ use tokio::{
     net::UnixStream,
     runtime::Builder,
     sync::{mpsc, watch},
-    time::sleep,
+    time::{sleep, timeout},
 };
 
 use crate::broker_guard::BrokerGuard;
@@ -58,7 +58,11 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 // periodic reap sweep rather than one notification per transition.
 const STORM_CYCLES: u16 = 32;
 const STORM_TIMEOUT: Duration = Duration::from_secs(30);
-const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(5);
+// Each subprocess re-executes this unoptimized test binary under a reduced
+// descriptor limit, then drives a full exhaustion and recovery cycle. Process
+// startup dominates on a cold runner, so the bound covers image loading rather
+// than the behavior under test.
+const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn main() -> Result<(), Box<dyn Error>> {
     if env::var_os(CHILD_MODE).is_some() {
@@ -192,7 +196,7 @@ fn descriptor_exhaustion_is_bounded() -> Result<(), Box<dyn Error>> {
         .arg(executable)
         .env(CHILD_MODE, OsStr::new("1"))
         .spawn()?;
-    let status = wait_for_subprocess(child, SUBPROCESS_TIMEOUT)?;
+    let status = wait_for_subprocess("descriptor-exhaustion", child, SUBPROCESS_TIMEOUT)?;
     if status.success() {
         Ok(())
     } else {
@@ -203,7 +207,7 @@ fn descriptor_exhaustion_is_bounded() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn wait_for_subprocess(mut child: Child, timeout: Duration) -> io::Result<ExitStatus> {
+fn wait_for_subprocess(name: &str, mut child: Child, timeout: Duration) -> io::Result<ExitStatus> {
     let deadline = Instant::now() + timeout;
     loop {
         if let Some(status) = child.try_wait()? {
@@ -214,7 +218,7 @@ fn wait_for_subprocess(mut child: Child, timeout: Duration) -> io::Result<ExitSt
             let _ = child.wait();
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "descriptor-exhaustion subprocess exceeded its deadline",
+                format!("{name} subprocess exceeded its deadline"),
             ));
         }
         thread::sleep(POLL_INTERVAL);
@@ -278,7 +282,7 @@ fn control_accept_survives_descriptor_exhaustion() -> Result<(), Box<dyn Error>>
         .arg(executable)
         .env(CONTROL_CHILD_MODE, OsStr::new("1"))
         .spawn()?;
-    let status = wait_for_subprocess(child, SUBPROCESS_TIMEOUT)?;
+    let status = wait_for_subprocess("control accept-exhaustion", child, SUBPROCESS_TIMEOUT)?;
     if status.success() {
         Ok(())
     } else {
@@ -334,6 +338,7 @@ async fn serve_under_descriptor_exhaustion() -> Result<(), Box<dyn Error>> {
 
     let server = tokio::spawn(run_control_server(Arc::clone(&listener), sender, shutdown));
     sleep(ACCEPT_EXHAUSTION_PROBE).await;
+
     if server.is_finished() {
         return Err(io::Error::other("control server ended on descriptor exhaustion").into());
     }
@@ -366,14 +371,31 @@ async fn serve_under_descriptor_exhaustion() -> Result<(), Box<dyn Error>> {
             .map_err(|_| io::Error::other("client disconnected before the response"))?;
         Ok::<(), Box<dyn Error>>(())
     };
-    let (exchange_result, dispatch_result) = tokio::join!(exchange, dispatch);
+    // Bound the recovery exchange here so a stalled accept loop names itself
+    // instead of silently reaching the parent's subprocess deadline.
+    let Ok((exchange_result, dispatch_result)) =
+        timeout(EVENT_TIMEOUT, async { tokio::join!(exchange, dispatch) }).await
+    else {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "control server did not answer after descriptors were released",
+        )
+        .into());
+    };
     dispatch_result?;
     if exchange_result?.message != "recovered" {
         return Err(io::Error::other("control server answered with an unexpected response").into());
     }
 
     shutdown_sender.send(true)?;
-    server.await??;
+    let Ok(joined) = timeout(EVENT_TIMEOUT, server).await else {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "control server did not stop after shutdown was requested",
+        )
+        .into());
+    };
+    joined??;
     Ok(())
 }
 
