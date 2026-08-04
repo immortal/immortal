@@ -18,6 +18,8 @@ use std::{
 use tokio::net::UnixStream;
 #[cfg(unix)]
 use tokio::sync::{mpsc, watch};
+#[cfg(unix)]
+use tokio::time::timeout;
 
 #[cfg(unix)]
 use super::{
@@ -542,6 +544,62 @@ async fn owned_listener_restricts_mode_and_authenticates_owner() -> Result<(), B
 }
 
 #[cfg(unix)]
+/// An unauthorized peer is told why, instead of just having its socket closed.
+///
+/// The server used to drop the stream, so the client observed an unexpected end
+/// of stream and could only report it as a transport fault which might succeed
+/// on retry. Refusal is definite, so it has to arrive as a `PermissionDenied`
+/// response the client can classify and stop on.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn listener_tells_an_unauthorized_peer_why_it_was_refused() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let path = directory.path().join("control.sock");
+    let mut listener = ControlListener::bind(&path, 1)?;
+    // Neither root nor this process, so the connecting peer is unauthorized.
+    listener.set_owner_uid_for_test(u32::MAX);
+
+    let mut client = UnixStream::connect(&path).await?;
+    assert!(matches!(
+        listener.accept().await,
+        Err(AcceptError::PermissionDenied { .. })
+    ));
+
+    let response = timeout(Duration::from_secs(5), read_response(&mut client)).await??;
+    assert_eq!(response.code, ResponseCode::PermissionDenied);
+    assert!(response.status.is_none());
+    assert!(response.generation.is_none());
+    Ok(())
+}
+
+/// Rejecting a peer must not consume a client slot permanently.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn rejected_peers_release_their_client_slot() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let path = directory.path().join("control.sock");
+    let mut listener = ControlListener::bind(&path, 1)?;
+    let authorized_uid = listener.owner_uid();
+    listener.set_owner_uid_for_test(u32::MAX);
+
+    for _ in 0..4 {
+        let mut client = UnixStream::connect(&path).await?;
+        assert!(matches!(
+            listener.accept().await,
+            Err(AcceptError::PermissionDenied { .. })
+        ));
+        let response = timeout(Duration::from_secs(5), read_response(&mut client)).await??;
+        assert_eq!(response.code, ResponseCode::PermissionDenied);
+    }
+
+    // The single client slot is still available for an authorized peer.
+    listener.set_owner_uid_for_test(authorized_uid);
+    let _client = UnixStream::connect(&path).await?;
+    let accepted = timeout(Duration::from_secs(5), listener.accept()).await??;
+    drop(accepted);
+    Ok(())
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn listener_bounds_active_clients() -> Result<(), Box<dyn Error>> {
     let directory = TestDirectory::new()?;

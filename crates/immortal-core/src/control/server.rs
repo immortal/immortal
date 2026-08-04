@@ -27,7 +27,7 @@ use tokio::{
 };
 
 use super::{
-    CONTROL_IO_TIMEOUT, Request, Response, TransportError,
+    CONTROL_IO_TIMEOUT, Request, Response, ResponseCode, TransportError,
     transport::{read_request, write_response},
 };
 
@@ -405,6 +405,12 @@ impl ControlListener {
         self.owner_uid
     }
 
+    /// Pretend the socket belongs to another user so rejection can be tested.
+    #[cfg(test)]
+    pub(in crate::control) const fn set_owner_uid_for_test(&mut self, uid: u32) {
+        self.owner_uid = uid;
+    }
+
     /// Accept and authenticate a connection with the default idle deadline.
     ///
     /// # Errors
@@ -439,6 +445,7 @@ impl ControlListener {
             pid: credentials.pid(),
         };
         if !peer_is_authorized(peer.uid, self.owner_uid) {
+            reject_unauthorized_peer(stream, permit);
             return Err(AcceptError::PermissionDenied { uid: peer.uid });
         }
         Ok(AuthorizedConnection {
@@ -501,6 +508,30 @@ fn validate_socket_parent(path: &Path) -> io::Result<()> {
 #[cfg(unix)]
 pub(in crate::control) const fn peer_is_authorized(peer_uid: u32, owner_uid: u32) -> bool {
     peer_uid == 0 || peer_uid == owner_uid
+}
+
+/// Tell an unauthorized peer why it was refused, then close the connection.
+///
+/// Dropping the stream silently left the client with an unexpected end of
+/// stream, which it can only classify as a transport fault even though the
+/// refusal is definite. The rejection is written from a spawned task holding
+/// the client permit it was already granted, so a peer which never reads
+/// cannot stall the accept loop and concurrent rejections stay bounded by the
+/// same client limit as real connections. Failures are deliberately ignored:
+/// the peer is unauthorized either way.
+#[cfg(unix)]
+#[cfg(unix)]
+fn reject_unauthorized_peer(mut stream: UnixStream, permit: OwnedSemaphorePermit) {
+    tokio::spawn(async move {
+        let response = Response {
+            code: ResponseCode::PermissionDenied,
+            generation: None,
+            message: "control peer is not authorized".to_owned(),
+            status: None,
+        };
+        let _ignored = write_response(&mut stream, &response).await;
+        drop(permit);
+    });
 }
 
 #[cfg(unix)]

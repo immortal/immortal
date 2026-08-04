@@ -691,7 +691,9 @@ both automatic roots remain visible for all-status output, but a named mutation
 is rejected as ambiguous until `--runtime-scope` selects one root.
 
 The server authorizes only root or the socket owner using native Unix peer
-credentials on Linux, macOS, and FreeBSD. It never removes an entry merely
+credentials on Linux, macOS, and FreeBSD. An unauthorized peer is answered with
+a `permission-denied` response and disconnected, so clients exit `77` rather
+than reporting an ambiguous transport failure. It never removes an entry merely
 because it looks stale, and listener cleanup removes only the exact socket
 device/inode it created. Frames are limited to 64 KiB, reads/writes/connects and
 accepts have five-second idle deadlines, and active clients are bounded. Every
