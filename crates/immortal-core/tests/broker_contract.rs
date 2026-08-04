@@ -26,6 +26,10 @@ use crate::broker_guard::BrokerGuard;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 const EVENT_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
+/// Environment entries and per-entry bytes used to build one oversized `Spawn`
+/// frame, large enough that its payload cannot arrive in a single socket write.
+const LARGE_FRAME_VARIABLES: usize = 256;
+const LARGE_FRAME_VARIABLE_BYTES: usize = 512;
 
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
@@ -352,6 +356,69 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .into());
             }
         }
+
+        // Regression: a large `Spawn` frame is written across several socket
+        // writes, so the broker's request read spans many `select!` polls
+        // while the reap tick and `SIGCHLD` from a concurrently exiting child
+        // keep firing. Decoding inline lost the buffered header on every
+        // cancellation and failed the frame's magic check.
+        let churn = generation(11)?;
+        let mut command = ProcessCommand::new("/bin/sleep");
+        command.argument("0.05");
+        client.spawn(churn, command, STARTUP_TIMEOUT).await?;
+        assert_started(client.next_event().await?, churn)?;
+
+        let large = generation(12)?;
+        let mut command = ProcessCommand::new("/bin/sleep");
+        command.argument("0.05");
+        let mut environment = ProcessEnvironment::new();
+        for index in 0..LARGE_FRAME_VARIABLES {
+            environment.insert(
+                OsString::from(format!("IMMORTAL_LARGE_FRAME_{index}")),
+                OsString::from("x".repeat(LARGE_FRAME_VARIABLE_BYTES)),
+            );
+        }
+        command.environment(environment);
+        client.spawn(large, command, STARTUP_TIMEOUT).await?;
+        let mut churn_exited = false;
+        let mut large_started = false;
+        while !large_started {
+            match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await?? {
+                ProcessBrokerEvent::Started { generation, .. } if generation == large => {
+                    large_started = true;
+                }
+                ProcessBrokerEvent::Child {
+                    generation,
+                    event: ChildEvent::Exited { code: 0, .. },
+                } if generation == churn => churn_exited = true,
+                event => {
+                    return Err(io::Error::other(format!(
+                        "expected the large frame to spawn under child churn, received {event:?}"
+                    ))
+                    .into());
+                }
+            }
+        }
+        while !churn_exited {
+            let event = tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??;
+            match event {
+                ProcessBrokerEvent::Child {
+                    generation,
+                    event: ChildEvent::Exited { code: 0, .. },
+                } if generation == churn => churn_exited = true,
+                event => {
+                    return Err(io::Error::other(format!(
+                        "expected the churn generation to exit, received {event:?}"
+                    ))
+                    .into());
+                }
+            }
+        }
+        assert_child_exit(
+            tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??,
+            large,
+            0,
+        )?;
 
         client.shutdown().await?;
         match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await?? {
