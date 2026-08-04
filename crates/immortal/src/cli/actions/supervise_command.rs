@@ -49,12 +49,15 @@ fn direct_config(
         working_directory,
     } = service;
     let mut config = ServiceConfig::for_command(command)?;
-    config.restart.limits.max_retries = if retries < 0 {
-        None
-    } else {
-        Some(u32::try_from(retries).map_err(|_| {
-            ConfigError::Validation(vec!["retries must be -1 or a nonnegative count".to_owned()])
-        })?)
+    // Only -1 requests unlimited retries. Treating every negative value as
+    // unlimited would silently turn a typo into a service which never gives up.
+    config.restart.limits.max_retries = match retries {
+        -1 => None,
+        count => Some(u32::try_from(count).map_err(|_| {
+            ConfigError::Validation(vec![
+                "retries must be -1 for unlimited or a nonnegative count".to_owned(),
+            ])
+        })?),
     };
     config.start_delay_seconds = start_delay_seconds;
     config.pid_files.main = child_pid;
@@ -173,6 +176,27 @@ mod tests {
         let mut service = service();
         service.logger = Some(vec![String::new()]);
         assert_rejected(service, "logger")
+    }
+
+    /// `-1` is the only negative retry count; anything else is a mistake.
+    ///
+    /// Coercing every negative value to unlimited would turn a typo into a
+    /// service which never stops retrying, so it must be rejected instead.
+    #[test]
+    fn direct_config_rejects_a_negative_retry_count() -> Result<(), Box<dyn Error>> {
+        let mut service = service();
+        service.retries = -2;
+        assert_rejected(service, "retries")
+    }
+
+    /// The documented unlimited sentinel still works.
+    #[test]
+    fn direct_config_accepts_unlimited_retries() -> Result<(), Box<dyn Error>> {
+        let mut service = service();
+        service.retries = -1;
+        let (config, _identity, _foreground) = direct_config(service)?;
+        assert_eq!(config.restart.limits.max_retries, None);
+        Ok(())
     }
 
     #[test]
