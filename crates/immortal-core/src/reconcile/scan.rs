@@ -15,7 +15,7 @@
 //! once per scan alongside its identity.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt::{self, Display, Formatter},
     fs::{self, File, Metadata},
@@ -112,7 +112,8 @@ impl Error for ScanError {
 pub fn scan_directory(directory: &Path, limits: ScanLimits) -> Result<ScanResult, ScanError> {
     let directory = canonical_definitions_directory(directory)?;
     let entries = fs::read_dir(&directory).map_err(ScanError)?;
-    let mut candidates = Vec::new();
+    let mut candidates = BTreeSet::new();
+    let mut overflow = Vec::new();
     let mut problems = Vec::new();
 
     for entry in entries {
@@ -130,16 +131,23 @@ pub fn scan_directory(directory: &Path, limits: ScanLimits) -> Result<ScanResult
         if !is_candidate(&path) {
             continue;
         }
-        if candidates.len() >= limits.max_definitions {
-            problems.push(ScanProblem {
-                path,
-                kind: ScanProblemKind::DefinitionLimit,
-            });
-            continue;
+        candidates.insert(path);
+        // Keep the lexicographically first definitions rather than whichever
+        // ones the directory happened to enumerate first. Truncating in
+        // `read_dir` order made the surviving set filesystem-dependent, so an
+        // over-limit directory could start and stop different services on
+        // consecutive passes. Evicting here keeps memory bounded by the limit.
+        if candidates.len() > limits.max_definitions
+            && let Some(evicted) = candidates.pop_last()
+        {
+            overflow.push(evicted);
         }
-        candidates.push(path);
     }
-    candidates.sort();
+    overflow.sort();
+    problems.extend(overflow.into_iter().map(|path| ScanProblem {
+        path,
+        kind: ScanProblemKind::DefinitionLimit,
+    }));
 
     let mut definitions = BTreeMap::new();
     for path in candidates {

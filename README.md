@@ -729,7 +729,11 @@ a trust boundary: whoever can write there chooses the command, user, and
 working directory of every supervised service, so it must be a real directory
 that is not group or world writable and is owned by `root` or the effective
 user. A directory failing any of those checks is rejected before the scan, not
-reported as a per-file problem. It creates one dedicated
+reported as a per-file problem. The scan is bounded, and when a directory holds
+more definitions than the limit allows, the lexicographically first ones are
+kept and the rest are reported; the surviving set does not depend on directory
+enumeration order, so repeated passes agree instead of flapping services. It
+creates one dedicated
 launcher broker before Tokio, publishes normalized launch snapshots in an
 owner-only `.definitions` directory below the runtime root, and starts each
 missing supervisor through checked `immortal --config ... --control-dir ...`

@@ -305,6 +305,51 @@ fn isolates_invalid_files_and_enforces_definition_limit() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// Regression: which services survived the limit depended on `read_dir` order.
+///
+/// Definitions were truncated as they were enumerated and only sorted
+/// afterwards, so an over-limit directory kept whichever files the filesystem
+/// happened to return first. Two passes over the same directory could keep
+/// different services, starting and stopping them in a loop. The surviving set
+/// must be the lexicographically first definitions, every time.
+#[test]
+fn enforces_the_definition_limit_in_a_stable_order() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    for name in ["e", "b", "d", "a", "c"] {
+        fs::write(
+            directory.path().join(format!("{name}.yml")),
+            "version: 2\ncommand: [/bin/true]\n",
+        )?;
+    }
+
+    let limits = ScanLimits { max_definitions: 3 };
+    let scan = scan_directory(directory.path(), limits)?;
+    let kept: Vec<&str> = scan.definitions.keys().map(String::as_str).collect();
+    assert_eq!(kept, ["a", "b", "c"]);
+
+    let rejected: Vec<&Path> = scan
+        .problems
+        .iter()
+        .filter(|problem| matches!(problem.kind, ScanProblemKind::DefinitionLimit))
+        .map(|problem| problem.path.as_path())
+        .collect();
+    assert_eq!(
+        rejected,
+        [
+            directory.path().join("d.yml").as_path(),
+            directory.path().join("e.yml").as_path()
+        ]
+    );
+
+    let repeated = scan_directory(directory.path(), limits)?;
+    assert_eq!(
+        repeated.definitions.keys().collect::<Vec<_>>(),
+        scan.definitions.keys().collect::<Vec<_>>(),
+        "repeated passes must agree, or reconciliation flaps"
+    );
+    Ok(())
+}
+
 #[test]
 fn rejects_an_oversized_definition_without_allocating_it() -> Result<(), Box<dyn Error>> {
     let directory = TestDirectory::new()?;
