@@ -3,6 +3,7 @@
 use std::{
     error::Error,
     fmt::{self, Display, Formatter},
+    future::pending,
     path::Path,
     time::Duration,
 };
@@ -67,6 +68,7 @@ pub struct ReconcileTriggers {
     periodic: Interval,
     debounce: Duration,
     initial: bool,
+    watcher_lost: bool,
 }
 
 impl ReconcileTriggers {
@@ -113,7 +115,14 @@ impl ReconcileTriggers {
             periodic,
             debounce,
             initial: true,
+            watcher_lost: false,
         })
+    }
+
+    /// Close the native event channel to emulate a dead watcher backend.
+    #[cfg(test)]
+    pub(super) fn simulate_watcher_loss(&mut self) {
+        self.events.close();
     }
 
     /// Wait for the next reason to perform a complete directory scan.
@@ -126,21 +135,42 @@ impl ReconcileTriggers {
             };
         }
 
-        tokio::select! {
-            event = self.events.recv() => {
-                let mut errors = Vec::new();
+        let mut errors = Vec::new();
+        let Self {
+            events,
+            periodic,
+            watcher_lost,
+            ..
+        } = self;
+        let hint = tokio::select! {
+            event = watch_event(events, watcher_lost) => {
+                let hint = event.is_some();
                 record_error(event, &mut errors);
-                self.debounce_events(errors).await
+                hint
             }
-            _ = self.periodic.tick() => ReconcileTrigger {
+            _ = periodic.tick() => false,
+        };
+        if !hint {
+            // Either the safety scan fired or the watcher was just lost. Both
+            // want one authoritative scan now rather than a debounce window
+            // waiting on hints which will never arrive.
+            return ReconcileTrigger {
                 reason: TriggerReason::Periodic,
-                watcher_errors: Vec::new(),
-            }
+                watcher_errors: errors,
+            };
         }
+        self.debounce_events(errors).await
     }
 
     async fn debounce_events(&mut self, mut errors: Vec<String>) -> ReconcileTrigger {
-        let mut deadline = Instant::now() + self.debounce;
+        let Self {
+            events,
+            periodic,
+            debounce,
+            watcher_lost,
+            ..
+        } = self;
+        let mut deadline = Instant::now() + *debounce;
         loop {
             tokio::select! {
                 () = sleep_until(deadline) => {
@@ -149,11 +179,14 @@ impl ReconcileTriggers {
                         watcher_errors: errors,
                     };
                 }
-                event = self.events.recv() => {
+                event = watch_event(events, watcher_lost) => {
+                    let extend = event.is_some();
                     record_error(event, &mut errors);
-                    deadline = Instant::now() + self.debounce;
+                    if extend {
+                        deadline = Instant::now() + *debounce;
+                    }
                 }
-                _ = self.periodic.tick() => {
+                _ = periodic.tick() => {
                     return ReconcileTrigger {
                         reason: TriggerReason::Periodic,
                         watcher_errors: errors,
@@ -164,9 +197,38 @@ impl ReconcileTriggers {
     }
 }
 
+/// Await the next native hint, or never resolve once the watcher is gone.
+///
+/// A closed channel means the `notify` backend has exited. Its receiver then
+/// reports readiness immediately and forever, so selecting on it would spin the
+/// trigger loop at full processor cost and starve the debounce deadline. The
+/// loss is reported exactly once, after which this arm stays pending and
+/// periodic safety scans remain the only trigger.
+///
+/// Cancellation-safe: `recv` is, and the loss flag is only written once the
+/// receiver has already resolved.
+async fn watch_event(
+    events: &mut mpsc::Receiver<notify::Result<Event>>,
+    lost: &mut bool,
+) -> Option<notify::Result<Event>> {
+    if !*lost {
+        if let Some(event) = events.recv().await {
+            return Some(event);
+        }
+        *lost = true;
+        return None;
+    }
+    pending().await
+}
+
 fn record_error(event: Option<notify::Result<Event>>, errors: &mut Vec<String>) {
-    if let Some(Err(error)) = event {
-        errors.push(error.to_string());
+    match event {
+        Some(Err(error)) => errors.push(error.to_string()),
+        None => errors.push(
+            "filesystem watcher stopped; reconciliation continues on periodic scans only"
+                .to_owned(),
+        ),
+        Some(Ok(_)) => {}
     }
 }
 
@@ -253,6 +315,88 @@ mod tests {
                 Duration::from_secs(30),
             )
             .is_err()
+        );
+        Ok(())
+    }
+
+    /// Regression: a dead watcher backend pegged a core inside the debounce.
+    ///
+    /// A closed channel makes the receiver permanently ready, so the debounce
+    /// loop re-armed its deadline on every poll and spun at full processor cost
+    /// instead of ever completing the window. The safety interval here is far
+    /// beyond the timeout, so only retiring the dead arm can let the debounce
+    /// deadline resolve.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_lost_watcher_still_lets_the_debounce_window_close() -> Result<(), Box<dyn Error>> {
+        let directory = TestDirectory::new()?;
+        let mut triggers = ReconcileTriggers::with_intervals(
+            directory.path(),
+            Duration::from_millis(10),
+            Duration::from_hours(1),
+        )?;
+        assert_eq!(triggers.next().await.reason, TriggerReason::Initial);
+        triggers.simulate_watcher_loss();
+
+        let trigger = timeout(Duration::from_secs(2), triggers.debounce_events(Vec::new())).await?;
+        assert_eq!(trigger.reason, TriggerReason::Filesystem);
+        assert!(
+            trigger
+                .watcher_errors
+                .iter()
+                .any(|error| error.contains("filesystem watcher stopped")),
+            "the operator must be told notifications are gone: {:?}",
+            trigger.watcher_errors
+        );
+        Ok(())
+    }
+
+    /// A watcher lost before any hint reports a recovery scan immediately.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_lost_watcher_reports_once_and_falls_back_to_periodic_scans()
+    -> Result<(), Box<dyn Error>> {
+        let directory = TestDirectory::new()?;
+        let mut triggers = ReconcileTriggers::with_intervals(
+            directory.path(),
+            Duration::from_millis(10),
+            Duration::from_hours(1),
+        )?;
+        assert_eq!(triggers.next().await.reason, TriggerReason::Initial);
+        triggers.simulate_watcher_loss();
+
+        let trigger = timeout(Duration::from_secs(2), triggers.next()).await?;
+        assert_eq!(trigger.reason, TriggerReason::Periodic);
+        assert!(
+            trigger
+                .watcher_errors
+                .iter()
+                .any(|error| error.contains("filesystem watcher stopped")),
+            "the operator must be told notifications are gone: {:?}",
+            trigger.watcher_errors
+        );
+        Ok(())
+    }
+
+    /// The loss is reported once, and periodic scans still arrive afterwards.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_lost_watcher_stops_being_reported_after_the_first_scan() -> Result<(), Box<dyn Error>>
+    {
+        let directory = TestDirectory::new()?;
+        let mut triggers = ReconcileTriggers::with_intervals(
+            directory.path(),
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+        )?;
+        assert_eq!(triggers.next().await.reason, TriggerReason::Initial);
+        triggers.simulate_watcher_loss();
+        let first = timeout(Duration::from_secs(2), triggers.next()).await?;
+        assert!(!first.watcher_errors.is_empty());
+
+        let second = timeout(Duration::from_secs(2), triggers.next()).await?;
+        assert_eq!(second.reason, TriggerReason::Periodic);
+        assert!(
+            second.watcher_errors.is_empty(),
+            "a retired watcher must not re-report on every scan: {:?}",
+            second.watcher_errors
         );
         Ok(())
     }

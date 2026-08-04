@@ -31,7 +31,10 @@ abstraction rather than reaching into supervisor state.
 
 Turns a directory of service definitions into a desired set of supervisors. It
 reconciles current and desired state so correctness does not depend on a
-filesystem watcher delivering every event.
+filesystem watcher delivering every event. That independence extends to the
+watcher dying: a closed native event channel is reported once and its trigger
+arm is retired, leaving periodic safety scans as the sole trigger rather than a
+permanently ready receiver spinning the trigger loop.
 
 ## CLI architecture
 
