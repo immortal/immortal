@@ -17,6 +17,7 @@ use immortal_core::{
     control::{Operation, Signal, SignalScope, TransportError},
     exit::ExitClass,
     runtime::RuntimeRootError,
+    status::ServiceState,
 };
 
 pub mod exit;
@@ -144,6 +145,8 @@ pub enum ActionError {
     ConnectTimeout,
     /// Lifecycle did not reach its requested terminal state before the deadline.
     LifecycleTimeout,
+    /// The supervisor settled where the requested lifecycle goal is unreachable.
+    LifecycleAbandoned(ServiceState),
     /// A successful status response omitted its typed payload.
     StatusUnavailable,
     /// Framed request or response failed.
@@ -176,6 +179,11 @@ impl Display for ActionError {
             Self::Connect(error) => write!(formatter, "unable to connect to supervisor: {error}"),
             Self::ConnectTimeout => formatter.write_str("supervisor connect deadline exceeded"),
             Self::LifecycleTimeout => formatter.write_str("lifecycle completion deadline exceeded"),
+            Self::LifecycleAbandoned(state) => write!(
+                formatter,
+                "supervisor settled in `{}`; the requested lifecycle goal is unreachable",
+                state.name()
+            ),
             Self::StatusUnavailable => {
                 formatter.write_str("supervisor omitted the typed status payload")
             }
@@ -208,6 +216,7 @@ impl Error for ActionError {
             | Self::ServiceLimit
             | Self::ConnectTimeout
             | Self::LifecycleTimeout
+            | Self::LifecycleAbandoned(_)
             | Self::StatusUnavailable
             | Self::Remote(_)
             | Self::PartialFailure => None,
@@ -235,6 +244,7 @@ impl ActionError {
             Self::RuntimeInitialization(_) | Self::Json(_) => ExitClass::Software,
             Self::Runtime(_) => ExitClass::Configuration,
             Self::ServiceNotFound(_) => ExitClass::NotFound,
+            Self::LifecycleAbandoned(_) => ExitClass::Unavailable,
             Self::AmbiguousService(_) | Self::ServiceLimit => ExitClass::Data,
             Self::Connect(error) => match error.kind() {
                 io::ErrorKind::PermissionDenied => ExitClass::Permission,

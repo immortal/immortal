@@ -719,10 +719,14 @@ Shutdown aborts and joins every remaining connection task.
 
 Lifecycle mutations wait up to `--timeout 30` seconds by default. Start waits
 for Ready, stop for Down, restart for a different Ready generation, and once
-for a generation to appear and then return Down. Halt/exit complete when their
-owned control socket disappears. `--no-wait` explicitly returns after request
-acceptance. The outer deadline bounds polling and each generation comparison
-remains race-safe.
+for a generation to appear and then return Down. If the supervisor settles in
+`failed` or `exited`, a start, restart, or once goal can no longer be reached,
+so the client stops waiting and reports an `unavailable` failure instead of
+running out the deadline and reporting a retryable one. Neither settled state
+runs a child, so a stop goal is treated as reached. Halt/exit complete when
+their owned control socket disappears. `--no-wait` explicitly returns after
+request acceptance. The outer deadline bounds polling and each generation
+comparison remains race-safe.
 
 Filesystem notifications use the native recommended backend (inotify,
 FSEvents, or kqueue) only as hints. Hints are nonrecursive and debounced for

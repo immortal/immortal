@@ -14,13 +14,15 @@ use immortal_core::control::{
     ControlListener, GenerationMatch, Operation, Response, ResponseCode, SignalScope, read_request,
     write_response,
 };
+use immortal_core::exit::ExitClass;
 use immortal_core::status::{ServiceState, StatusSnapshot};
 use immortal_core::supervisor::{Generation, StateMachine};
 
+use super::WaitOutcome;
 use super::{
     ActionError, ControlAction, DiscoveryRoot, OutputFormat, OutputRecord, RuntimeDiscovery,
     RuntimeOrigin, RuntimeScope, ScopedService, Target, contact, discover_from_roots,
-    discovery_roots_with, record, render_output, select_targets,
+    discovery_roots_with, operation_outcome, record, render_output, select_targets,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -487,4 +489,108 @@ async fn respond_once(
     assert_eq!(request.operation, Operation::Status);
     write_response(connection.stream_mut(), &response).await?;
     Ok(())
+}
+
+fn snapshot(state: ServiceState) -> StatusSnapshot {
+    let mut status = StatusSnapshot::from_machine(&StateMachine::default());
+    status.state = state;
+    status
+}
+
+/// Regression: a settled supervisor stalled the client for the whole deadline.
+///
+/// `start`, `restart`, and `once` waited for their goal state and nothing else,
+/// so a supervisor which had stopped restarting was polled until `--timeout`
+/// expired and then reported as a retryable temporary failure. A supervisor in
+/// `failed` or `exited` will not reach a start goal on its own, so the client
+/// must give up immediately and report a definite failure instead.
+#[test]
+fn a_settled_supervisor_abandons_a_start_goal_immediately() {
+    for operation in [Operation::Start, Operation::Restart, Operation::Once] {
+        for state in [ServiceState::Failed, ServiceState::Exited] {
+            let mut saw_once_generation = false;
+            assert_eq!(
+                operation_outcome(
+                    operation,
+                    None,
+                    None,
+                    &snapshot(state),
+                    &mut saw_once_generation
+                ),
+                WaitOutcome::Abandoned,
+                "{operation:?} in {state:?} must not wait out the deadline"
+            );
+        }
+    }
+}
+
+/// Neither settled state runs a child, so a stop goal is already satisfied.
+#[test]
+fn a_settled_supervisor_satisfies_a_stop_goal() {
+    for state in [
+        ServiceState::Failed,
+        ServiceState::Exited,
+        ServiceState::Down,
+    ] {
+        let mut saw_once_generation = false;
+        assert_eq!(
+            operation_outcome(
+                Operation::Stop,
+                None,
+                None,
+                &snapshot(state),
+                &mut saw_once_generation
+            ),
+            WaitOutcome::Completed,
+            "stop in {state:?} must complete"
+        );
+    }
+}
+
+/// A supervisor still working toward the goal keeps the client waiting.
+#[test]
+fn a_working_supervisor_keeps_the_client_waiting() {
+    for state in [
+        ServiceState::Starting,
+        ServiceState::Running,
+        ServiceState::Backoff,
+        ServiceState::WaitingCondition,
+    ] {
+        let mut saw_once_generation = false;
+        assert_eq!(
+            operation_outcome(
+                Operation::Start,
+                None,
+                None,
+                &snapshot(state),
+                &mut saw_once_generation
+            ),
+            WaitOutcome::Pending,
+            "start in {state:?} must keep polling"
+        );
+    }
+    let mut saw_once_generation = false;
+    assert_eq!(
+        operation_outcome(
+            Operation::Start,
+            None,
+            None,
+            &snapshot(ServiceState::Ready),
+            &mut saw_once_generation
+        ),
+        WaitOutcome::Completed
+    );
+}
+
+/// The abandoned failure is definite, not the retryable timeout class.
+#[test]
+fn an_abandoned_lifecycle_is_reported_as_unavailable() {
+    assert_eq!(
+        ActionError::LifecycleAbandoned(ServiceState::Failed).exit_class(),
+        ExitClass::Unavailable
+    );
+    assert_ne!(
+        ActionError::LifecycleAbandoned(ServiceState::Failed).exit_class(),
+        ActionError::LifecycleTimeout.exit_class()
+    );
 }

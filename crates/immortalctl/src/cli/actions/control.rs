@@ -382,39 +382,76 @@ async fn wait_for_completion(
             .status
             .as_ref()
             .ok_or(ActionError::StatusUnavailable)?;
-        if operation_completed(
+        match operation_outcome(
             operation,
             initial_generation,
             response.generation,
             status,
             &mut saw_once_generation,
         ) {
-            return Ok(response);
+            WaitOutcome::Completed => return Ok(response),
+            WaitOutcome::Abandoned => {
+                return Err(ActionError::LifecycleAbandoned(status.state));
+            }
+            WaitOutcome::Pending => {}
         }
     }
 }
 
-fn operation_completed(
+/// What one status observation says about the operation being awaited.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WaitOutcome {
+    /// The operation reached its goal.
+    Completed,
+    /// The supervisor settled somewhere the goal can no longer be reached.
+    Abandoned,
+    /// Nothing is decided yet.
+    Pending,
+}
+
+/// Classify one status observation for the operation being awaited.
+///
+/// `Failed` and `Exited` are settled: a supervisor which stopped restarting, or
+/// which is shutting down, will not reach a start goal on its own. Waiting out
+/// the full deadline there reported a retryable temporary failure for a
+/// permanent condition, so those states resolve immediately instead. A stop
+/// goal is already satisfied by both, because neither state runs a child.
+fn operation_outcome(
     operation: Operation,
     initial_generation: Option<Generation>,
     current_generation: Option<Generation>,
     status: &StatusSnapshot,
     saw_once_generation: &mut bool,
-) -> bool {
+) -> WaitOutcome {
+    let settled = matches!(status.state, ServiceState::Failed | ServiceState::Exited);
     match operation {
-        Operation::Start => status.state == ServiceState::Ready,
-        Operation::Stop => status.state == ServiceState::Down,
-        Operation::Restart => {
-            status.state == ServiceState::Ready && current_generation != initial_generation
-        }
+        Operation::Start => outcome(status.state == ServiceState::Ready, settled),
+        Operation::Stop => outcome(status.state == ServiceState::Down || settled, false),
+        Operation::Restart => outcome(
+            status.state == ServiceState::Ready && current_generation != initial_generation,
+            settled,
+        ),
         Operation::Once => {
             if current_generation.is_some() || status.state != ServiceState::Down {
                 *saw_once_generation = true;
             }
-            *saw_once_generation && status.state == ServiceState::Down
+            outcome(
+                *saw_once_generation && status.state == ServiceState::Down,
+                settled,
+            )
         }
-        Operation::Exit | Operation::Halt => false,
-        Operation::Status | Operation::Signal => true,
+        Operation::Exit | Operation::Halt => WaitOutcome::Pending,
+        Operation::Status | Operation::Signal => WaitOutcome::Completed,
+    }
+}
+
+const fn outcome(completed: bool, settled: bool) -> WaitOutcome {
+    if completed {
+        WaitOutcome::Completed
+    } else if settled {
+        WaitOutcome::Abandoned
+    } else {
+        WaitOutcome::Pending
     }
 }
 
