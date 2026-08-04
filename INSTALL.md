@@ -274,7 +274,9 @@ Create `/var/db/immortal/run` and `/usr/local/etc/immortal` as root-owned,
 non-group-writable directories before installing
 [the example LaunchDaemon](contrib/launchd/run.immortal.immortaldir.plist).
 The persistent `/var/db` runtime root avoids relying on `/var/run` surviving a
-reboot. `AbandonProcessGroup` is deliberate because service supervisors are
+reboot, which matters because launchd has no pre-start hook to recreate one.
+It is also the macOS system root `immortalctl` discovers automatically, so the
+shipped daemon needs no `--runtime-dir` on the client side. `AbandonProcessGroup` is deliberate because service supervisors are
 independent of the directory-manager job. Validate these semantics on the
 target macOS release before using the example outside release-candidate tests.
 

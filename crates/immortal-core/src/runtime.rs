@@ -36,8 +36,12 @@ pub const MAX_CONTROL_SOCKET_PATH_BYTES: usize = 103;
 
 #[cfg(target_os = "linux")]
 const SYSTEM_RUNTIME_ROOT: &str = "/run/immortal";
-#[cfg(any(target_os = "freebsd", target_os = "macos"))]
+#[cfg(target_os = "freebsd")]
 const SYSTEM_RUNTIME_ROOT: &str = "/var/run/immortal";
+// launchd has no pre-start hook, so a macOS system root has to survive reboot
+// rather than be recreated by the job which uses it.
+#[cfg(target_os = "macos")]
+const SYSTEM_RUNTIME_ROOT: &str = "/var/db/immortal/run";
 
 /// Return the platform system-supervisor discovery root.
 #[must_use]
@@ -678,8 +682,12 @@ mod tests {
         assert!(system_runtime_root().is_absolute());
         #[cfg(target_os = "linux")]
         assert_eq!(system_runtime_root(), Path::new("/run/immortal"));
-        #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+        #[cfg(target_os = "freebsd")]
         assert_eq!(system_runtime_root(), Path::new("/var/run/immortal"));
+        // The shipped LaunchDaemon installs here, so automatic discovery has to
+        // agree or a supported macOS install is invisible to immortalctl.
+        #[cfg(target_os = "macos")]
+        assert_eq!(system_runtime_root(), Path::new("/var/db/immortal/run"));
     }
 
     #[test]
