@@ -24,10 +24,11 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixStream;
-use tokio::signal::unix::{SignalKind, signal as listen_for_signal};
+use tokio::net::unix::OwnedWriteHalf;
+use tokio::signal::unix::{Signal as ChildSignal, SignalKind, signal as listen_for_signal};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio::time::{Instant, MissedTickBehavior, interval_at};
+use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at};
 
 use crate::readiness::ReadinessError;
 use crate::supervisor::Generation;
@@ -38,6 +39,7 @@ use super::logging::BrokerLogging;
 use super::reap::{disarm_generation_guard, forward_child_events};
 use super::state::{
     BrokerGeneration, BrokerOwnedProcess, BrokerRuntimeState, LifetimeObservation, LifetimeState,
+    ReadinessObservation,
 };
 use super::supervisor_loss::cleanup_after_supervisor_loss;
 use super::types::BrokerLifetimePlan;
@@ -93,19 +95,39 @@ impl Drop for RequestStream {
     }
 }
 
+/// Mutable event sources and the write endpoint the broker loop owns.
+///
+/// Grouping them keeps the loop and the supervisor-loss path from passing the
+/// same long parameter list, and makes it explicit that cleanup reuses the very
+/// endpoints the loop was selecting over.
+struct BrokerSession {
+    child_reap: Interval,
+    child_signal: ChildSignal,
+    lifetime_events: mpsc::Receiver<LifetimeObservation>,
+    readiness_events: mpsc::Receiver<ReadinessObservation>,
+    requests: RequestStream,
+    writer: OwnedWriteHalf,
+}
+
 pub(super) async fn run_broker(
     stream: UnixStream,
     logging: BrokerLogging,
     lifetime_cleanup: Option<BrokerLifetimePlan>,
     subreaper_active: bool,
 ) -> Result<(), ProcessBrokerError> {
-    let (reader, mut writer) = stream.into_split();
-    let mut requests = RequestStream::spawn(reader);
-    let mut child_signal = listen_for_signal(SignalKind::child())?;
-    let (readiness_sender, mut readiness_events) = mpsc::channel(READINESS_EVENT_CAPACITY);
-    let (lifetime_sender, mut lifetime_events) = mpsc::channel(LIFETIME_EVENT_CAPACITY);
+    let (reader, writer) = stream.into_split();
+    let (readiness_sender, readiness_events) = mpsc::channel(READINESS_EVENT_CAPACITY);
+    let (lifetime_sender, lifetime_events) = mpsc::channel(LIFETIME_EVENT_CAPACITY);
     let mut child_reap = interval_at(Instant::now() + CHILD_REAP_INTERVAL, CHILD_REAP_INTERVAL);
     child_reap.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut session = BrokerSession {
+        child_reap,
+        child_signal: listen_for_signal(SignalKind::child())?,
+        lifetime_events,
+        readiness_events,
+        requests: RequestStream::spawn(reader),
+        writer,
+    };
     let mut state = BrokerRuntimeState {
         generations: BTreeMap::new(),
         logging,
@@ -115,57 +137,80 @@ pub(super) async fn run_broker(
         readiness_sender,
         subreaper_active,
     };
-    write_event(&mut writer, &BrokerEvent::Ready).await?;
+
+    // Supervisor loss is handled here rather than at each I/O site so no read,
+    // write, or channel-close path can skip the cleanup that runs a
+    // descriptor-tracked generation's configured stop command.
+    match supervise_generations(&mut session, &mut state).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.is_end_of_stream() => {
+            cleanup_after_supervisor_loss(
+                &mut session.child_signal,
+                &mut state.generations,
+                &mut state.processes,
+                &mut state.logging,
+                &mut session.lifetime_events,
+                state.lifetime_cleanup.take(),
+                state.subreaper_active,
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Serve the supervisor until it detaches, disconnects, or the broker fails.
+///
+/// Returns `Ok(())` only for an ordered shutdown the supervisor asked for. A
+/// lost connection surfaces as an end-of-stream error so the single caller can
+/// run cleanup.
+async fn supervise_generations(
+    session: &mut BrokerSession,
+    state: &mut BrokerRuntimeState,
+) -> Result<(), ProcessBrokerError> {
+    write_event(&mut session.writer, &BrokerEvent::Ready).await?;
 
     loop {
         tokio::select! {
-            request = requests.recv() => {
+            request = session.requests.recv() => {
                 let request = match request {
                     Some(Ok(request)) => request,
-                    Some(Err(error)) if !error.is_end_of_stream() => return Err(error),
-                    // Either the peer closed the stream, or the reader task
-                    // ended without queueing an error. Both mean the
-                    // supervisor connection is gone, which is a handled
-                    // transition rather than a broker fault.
-                    Some(Err(_)) | None => {
-                        cleanup_after_supervisor_loss(
-                            &mut child_signal,
-                            &mut state.generations,
-                            &mut state.processes,
-                            &mut state.logging,
-                            &mut lifetime_events,
-                            state.lifetime_cleanup.take(),
-                            state.subreaper_active,
-                        ).await?;
-                        return Ok(());
-                    }
+                    Some(Err(error)) => return Err(error),
+                    // The reader task ended without queueing an error, which
+                    // still means the supervisor connection is gone.
+                    None => return Err(ProcessBrokerError::disconnected()),
                 };
-                if handle_broker_request(request, &mut child_signal, &mut writer, &mut state).await? {
+                if handle_broker_request(
+                    request,
+                    &mut session.child_signal,
+                    &mut session.writer,
+                    state,
+                ).await? {
                     return Ok(());
                 }
             }
-            signal = child_signal.recv() => {
+            signal = session.child_signal.recv() => {
                 if signal.is_none() {
                     return Err(ProcessBrokerError(ProcessBrokerErrorKind::SignalStreamClosed));
                 }
                 forward_child_events(
-                    &mut writer,
+                    &mut session.writer,
                     &mut state.generations,
                     &mut state.processes,
                     &mut state.logging,
                     state.subreaper_active,
                 ).await?;
             }
-            _ = child_reap.tick(), if !state.processes.is_empty() || state.subreaper_active => {
+            _ = session.child_reap.tick(), if !state.processes.is_empty() || state.subreaper_active => {
                 forward_child_events(
-                    &mut writer,
+                    &mut session.writer,
                     &mut state.generations,
                     &mut state.processes,
                     &mut state.logging,
                     state.subreaper_active,
                 ).await?;
             }
-            Some(observation) = readiness_events.recv() => {
+            Some(observation) = session.readiness_events.recv() => {
                 if state.generations.contains_key(&observation.generation) {
                     let event = match observation.result {
                         Ok(()) => BrokerEvent::GenerationReady {
@@ -176,13 +221,13 @@ pub(super) async fn run_broker(
                             failure: readiness_failure(&error),
                         },
                     };
-                    write_event(&mut writer, &event).await?;
+                    write_event(&mut session.writer, &event).await?;
                 }
             }
-            Some(observation) = lifetime_events.recv() => {
+            Some(observation) = session.lifetime_events.recv() => {
                 handle_lifetime_observation(
                     observation,
-                    &mut writer,
+                    &mut session.writer,
                     &mut state.generations,
                     &mut state.processes,
                 ).await?;
@@ -250,14 +295,18 @@ mod tests {
     use std::ffi::OsString;
     use std::time::Duration;
 
+    use std::io;
+
     use tokio::io::{AsyncWriteExt, duplex};
+    use tokio::net::UnixStream;
     use tokio::sync::oneshot;
 
     use crate::process::{ProcessCommand, ProcessSignal};
     use crate::supervisor::Generation;
 
+    use super::super::logging::{BrokerLogging, BrokerLoggingPlan};
     use super::super::{BrokerSignalTarget, HEADER_BYTES};
-    use super::{BrokerRequest, RequestStream};
+    use super::{BrokerRequest, ProcessBrokerError, RequestStream, run_broker};
 
     const TEST_DEADLINE: Duration = Duration::from_secs(10);
     /// Cancelled request-arm polls to observe before releasing the payload.
@@ -439,6 +488,56 @@ mod tests {
             .await
             .map_err(|_| "timed out awaiting stream completion")?;
         assert!(next.is_none());
+        Ok(())
+    }
+
+    /// A write to a departed peer is a disconnect, not a broker fault.
+    ///
+    /// The broker learns the supervisor is gone from whichever direction
+    /// notices first. Classifying only the read-side kinds let a `BrokenPipe`
+    /// write escape as a fatal error.
+    #[test]
+    fn broken_pipe_is_classified_as_end_of_stream() {
+        let error = ProcessBrokerError::from(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "supervisor closed the connection",
+        ));
+        assert!(error.is_end_of_stream());
+    }
+
+    /// A genuinely unusable socket must stay fatal so the broker fails closed.
+    #[test]
+    fn other_io_kinds_are_not_classified_as_end_of_stream() {
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::InvalidInput,
+            io::ErrorKind::Other,
+        ] {
+            let error = ProcessBrokerError::from(io::Error::new(kind, "unusable socket"));
+            assert!(!error.is_end_of_stream(), "{kind:?} must stay fatal");
+        }
+    }
+
+    /// Regression: a write that observes the disconnect must reach cleanup.
+    ///
+    /// Dropping the supervisor half before the broker sends its `Ready` event
+    /// makes the very first write fail with `BrokenPipe`, deterministically
+    /// ahead of any queued read error. That failure previously propagated out
+    /// of `run_broker`, which the launcher reports as a broker fault and which
+    /// skips the supervisor-loss cleanup entirely.
+    #[tokio::test]
+    async fn run_broker_treats_a_broken_pipe_write_as_supervisor_loss() -> Result<(), Box<dyn Error>>
+    {
+        let (supervisor, broker) = UnixStream::pair()?;
+        drop(supervisor);
+        let logging = BrokerLogging::prepare(BrokerLoggingPlan {
+            local_files: Vec::new(),
+            logger: None,
+        })?;
+
+        tokio::time::timeout(TEST_DEADLINE, run_broker(broker, logging, None, false))
+            .await
+            .map_err(|_| "timed out awaiting broker shutdown")??;
         Ok(())
     }
 }

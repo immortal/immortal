@@ -4,7 +4,11 @@
 //! unexpectedly closed `SIGCHLD` stream, and a reaped process this broker
 //! never spawned. [`ProcessBrokerError::is_end_of_stream`] distinguishes an
 //! ordinary supervisor disconnect (which triggers cleanup) from every other
-//! I/O failure (which is fatal to the broker).
+//! I/O failure (which is fatal to the broker). A disconnect is observable from
+//! either direction: a read sees `UnexpectedEof` or `ConnectionReset`, while a
+//! write to the departed peer sees `BrokenPipe`. All three must reach cleanup,
+//! because a descriptor-tracked generation's configured stop command runs only
+//! on that path.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -25,13 +29,30 @@ pub(super) enum ProcessBrokerErrorKind {
 }
 
 impl ProcessBrokerError {
+    /// Whether this failure means the supervisor connection is simply gone.
+    ///
+    /// Covers both directions of the socket: a read observing `UnexpectedEof`
+    /// or `ConnectionReset`, and a write observing `BrokenPipe`.
     pub(super) fn is_end_of_stream(&self) -> bool {
         matches!(
             &self.0,
             ProcessBrokerErrorKind::Io(error)
-                if error.kind() == io::ErrorKind::UnexpectedEof
-                    || error.kind() == io::ErrorKind::ConnectionReset
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::BrokenPipe
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::UnexpectedEof
+                )
         )
+    }
+
+    /// Construct the synthetic disconnect used when the reader task ends
+    /// without having queued an error of its own.
+    pub(super) fn disconnected() -> Self {
+        Self(ProcessBrokerErrorKind::Io(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "supervisor control connection closed",
+        )))
     }
 }
 

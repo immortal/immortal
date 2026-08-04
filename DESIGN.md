@@ -217,6 +217,10 @@ or holds the subreaper role, and stays idle only when neither applies.
 The supervisor owns one persistent broker-reader task feeding a bounded queue;
 selecting between process events, control work, timers, and Unix signals can
 therefore cancel a queue receive without cancelling a partially read frame.
+A lost supervisor is recognized from either direction of that socket — a read
+observing end of file or a connection reset, and a write observing a broken
+pipe — and every such observation converges on one cleanup path, because a
+descriptor-tracked generation's configured stop command runs only there.
 Long-running components share one owned TERM/INT intake boundary. The service
 supervisor converts those signals into an ordered service/logger shutdown;
 `immortaldir` observes them only between complete reconciliation operations and
