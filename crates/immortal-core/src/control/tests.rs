@@ -619,15 +619,35 @@ async fn server_loop_isolates_bad_clients_and_dispatches_authenticated_requests(
     Ok(())
 }
 
+/// A rejected bind must never create, replace, or leave behind a socket.
+///
+/// Every failure arm after `UnixListener::bind` succeeds has to unlink what it
+/// created; two of them returned early instead and leaked the socket inode into
+/// the runtime directory, where the next bind would then reject the path as
+/// already existing and wedge the supervisor.
 #[cfg(unix)]
-#[test]
-fn listener_refuses_unsafe_or_existing_paths() -> Result<(), Box<dyn Error>> {
+#[tokio::test(flavor = "current_thread")]
+async fn listener_refuses_unsafe_or_existing_paths() -> Result<(), Box<dyn Error>> {
     assert!(ControlListener::bind(Path::new("relative.sock"), 1).is_err());
+    assert!(!Path::new("relative.sock").exists());
+
     let directory = TestDirectory::new()?;
     let path = directory.path().join("control.sock");
     fs::write(&path, b"do not replace")?;
     assert!(ControlListener::bind(&path, 1).is_err());
     assert_eq!(fs::read(&path)?, b"do not replace");
+
+    let rejected = directory.path().join("zero-clients.sock");
+    assert!(ControlListener::bind(&rejected, 0).is_err());
+    assert!(
+        !rejected.exists(),
+        "a rejected bind must not leave a socket behind"
+    );
+
+    // A path which binds cleanly can be bound again once released, which is
+    // exactly what a leaked inode would prevent.
+    drop(ControlListener::bind(&rejected, 1)?);
+    drop(ControlListener::bind(&rejected, 1)?);
     Ok(())
 }
 

@@ -359,10 +359,20 @@ impl ControlListener {
             cleanup_created_socket(path);
             return Err(io::Error::other("new control socket path is not a socket"));
         }
-        let parent = path.parent().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "control socket has no parent")
-        })?;
-        let parent_metadata = fs::symlink_metadata(parent)?;
+        let Some(parent) = path.parent() else {
+            cleanup_created_socket(path);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "control socket has no parent",
+            ));
+        };
+        let parent_metadata = match fs::symlink_metadata(parent) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                cleanup_created_socket(path);
+                return Err(error);
+            }
+        };
         if metadata.uid() != parent_metadata.uid() {
             cleanup_created_socket(path);
             return Err(io::Error::new(
