@@ -231,7 +231,14 @@ executor therefore accepts readiness for any generation the supervisor still
 owns: a paused generation records it so resuming observes the declared value,
 a stopping or terminal generation discards it without disturbing the stop
 grace deadline, and only an unowned generation remains a protocol fault.
-The supervisor event loop remains the sole lifecycle owner. Explicit `Exit`
+The supervisor event loop remains the sole lifecycle owner. The control accept
+loop treats peer-attributable and resource-attributable accept failures as
+transient: aborted or reset peers, interrupted accepts, and descriptor or
+kernel-buffer exhaustion are absorbed, with exhaustion paced by a short bounded
+backoff so the loop cannot spin while descriptors stay unavailable. Only an
+unusable listener, a closed client semaphore, or a departed supervisor ends the
+loop, because a fatal accept classification stops the whole supervisor and lets
+the broker kill a healthy service. Explicit `Exit`
 sends a generation-bound detach request to the broker; only a successful detach
 transitions the supervisor to `Exited`, after which the empty broker is shut
 down and reaped while the service is deliberately reparented to the OS.

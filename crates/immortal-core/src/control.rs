@@ -44,7 +44,9 @@ pub use self::transport::{
 };
 
 #[cfg(all(test, unix))]
-pub(in crate::control) use self::server::peer_is_authorized;
+pub(in crate::control) use self::server::{
+    accept_error_is_exhaustion, accept_error_is_transient, peer_is_authorized,
+};
 #[cfg(test)]
 pub(in crate::control) use self::wire::HEADER_BYTES;
 

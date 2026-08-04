@@ -6,7 +6,7 @@ use tokio::io::{AsyncWriteExt, duplex};
 
 #[cfg(unix)]
 use std::{
-    fs,
+    fs, io,
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{
@@ -20,7 +20,10 @@ use tokio::net::UnixStream;
 use tokio::sync::{mpsc, watch};
 
 #[cfg(unix)]
-use super::{AcceptError, ControlListener, peer_is_authorized, run_control_server};
+use super::{
+    AcceptError, ControlListener, accept_error_is_exhaustion, accept_error_is_transient,
+    peer_is_authorized, run_control_server,
+};
 use super::{
     ControlEffect, GenerationMatch, MAX_FRAME_BYTES, Operation, PROTOCOL_VERSION, ProtocolError,
     Request, Response, ResponseCode, Signal, SignalScope, StopCompletion, TransportError,
@@ -648,4 +651,123 @@ fn peer_policy_allows_only_root_or_owner() {
     assert!(peer_is_authorized(0, 1000));
     assert!(peer_is_authorized(1000, 1000));
     assert!(!peer_is_authorized(1001, 1000));
+}
+
+#[cfg(unix)]
+#[test]
+fn accept_classification_separates_peer_and_resource_faults_from_listener_faults() {
+    for kind in [
+        io::ErrorKind::ConnectionAborted,
+        io::ErrorKind::ConnectionReset,
+        io::ErrorKind::Interrupted,
+        io::ErrorKind::WouldBlock,
+    ] {
+        let error = io::Error::new(kind, "peer or scheduling fault");
+        assert!(
+            accept_error_is_transient(&error),
+            "{kind:?} must be transient"
+        );
+        assert!(
+            !accept_error_is_exhaustion(&error),
+            "{kind:?} must not be paced as exhaustion"
+        );
+    }
+
+    for errno in [libc::EMFILE, libc::ENFILE, libc::ENOBUFS, libc::ENOMEM] {
+        let error = io::Error::from_raw_os_error(errno);
+        assert!(
+            accept_error_is_transient(&error),
+            "errno {errno} must be transient"
+        );
+        assert!(
+            accept_error_is_exhaustion(&error),
+            "errno {errno} must be paced"
+        );
+    }
+
+    for errno in [libc::EBADF, libc::EINVAL, libc::ENOTSOCK, libc::EFAULT] {
+        let error = io::Error::from_raw_os_error(errno);
+        assert!(
+            !accept_error_is_transient(&error),
+            "errno {errno} must stay fatal"
+        );
+    }
+}
+
+/// A burst of aborted peers must leave the control server usable.
+///
+/// A peer that disconnects before the server reads its credentials surfaces
+/// either as a credential failure or, depending on the platform and timing, as
+/// an aborted accept. Both are attributable to the peer, so neither may end
+/// `run_control_server` and take the supervisor down with it.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn server_loop_survives_aborted_peers() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let path = directory.path().join("immortal.sock");
+    let listener = Arc::new(ControlListener::bind(&path, 2)?);
+    let (sender, mut commands) = mpsc::channel(1);
+    let (shutdown_sender, shutdown) = watch::channel(false);
+    let mut server = tokio::spawn(run_control_server(Arc::clone(&listener), sender, shutdown));
+
+    for _ in 0..32 {
+        drop(UnixStream::connect(&path).await?);
+        tokio::task::yield_now().await;
+    }
+
+    let request = Request {
+        operation: Operation::Status,
+        service: "api".to_owned(),
+        expected_generation: GenerationMatch::Any,
+        scope: SignalScope::Main,
+        signal: None,
+    };
+    let client = async {
+        let mut stream = UnixStream::connect(&path).await?;
+        write_request(&mut stream, &request).await?;
+        let response = read_response(&mut stream).await?;
+        Ok::<Response, Box<dyn Error>>(response)
+    };
+    let dispatch = async {
+        // Aborted peers never reach dispatch, so the only command is the
+        // legitimate request above.
+        let Some(command) = commands.recv().await else {
+            let result = (&mut server).await;
+            return Err(format!("control server stopped after aborted peers: {result:?}").into());
+        };
+        command
+            .respond(Response {
+                code: ResponseCode::Ok,
+                generation: None,
+                message: "survived".to_owned(),
+                status: Some(StatusSnapshot::from_machine(&StateMachine::default())),
+            })
+            .map_err(|_| "client disconnected before response")?;
+        Ok::<(), Box<dyn Error>>(())
+    };
+    let (client_result, dispatch_result) = tokio::join!(client, dispatch);
+    dispatch_result?;
+    assert_eq!(client_result?.message, "survived");
+
+    shutdown_sender.send(true)?;
+    server.await??;
+    Ok(())
+}
+
+/// Absorbing transient accept failures must not remove the loop's exit paths.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn server_loop_still_stops_when_the_supervisor_is_gone() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let path = directory.path().join("immortal.sock");
+    let listener = Arc::new(ControlListener::bind(&path, 1)?);
+    let (sender, commands) = mpsc::channel(1);
+    let (_shutdown_sender, shutdown) = watch::channel(false);
+    let server = tokio::spawn(run_control_server(Arc::clone(&listener), sender, shutdown));
+
+    drop(commands);
+    match server.await? {
+        Err(AcceptError::ShuttingDown) => Ok(()),
+        other => Err(format!("orphaned control server did not stop: {other:?}").into()),
+    }
 }

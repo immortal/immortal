@@ -23,7 +23,7 @@ use tokio::{
     net::{UnixListener, UnixStream},
     sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch},
     task::JoinSet,
-    time::timeout,
+    time::{sleep, timeout},
 };
 
 use super::{
@@ -107,11 +107,61 @@ impl ControlCommand {
 
 /// Run the authenticated socket side of the control server.
 ///
+/// Backoff applied after an accept failure caused by exhausted descriptors or
+/// kernel buffers.
+///
+/// Those conditions persist until an unrelated descriptor is released, so
+/// retrying immediately would spin the accept loop at full speed while the
+/// supervisor still has to service process events, timers, and signals. The
+/// delay is deliberately short: the listener stays bound throughout, so it only
+/// paces retries and never delays an accept that could have succeeded.
+#[cfg(unix)]
+const ACCEPT_EXHAUSTION_BACKOFF: Duration = Duration::from_millis(100);
+
+/// Whether an accept failure leaves the listener usable.
+///
+/// A connection aborted or reset between `accept` and the credential read is
+/// attributable to the peer, and an interrupted or would-block accept is
+/// attributable to scheduling; neither says anything about the listener. So is
+/// descriptor or buffer exhaustion, which is a whole-process resource condition
+/// that resolves on its own. Anything else is treated as an unusable listener,
+/// because continuing would hide a permanently broken control endpoint behind
+/// an infinite loop.
+///
+/// `EMFILE`, `ENFILE`, and `ENOBUFS` have no stable [`io::ErrorKind`] across the
+/// supported platforms and Rust versions, so they are matched on the raw errno.
+#[cfg(unix)]
+pub(super) fn accept_error_is_transient(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::Interrupted
+            | io::ErrorKind::WouldBlock
+    ) {
+        return true;
+    }
+    accept_error_is_exhaustion(error)
+}
+
+/// Whether an accept failure is a transient resource shortage worth pacing.
+#[cfg(unix)]
+pub(super) fn accept_error_is_exhaustion(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)
+    )
+}
+
 /// Each accepted client is bounded by [`ControlListener`], frame deadlines, and
 /// the supplied bounded command channel. The receiving supervisor event loop
 /// remains the only owner of lifecycle state. Malformed/disconnected clients
 /// are isolated to their connection task. Shutdown aborts and joins every
 /// remaining client task before returning.
+///
+/// Transient accept failures (peer aborts, interruptions, and descriptor or
+/// buffer exhaustion) are absorbed so a single unlucky connection cannot stop
+/// the supervisor.
 ///
 /// # Errors
 ///
@@ -146,6 +196,11 @@ pub async fn run_control_server(
                     | AcceptError::PeerCredentials(_)
                     | AcceptError::PermissionDenied { .. },
                 ) => {}
+                Err(AcceptError::Io(error)) if accept_error_is_transient(&error) => {
+                    if accept_error_is_exhaustion(&error) {
+                        sleep(ACCEPT_EXHAUSTION_BACKOFF).await;
+                    }
+                }
                 Err(error) => return Err(error),
             },
             Some(_completed) = tasks.join_next(), if !tasks.is_empty() => {}
