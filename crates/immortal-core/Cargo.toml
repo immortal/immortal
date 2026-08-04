@@ -149,3 +149,8 @@ harness = false
 name = "file_adapter_contract"
 path = "tests/file_adapter_contract.rs"
 harness = false
+
+[[test]]
+name = "example_definitions_contract"
+path = "tests/example_definitions_contract.rs"
+harness = false
