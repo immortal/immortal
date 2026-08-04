@@ -20,6 +20,9 @@ use super::{
     logging::{FileLogInput, LegacyLoggingConfig, LogInput, normalize_logging},
 };
 
+/// The only schema version this decoder accepts.
+pub(super) const CURRENT_VERSION: u8 = 2;
+
 /// Minimal probe used to select a schema before the full document is decoded.
 #[derive(Deserialize)]
 pub(super) struct VersionHeader {
@@ -111,7 +114,13 @@ fn default_true() -> bool {
 pub(super) fn parse_current(source: &str) -> Result<ServiceConfig, ConfigError> {
     let document: ConfigDocument = serde_saphyr::from_str_with_options(source, yaml_options())
         .map_err(|error| ConfigError::Parse(error.to_string()))?;
-    debug_assert_eq!(document.version, 2);
+    // The caller selects the version before dispatching here, but this decoder
+    // is what binds the strict `version: 2` schema to the canonical model. A
+    // real check keeps that binding true in release builds too, rather than
+    // relying on an assertion which compiles away.
+    if document.version != CURRENT_VERSION {
+        return Err(ConfigError::UnsupportedVersion(u64::from(document.version)));
+    }
     let ConfigDocument {
         version: _,
         enabled,
@@ -183,6 +192,7 @@ pub(super) fn yaml_options() -> serde_saphyr::Options {
 mod tests {
     use std::{collections::BTreeMap, error::Error};
 
+    use super::parse_current;
     use crate::config::{ConfigError, MAX_CONFIG_BYTES, emit_config, parse_bytes, parse_str};
 
     #[test]
@@ -299,5 +309,26 @@ mod tests {
             Err(ConfigError::TooLarge { .. })
         ));
         assert!(matches!(parse_bytes(&[0xff]), Err(ConfigError::Parse(_))));
+    }
+
+    /// The version binding is enforced in release builds, not just asserted.
+    ///
+    /// A `debug_assert` compiled away outside debug builds, so a decoder
+    /// reached with the wrong schema would have silently produced a document
+    /// built from another version's field meanings.
+    #[test]
+    fn parse_current_rejects_a_document_which_is_not_version_two() {
+        assert!(matches!(
+            parse_current("version: 4\ncommand: [/bin/true]\n"),
+            Err(ConfigError::UnsupportedVersion(4))
+        ));
+    }
+
+    /// The supported version still decodes.
+    #[test]
+    fn parse_current_accepts_version_two() -> Result<(), Box<dyn Error>> {
+        let config = parse_current("version: 2\ncommand: [/bin/true]\n")?;
+        assert_eq!(config.command, vec!["/bin/true".to_owned()]);
+        Ok(())
     }
 }
