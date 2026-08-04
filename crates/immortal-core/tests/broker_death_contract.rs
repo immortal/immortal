@@ -7,7 +7,7 @@
 
 use std::{
     error::Error,
-    io, thread,
+    fmt, io, thread,
     time::{Duration, Instant},
 };
 
@@ -25,6 +25,19 @@ const EVENT_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Name the step which failed.
+///
+/// Every fallible step here returns a bare `io::Error`, so an unadorned
+/// failure reports only an errno and leaves no way to tell which system call
+/// produced it. That is expensive to diagnose on a platform which is only
+/// reachable through CI.
+fn step<T, E: fmt::Debug + fmt::Display>(
+    name: &str,
+    result: Result<T, E>,
+) -> Result<T, Box<dyn Error>> {
+    result.map_err(|error| format!("{name} failed: {error} ({error:?})").into())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     broker_death_contains_group(false)?;
     broker_death_contains_group(true)?;
@@ -33,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn broker_death_contains_group(stop_first: bool) -> Result<(), Box<dyn Error>> {
-    let endpoint = start_process_broker()?;
+    let endpoint = step("start_process_broker", start_process_broker())?;
     let broker_process = endpoint.process();
     let mut broker = ForcedBrokerGuard::new(broker_process);
     let runtime = Builder::new_current_thread()
@@ -44,10 +57,13 @@ fn broker_death_contains_group(stop_first: bool) -> Result<(), Box<dyn Error>> {
     drop(runtime);
     let mut group = GroupGuard::new(group);
 
-    require_broker_killed(broker.wait()?, broker_process)?;
-    wait_for_group_absence(group.group())?;
+    require_broker_killed(step("broker reap", broker.wait())?, broker_process)?;
+    step(
+        "wait_for_group_absence",
+        wait_for_group_absence(group.group()),
+    )?;
     group.mark_absent();
-    drain_subtree()?;
+    step("drain_subtree", drain_subtree())?;
     Ok(())
 }
 
@@ -56,7 +72,7 @@ async fn start_and_kill_broker(
     stop_first: bool,
 ) -> Result<ProcessGroupId, Box<dyn Error>> {
     let broker = endpoint.process();
-    let mut client = endpoint.connect()?;
+    let mut client = step("broker client connect", endpoint.connect())?;
     require_ready(&next_event(&mut client).await?)?;
 
     let generation = Generation::FIRST;
@@ -72,7 +88,10 @@ async fn start_and_kill_broker(
         require_stopped(next_event(&mut client).await?, generation)?;
     }
 
-    signal(SignalTarget::Process(broker), ProcessSignal::Kill)?;
+    step(
+        "kill broker",
+        signal(SignalTarget::Process(broker), ProcessSignal::Kill),
+    )?;
     match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await {
         Ok(Err(_)) => Ok(group),
         Ok(Ok(event)) => Err(io::Error::other(format!(
@@ -88,7 +107,7 @@ async fn start_and_kill_broker(
 }
 
 fn broker_death_without_workload_is_bounded() -> Result<(), Box<dyn Error>> {
-    let endpoint = start_process_broker()?;
+    let endpoint = step("start_process_broker (empty)", start_process_broker())?;
     let broker_process = endpoint.process();
     let mut broker = ForcedBrokerGuard::new(broker_process);
     let runtime = Builder::new_current_thread()
@@ -96,9 +115,12 @@ fn broker_death_without_workload_is_bounded() -> Result<(), Box<dyn Error>> {
         .enable_time()
         .build()?;
     runtime.block_on(async {
-        let mut client = endpoint.connect()?;
+        let mut client = step("empty broker connect", endpoint.connect())?;
         require_ready(&next_event(&mut client).await?)?;
-        signal(SignalTarget::Process(broker_process), ProcessSignal::Kill)?;
+        step(
+            "kill empty broker",
+            signal(SignalTarget::Process(broker_process), ProcessSignal::Kill),
+        )?;
         match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await {
             Ok(Err(_)) => Ok::<(), Box<dyn Error>>(()),
             Ok(Ok(event)) => Err(io::Error::other(format!(
@@ -113,8 +135,8 @@ fn broker_death_without_workload_is_bounded() -> Result<(), Box<dyn Error>> {
         }
     })?;
     drop(runtime);
-    require_broker_killed(broker.wait()?, broker_process)?;
-    drain_subtree()?;
+    require_broker_killed(step("empty broker reap", broker.wait())?, broker_process)?;
+    step("drain_subtree (empty)", drain_subtree())?;
     Ok(())
 }
 

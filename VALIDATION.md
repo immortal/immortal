@@ -166,9 +166,11 @@ record:
 
 Run competitors in randomized order on the same otherwise idle host. Record at
 least 30 independent comparative runs across three days. Internal Immortal
-regression ceilings retain the ten-run, three-day rule in `README.md`; an
-accepted ceiling is no lower than 125% of the observed maximum and remains
-platform-specific.
+regression ceilings are accepted per platform from at least ten retained
+benchmark runs spread across at least three separate days at one commit. An
+accepted ceiling is no lower than 125% of the maximum observed across those
+runs, and a ceiling accepted on one platform never carries to another. Fewer
+runs, a single day, or a mixed set of commits does not establish a ceiling.
 
 Machine-readable result records are UTF-8 tab-separated rows with this header:
 

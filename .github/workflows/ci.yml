@@ -79,6 +79,7 @@ jobs:
       - run: cargo run --quiet -p immortal -- --version
       - run: cargo run --quiet -p immortalctl -- --version
       - run: cargo run --quiet -p immortaldir -- --version
+      - run: cargo run --quiet -p immortallog -- --version
 
   freebsd-check:
     name: FreeBSD compile check

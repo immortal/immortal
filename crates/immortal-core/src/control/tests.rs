@@ -544,6 +544,14 @@ async fn owned_listener_restricts_mode_and_authenticates_owner() -> Result<(), B
 }
 
 #[cfg(unix)]
+/// Root is authorized against every owner, so it cannot play an unauthorized
+/// peer. CI runs as root on some platforms, where only the authorized path is
+/// observable.
+#[cfg(unix)]
+fn can_act_as_an_unauthorized_peer() -> bool {
+    !nix::unistd::geteuid().is_root()
+}
+
 /// An unauthorized peer is told why, instead of just having its socket closed.
 ///
 /// The server used to drop the stream, so the client observed an unexpected end
@@ -553,6 +561,9 @@ async fn owned_listener_restricts_mode_and_authenticates_owner() -> Result<(), B
 #[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn listener_tells_an_unauthorized_peer_why_it_was_refused() -> Result<(), Box<dyn Error>> {
+    if !can_act_as_an_unauthorized_peer() {
+        return Ok(());
+    }
     let directory = TestDirectory::new()?;
     let path = directory.path().join("control.sock");
     let mut listener = ControlListener::bind(&path, 1)?;
@@ -576,6 +587,9 @@ async fn listener_tells_an_unauthorized_peer_why_it_was_refused() -> Result<(), 
 #[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn rejected_peers_release_their_client_slot() -> Result<(), Box<dyn Error>> {
+    if !can_act_as_an_unauthorized_peer() {
+        return Ok(());
+    }
     let directory = TestDirectory::new()?;
     let path = directory.path().join("control.sock");
     let mut listener = ControlListener::bind(&path, 1)?;
