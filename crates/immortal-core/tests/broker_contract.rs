@@ -381,6 +381,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         command.environment(environment);
         client.spawn(large, command, STARTUP_TIMEOUT).await?;
         let mut churn_exited = false;
+        let mut large_exited = false;
         let mut large_started = false;
         while !large_started {
             match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await?? {
@@ -399,6 +400,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+        // Both workloads sleep for the same span, so their exit events race.
+        // The property under test is that the large frame decoded intact, not
+        // the order in which two independent children are reaped.
         while !churn_exited {
             let event = tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??;
             match event {
@@ -406,6 +410,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     generation,
                     event: ChildEvent::Exited { code: 0, .. },
                 } if generation == churn => churn_exited = true,
+                ProcessBrokerEvent::Child {
+                    generation,
+                    event: ChildEvent::Exited { code: 0, .. },
+                } if generation == large => large_exited = true,
                 event => {
                     return Err(io::Error::other(format!(
                         "expected the churn generation to exit, received {event:?}"
@@ -414,11 +422,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        assert_child_exit(
-            tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??,
-            large,
-            0,
-        )?;
+        if !large_exited {
+            assert_child_exit(
+                tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await??,
+                large,
+                0,
+            )?;
+        }
 
         client.shutdown().await?;
         match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await?? {
