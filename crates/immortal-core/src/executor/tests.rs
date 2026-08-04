@@ -8,8 +8,10 @@ use std::{
 use tokio::net::UnixStream;
 use tokio::time::Instant as TokioInstant;
 
+use super::completion::handle_service_child_event;
 use super::events::{handle_broker_event, handle_generation_ready, owns_generation};
 use super::prepare::prepare_execution;
+use super::timers::handle_executor_timer;
 use super::{
     DesiredState, ExecutionContext, ExecutorError, LoggerExecution, LoggerExecutionState,
     LoggerShutdownTier, ServiceConfig, advance_childless_state, logger_status,
@@ -409,4 +411,133 @@ async fn broker_dispatch_rejects_a_reap_for_an_unissued_generation() -> Result<(
 
 fn broker_process() -> Result<ProcessId, Box<dyn Error>> {
     ProcessId::new(1).ok_or_else(|| "invalid test process".into())
+}
+
+/// Regression: a readiness deadline expiring while paused killed the supervisor.
+///
+/// `signal stop` during startup pauses a generation which is still awaiting
+/// readiness, but the readiness deadline stayed armed. A stopped child cannot
+/// declare anything, so the deadline always expired, and no timer arm accepted
+/// a paused state — the supervisor died from a documented operator command.
+#[tokio::test]
+async fn pausing_suspends_the_readiness_deadline() -> Result<(), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let (supervisor, _broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let (mut execution, generation) = started_execution()?;
+    assert!(execution.deadline.is_some());
+
+    handle_service_child_event(
+        &mut client,
+        generation,
+        ChildEvent::Stopped {
+            pid: broker_process()?,
+            signal: 19,
+        },
+        None,
+        &config,
+        &mut execution,
+    )
+    .await?;
+
+    assert_eq!(
+        execution.machine.state(),
+        SupervisorState::Paused {
+            generation,
+            ready: false
+        }
+    );
+    assert!(
+        execution.deadline.is_none(),
+        "a stopped child cannot declare readiness, so its clock must not run"
+    );
+    Ok(())
+}
+
+/// Resuming an unready generation restarts its readiness wait.
+#[tokio::test]
+async fn continuing_rearms_the_readiness_deadline() -> Result<(), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let (supervisor, _broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let (mut execution, generation) = started_execution()?;
+    execution.machine.child_paused(generation)?;
+    execution.deadline = None;
+
+    handle_service_child_event(
+        &mut client,
+        generation,
+        ChildEvent::Continued {
+            pid: broker_process()?,
+        },
+        None,
+        &config,
+        &mut execution,
+    )
+    .await?;
+
+    assert_eq!(
+        execution.machine.state(),
+        SupervisorState::Running(generation)
+    );
+    assert!(
+        execution.deadline.is_some(),
+        "a resumed generation must be given its readiness wait again"
+    );
+    Ok(())
+}
+
+/// A resumed generation which already declared readiness needs no deadline.
+#[tokio::test]
+async fn continuing_a_ready_generation_arms_no_deadline() -> Result<(), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let (supervisor, _broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let (mut execution, generation) = started_execution()?;
+    execution.machine.child_paused(generation)?;
+    handle_generation_ready(generation, &mut execution)?;
+    execution.deadline = None;
+
+    handle_service_child_event(
+        &mut client,
+        generation,
+        ChildEvent::Continued {
+            pid: broker_process()?,
+        },
+        None,
+        &config,
+        &mut execution,
+    )
+    .await?;
+
+    assert_eq!(
+        execution.machine.state(),
+        SupervisorState::Ready(generation)
+    );
+    assert!(execution.deadline.is_none());
+    Ok(())
+}
+
+/// A deadline surviving into a paused state disarms instead of faulting.
+#[tokio::test]
+async fn a_timer_in_a_paused_state_disarms_instead_of_faulting() -> Result<(), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let prepared = prepare_execution(&config, false)?;
+    let (supervisor, _broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let (mut execution, generation) = started_execution()?;
+    execution.machine.child_paused(generation)?;
+    execution.deadline = Some(TokioInstant::now());
+
+    handle_executor_timer(&mut client, &prepared.execution, &config, &mut execution).await?;
+
+    assert!(execution.deadline.is_none());
+    assert_eq!(
+        execution.machine.state(),
+        SupervisorState::Paused {
+            generation,
+            ready: false
+        }
+    );
+    Ok(())
 }

@@ -418,6 +418,16 @@ pub(super) fn handle_generation_ready(
     Ok(())
 }
 
+/// When a generation awaiting readiness must be treated as having timed out.
+///
+/// The broker allowance is added on top of the configured wait so a declaration
+/// arriving right at the limit is not lost to event delivery.
+pub(super) fn readiness_deadline(config: &ServiceConfig) -> TokioInstant {
+    TokioInstant::now()
+        + Duration::from_secs(config.readiness.timeout_seconds)
+        + BROKER_EVENT_TIMEOUT
+}
+
 pub(super) fn handle_service_started(
     generation: Generation,
     process: ProcessId,
@@ -432,11 +442,7 @@ pub(super) fn handle_service_started(
             execution.machine.child_ready(generation)?;
             execution.deadline = None;
         } else {
-            execution.deadline = Some(
-                TokioInstant::now()
-                    + Duration::from_secs(config.readiness.timeout_seconds)
-                    + BROKER_EVENT_TIMEOUT,
-            );
+            execution.deadline = Some(readiness_deadline(config));
         }
         return Ok(());
     }

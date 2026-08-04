@@ -242,6 +242,11 @@ executor therefore accepts readiness for any generation the supervisor still
 owns: a paused generation records it so resuming observes the declared value,
 a stopping or terminal generation discards it without disturbing the stop
 grace deadline, and only an unowned generation remains a protocol fault.
+Job control suspends the readiness clock rather than racing it: pausing a
+generation disarms its readiness deadline, because a stopped child cannot
+declare anything, and resuming an undeclared generation restarts the wait. A
+deadline which survives into a paused state disarms instead of faulting, since
+an operator command must never end supervision.
 Reaps follow the same rule for the same reason. A spawn which fails after the
 fork still leaves a process the broker must reap, so its `Child` event arrives
 once the supervisor has already handled the failure and moved into backoff, a

@@ -10,6 +10,7 @@ use std::{collections::VecDeque, time::Instant};
 
 use tokio::time::Instant as TokioInstant;
 
+use super::events::readiness_deadline;
 use super::{
     AuxiliaryExecution, BROKER_EVENT_TIMEOUT, CHILD_STARTUP_TIMEOUT, ChildEvent, ChildResult,
     DesiredState, ExecutionContext, ExecutorError, FailureReason, Generation, LifecycleHookKind,
@@ -36,11 +37,19 @@ pub(super) async fn handle_service_child_event(
             ) =>
         {
             execution.machine.child_paused(generation)?;
+            // A stopped child cannot declare readiness, so its readiness clock
+            // must not keep running while job control holds it. Leaving the
+            // deadline armed expired it against a paused generation, which no
+            // timer arm accepted and which therefore killed the supervisor.
+            execution.deadline = None;
         }
         ChildEvent::Continued { .. }
             if matches!(execution.machine.state(), SupervisorState::Paused { .. }) =>
         {
             execution.machine.child_continued(generation)?;
+            if execution.machine.state() == SupervisorState::Running(generation) {
+                execution.deadline = Some(readiness_deadline(config));
+            }
         }
         _ => {
             if let Some(result) = event.terminal_result() {

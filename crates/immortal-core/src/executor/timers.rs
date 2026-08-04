@@ -89,6 +89,17 @@ pub(super) async fn handle_executor_timer(
         SupervisorState::Starting(_) => {
             return Err(ExecutorError::BrokerTimedOut("service startup"));
         }
+        // Job control suspends the readiness clock, so a paused generation
+        // should carry no deadline. Should one survive a race, disarming it is
+        // correct: the child is stopped and cannot make progress, and treating
+        // it as a fault would kill the supervisor over an operator command.
+        SupervisorState::Paused { .. } => {
+            execution.deadline = None;
+        }
+        // Job control suspends the readiness clock, so a paused generation
+        // should carry no deadline. Should one survive a race, disarming it is
+        // correct: the child is stopped and cannot make progress, and treating
+        // it as a fault would kill the supervisor over an operator command.
         SupervisorState::Running(_) => {
             return Err(ExecutorError::BrokerTimedOut("service readiness"));
         }
