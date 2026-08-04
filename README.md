@@ -520,12 +520,17 @@ contract:
 
 ```text
 ADAPTER [--max-age SECONDS] [--keep COUNT] [--max-bytes BYTES]
-        [--timestamp] [--passthrough] FILE
+        [--max-total-bytes BYTES] [--timestamp] [--passthrough] FILE
 ```
 
 It must read until standard-input EOF, report write or rotation failures with a
 nonzero exit status, and preserve the original byte stream on standard output
-when `--passthrough` is present. Moving this work out of the supervisor removes
+when `--passthrough` is present.
+
+`--max-total-bytes` caps the combined size of retained archives, evicting the
+oldest first. It is an adapter-level control only: the `max_total_bytes`
+document field is rejected, because a service definition expresses retention
+through `size` and `keep`. Moving this work out of the supervisor removes
 an in-supervisor byte-copy and fan-out loop; actual throughput still depends on
 the adapter, storage, and downstream logger.
 
@@ -729,6 +734,46 @@ runs a child, so a stop goal is treated as reached. Halt/exit complete when
 their owned control socket disappears. `--no-wait` explicitly returns after
 request acceptance. The outer deadline bounds polling and each generation
 comparison remains race-safe.
+
+`immortalctl` selects output with `--output table|json` and `--color
+auto|always|never`; `--no-header` omits the table header and conflicts with
+`--output`. `signal SIGNAL SERVICE` sends a Unix signal, and `--scope
+main|group` chooses between the main process and its whole process group.
+
+`immortaldir` reconciles a definitions directory. `--scan-interval SECONDS`
+(default `30`) bounds the delay between complete scans, `--max-concurrent-starts
+COUNT` (`IMMORTAL_MAX_CONCURRENT_STARTS`) bounds supervisors launched
+concurrently within one dependency wave, and `--supervisor-binary PATH`
+(`IMMORTAL_BIN`, default `immortal`) selects the executable used to launch new
+supervisors. The shipped init units set `--supervisor-binary` explicitly so an
+installed prefix does not depend on `PATH`.
+
+`immortalctl` accepts a set of Go-era single-dash spellings, but only when no
+subcommand is given, so `immortalctl -t api` still terminates `api`:
+
+| Alias | Equivalent |
+|---|---|
+| `-1`, `-2` | `signal usr1`, `signal usr2` |
+| `-a` | `signal alrm` |
+| `-c` | `signal cont` |
+| `-i` | `signal int` |
+| `-k` | `signal kill` |
+| `-in`, `-ou` | `signal ttin`, `signal ttou` |
+| `-q` | `signal quit` |
+| `-s` | `signal stop` |
+| `-t` | `signal term` |
+| `-w` | `signal winch` |
+| `-A` | `--color=never` |
+| `-v` | `--version` |
+
+`-k` targets the whole process group; every other alias targets the main
+process. Two aliases in one invocation are rejected rather than resolved by
+position.
+
+The Go `-h` alias for `hup` is deliberately **not** accepted. `-h` means help
+everywhere else, so honoring it silently signalled a production service
+whenever an operator asked for usage. Both `-h` and `--help` display help;
+use `immortalctl signal hup SERVICE` to send the signal.
 
 Filesystem notifications use the native recommended backend (inotify,
 FSEvents, or kqueue) only as hints. Hints are nonrecursive and debounced for

@@ -293,8 +293,8 @@ mod tests {
     fn legacy_kill_targets_group_but_other_signals_target_main() -> Result<(), Box<dyn Error>> {
         let kill = commands::try_get_matches_from(["immortalctl", "-k", "api"])?;
         assert_eq!(control(&action(&kill)?).scope, SignalScope::Group);
-        let hangup = commands::try_get_matches_from(["immortalctl", "-h", "api"])?;
-        assert_eq!(control(&action(&hangup)?).scope, SignalScope::Main);
+        let terminate = commands::try_get_matches_from(["immortalctl", "-t", "api"])?;
+        assert_eq!(control(&action(&terminate)?).scope, SignalScope::Main);
         Ok(())
     }
 
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn rejects_conflicting_legacy_signals() -> Result<(), Box<dyn Error>> {
-        let matches = commands::try_get_matches_from(["immortalctl", "-h", "-t", "api"])?;
+        let matches = commands::try_get_matches_from(["immortalctl", "-c", "-t", "api"])?;
         assert!(action(&matches).is_err());
         Ok(())
     }

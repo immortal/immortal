@@ -115,13 +115,18 @@ where
     new().try_get_matches_from(normalized)
 }
 
+/// Map a Go-era single-dash signal spelling onto its canonical signal name.
+///
+/// These aliases are accepted only when no subcommand is present. `-h` is
+/// deliberately absent: it means help everywhere else, so accepting it as
+/// `hup` silently signalled a production service whenever an operator asked
+/// for usage. `immortalctl signal hup <service>` is the explicit spelling.
 fn legacy_signal_name(argument: &OsStr) -> Option<&'static str> {
     match argument.to_str() {
         Some("-1") => Some("usr1"),
         Some("-2") => Some("usr2"),
         Some("-a") => Some("alrm"),
         Some("-c") => Some("cont"),
-        Some("-h") => Some("hup"),
         Some("-i") => Some("int"),
         Some("-k") => Some("kill"),
         Some("-in") => Some("ttin"),
@@ -144,6 +149,7 @@ fn styles() -> Styles {
 
 fn arg_help() -> Arg {
     Arg::new("help")
+        .short('h')
         .long("help")
         .help("Print help")
         .action(ArgAction::Help)
@@ -305,6 +311,8 @@ mod tests {
         builder::styling::{AnsiColor, Effects},
         error::ErrorKind,
     };
+
+    use std::error::Error;
 
     use super::{new, try_get_matches_from};
 
@@ -496,7 +504,6 @@ mod tests {
             ("-2", "usr2"),
             ("-a", "alrm"),
             ("-c", "cont"),
-            ("-h", "hup"),
             ("-i", "int"),
             ("-k", "kill"),
             ("-in", "ttin"),
@@ -533,14 +540,36 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// Asking for help must never signal a service.
+    ///
+    /// `-h` was accepted as the Go-era alias for `hup`, so `immortalctl -h api`
+    /// silently sent SIGHUP to a production service while the operator was
+    /// asking for usage. Both help spellings now display help, and the signal
+    /// is reachable only through its explicit subcommand.
     #[test]
-    fn hup_does_not_replace_long_help() {
-        let hup = try_get_matches_from(["immortalctl", "-h", "api"]);
-        assert!(hup.is_ok());
-        let help = try_get_matches_from(["immortalctl", "--help"]);
+    fn short_help_displays_help_instead_of_signalling() {
+        for spelling in ["-h", "--help"] {
+            let result = try_get_matches_from(["immortalctl", spelling, "api"]);
+            assert_eq!(
+                result.err().map(|error| error.kind()),
+                Some(ErrorKind::DisplayHelp),
+                "{spelling} must display help"
+            );
+        }
+    }
+
+    /// The signal itself stays reachable through its explicit spelling.
+    #[test]
+    fn hup_remains_available_as_an_explicit_signal() -> Result<(), Box<dyn Error>> {
+        let matches = try_get_matches_from(["immortalctl", "signal", "hup", "api"])?;
+        let (name, submatches) = matches
+            .subcommand()
+            .ok_or("signal subcommand was not selected")?;
+        assert_eq!(name, "signal");
         assert_eq!(
-            help.err().map(|error| error.kind()),
-            Some(ErrorKind::DisplayHelp)
+            submatches.get_one::<String>("signal").map(String::as_str),
+            Some("hup")
         );
+        Ok(())
     }
 }

@@ -31,6 +31,15 @@ fn prove_startup_routes(binary: &Path, runtime: &Path) -> Result<(), Box<dyn Err
     let help = run(binary, &[OsStr::new("--help")])?;
     require_status(help.status, ExitClass::Success, "help")?;
 
+    // `-h` was the Go alias for `hup`, so asking the installed binary for help
+    // used to signal a named service instead. It must display help and reach
+    // no supervisor at all.
+    let short_help = run(binary, &[OsStr::new("-h"), OsStr::new("api")])?;
+    require_status(short_help.status, ExitClass::Success, "short help")?;
+    if !String::from_utf8_lossy(&short_help.stdout).contains("Usage: immortalctl") {
+        return Err("-h must display help rather than signal a service".into());
+    }
+
     let invalid = run(binary, &[OsStr::new("--definitely-invalid")])?;
     require_status(invalid.status, ExitClass::Usage, "invalid arguments")?;
 
