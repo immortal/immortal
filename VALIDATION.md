@@ -120,7 +120,7 @@ exact revisions:
   The workspace suite runs `broker_subreaper_orphan_contract` on all three native
   platforms, so COR-007 is Proven at that commit.
 - The current candidate, Immortal commit
-  `9375a5d375c8566f639ffe4b8d1aa539d9163017`, carries the pre-release
+  `6e261f815cad5a75ad4c38ad38931bc8a2b5caad`, carries the pre-release
   correctness work: cancellation-safe broker request decoding, validation of
   materialized direct commands, isolation of unresolvable dependencies,
   readiness acceptance for any owned generation, an accept loop which absorbs
@@ -129,13 +129,18 @@ exact revisions:
   unauthorized control peers. It passed its complete native Linux, macOS, and
   FreeBSD matrix, lifecycle benchmarks, version checks, and FreeBSD cross-check
   in
-  [Rust CI run 30935888465](https://github.com/immortal/immortal/actions/runs/30935888465).
+  [Rust CI run 30938300095](https://github.com/immortal/immortal/actions/runs/30938300095).
   Its audit and dependency-policy jobs passed in
-  [security run 30935887722](https://github.com/immortal/immortal/actions/runs/30935887722),
-  and both bounded parser fuzz targets passed in
-  [fuzz run 30935891204](https://github.com/immortal/immortal/actions/runs/30935891204).
-  Rows whose evidence is the repository suite are therefore Proven at this
-  commit; every real-host, duration, and comparative gate below stays Pending.
+  [security run 30938297498](https://github.com/immortal/immortal/actions/runs/30938297498).
+  Both bounded parser fuzz targets passed at the immediately preceding commit
+  `9375a5d` in
+  [fuzz run 30935891204](https://github.com/immortal/immortal/actions/runs/30935891204);
+  the fuzzing workflow is path filtered and the only change since that commit is
+  a test cleanup path, which no fuzz target reaches. A clean DevPod run of the
+  workspace suite left no child, process group, socket, PID file, runtime
+  directory, or temporary definition behind. Rows whose evidence is the
+  repository suite are therefore Proven at this commit; every real-host,
+  duration, and comparative gate below stays Pending.
 
 This evidence proves the repository contracts above. It does not replace the
 24-hour campaigns, seven-day canary, comparative runs, or release drills.
