@@ -330,10 +330,9 @@ async fn serve_under_descriptor_exhaustion() -> Result<(), Box<dyn Error>> {
     let (sender, mut commands) = mpsc::channel(1);
     let (shutdown_sender, shutdown) = watch::channel(false);
 
-    // Connect before exhausting so the pending connection, the request write,
-    // and the response read all need no additional descriptor. Only the
-    // server's accept does.
-    let mut client = UnixStream::connect(&path).await?;
+    // Connect before exhausting so a connection is already pending and the
+    // server's next accept is the only operation needing a descriptor.
+    let stalled = UnixStream::connect(&path).await?;
     let descriptors = exhaust_descriptors()?;
 
     let server = tokio::spawn(run_control_server(Arc::clone(&listener), sender, shutdown));
@@ -343,6 +342,12 @@ async fn serve_under_descriptor_exhaustion() -> Result<(), Box<dyn Error>> {
         return Err(io::Error::other("control server ended on descriptor exhaustion").into());
     }
     drop(descriptors);
+
+    // Some kernels discard the pending connection when accept fails, so the
+    // stalled peer may already be reset. The property under test is that the
+    // listener still serves, which a fresh connection proves on every platform.
+    drop(stalled);
+    let mut client = UnixStream::connect(&path).await?;
 
     let request = Request {
         operation: Operation::Status,
