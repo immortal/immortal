@@ -302,14 +302,23 @@ pub(super) async fn handle_service_broker_event(
             os_error,
         } => finish_signal_request(&mut execution.pending_signals, generation, os_error),
         ProcessBrokerEvent::GenerationReady { generation }
-            if execution.machine.state() == SupervisorState::Running(generation) =>
+            if owns_generation(execution, generation) =>
         {
-            publish_readiness(&mut execution.machine, generation, &mut execution.deadline)
+            handle_generation_ready(generation, execution)
         }
         ProcessBrokerEvent::ReadinessFailed { generation, .. }
             if execution.machine.state() == SupervisorState::Running(generation) =>
         {
             handle_readiness_failure(client, generation, commands, config, execution).await
+        }
+        ProcessBrokerEvent::ReadinessFailed { generation, .. }
+            if owns_generation(execution, generation) =>
+        {
+            // The generation already has a lifecycle decision, so a late
+            // failure only updates status; its exit or continuation drives the
+            // next transition.
+            execution.status.readiness_failed = true;
+            Ok(())
         }
         ProcessBrokerEvent::LifetimeClosed { generation } => {
             handle_lifetime_event(
@@ -349,6 +358,35 @@ pub(super) async fn handle_service_broker_event(
         ),
         event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
     }
+}
+
+/// Return whether the supervisor still owns `generation`.
+///
+/// Readiness observations are handled for every owned generation, including one
+/// the supervisor has already decided to stop, pause, back off, or complete.
+/// Only a generation it does not own at all is a protocol fault.
+pub(super) fn owns_generation(execution: &ExecutionContext, generation: Generation) -> bool {
+    execution.machine.state().generation() == Some(generation)
+}
+
+/// Apply a readiness observation which may arrive after the supervisor moved on.
+///
+/// The broker's readiness watcher is independent of supervisor state and
+/// forwards on generation membership alone, so `stop`, `restart`, or a
+/// job-control `stop` during startup races a completed readiness check. A
+/// paused generation records readiness in place so continuation resumes ready;
+/// any other owned generation already has a lifecycle decision and drops it.
+pub(super) fn handle_generation_ready(
+    generation: Generation,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    if matches!(
+        execution.machine.state(),
+        SupervisorState::Running(_) | SupervisorState::Paused { ready: false, .. }
+    ) {
+        return publish_readiness(&mut execution.machine, generation, &mut execution.deadline);
+    }
+    Ok(())
 }
 
 pub(super) fn handle_service_started(

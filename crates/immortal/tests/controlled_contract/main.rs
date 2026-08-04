@@ -42,7 +42,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     prove_initializing_is_published_until_loggers_are_ready(binary)?;
     prove_direct_logger_permission_denial(binary)?;
     prove_halt_drains_logger(binary)?;
-    prove_logger_retry_exhaustion_and_recovery(binary)
+    prove_logger_retry_exhaustion_and_recovery(binary)?;
+    prove_readiness_racing_job_control_is_not_fatal(binary)?;
+    prove_readiness_racing_a_stop_is_not_fatal(binary)
 }
 
 fn prove_halt_drains_logger(binary: &Path) -> Result<(), Box<dyn Error>> {
@@ -630,5 +632,160 @@ fn prove_initializing_is_published_until_loggers_are_ready(
         supervisor.wait(COMMAND_TIMEOUT)?,
         ExitClass::Success,
         "initializing supervisor completion",
+    )
+}
+
+/// Regression: readiness arriving while the generation is paused killed the supervisor.
+///
+/// The broker's readiness watcher forwards on generation membership alone, so
+/// it is independent of supervisor state. Guarding the executor arm on
+/// `Running` routed the observation to `UnexpectedBrokerEvent`, which exited
+/// the supervisor and made the broker kill the service.
+///
+/// The declaration runs in a background subshell sharing the inherited
+/// readiness descriptor, so job control applied to the main process alone
+/// cannot prevent it. Resuming must then observe `Ready`, proving the
+/// observation was recorded against the paused generation rather than dropped.
+fn prove_readiness_racing_job_control_is_not_fatal(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let runtime = RuntimeDirectory::new_named("readiness-paused")?;
+    let release = runtime.root().join("release-readiness");
+    let started = runtime.root().join("service-started");
+    let config = ConfigFile::new(
+        "readiness-paused",
+        &format!(
+            "version: 2\ncommand:\n  - /bin/sh\n  - -c\n  - |\n      (while [ ! -e \"$RELEASE\" ]; do /bin/sleep 0.02; done; eval \"printf 'READY\\n' >&$IMMORTAL_READY_FD\") &\n      : > \"$STARTED\"\n      exec /bin/sleep 30\nenvironment:\n  RELEASE: '{}'\n  STARTED: '{}'\nreadiness:\n  mode: notify-fd\n  timeout_seconds: 60\nrestart:\n  policy: never\n",
+            path_str(&release)?,
+            path_str(&started)?,
+        ),
+    )?;
+    let supervisor = ChildGuard::new(spawn_immortal(binary, &config, runtime.service())?);
+    runtime.wait_for_socket(COMMAND_TIMEOUT)?;
+    wait_for_file(&started, COMMAND_TIMEOUT)?;
+    let generation = wait_for_state(
+        runtime.socket(),
+        ServiceState::Running,
+        None,
+        COMMAND_TIMEOUT,
+    )?;
+
+    let paused = request(
+        runtime.socket(),
+        &Request {
+            operation: Operation::Signal,
+            service: runtime.service_name().to_owned(),
+            expected_generation: GenerationMatch::Exact(generation),
+            scope: SignalScope::Main,
+            signal: Some(Signal::Stop),
+        },
+    )?;
+    require_ok(&paused, "job-control stop")?;
+    wait_for_state(
+        runtime.socket(),
+        ServiceState::Paused,
+        Some(generation),
+        COMMAND_TIMEOUT,
+    )?;
+
+    fs::write(&release, [])?;
+    let resumed = request(
+        runtime.socket(),
+        &Request {
+            operation: Operation::Signal,
+            service: runtime.service_name().to_owned(),
+            expected_generation: GenerationMatch::Exact(generation),
+            scope: SignalScope::Main,
+            signal: Some(Signal::Continue),
+        },
+    )?;
+    require_ok(&resumed, "job-control continue")?;
+    wait_for_state(
+        runtime.socket(),
+        ServiceState::Ready,
+        Some(generation),
+        COMMAND_TIMEOUT,
+    )?;
+
+    let halt = lifecycle_request(
+        runtime.socket(),
+        runtime.service_name(),
+        Operation::Halt,
+        generation,
+    )?;
+    require_ok(&halt, "halt after paused readiness")?;
+    assert_status(
+        supervisor.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "supervisor surviving readiness during job control",
+    )
+}
+
+/// Regression: readiness arriving while the generation is stopping killed the supervisor.
+///
+/// The service traps `SIGTERM` and holds the stop open, giving a deterministic
+/// `Stopping` window. Its readiness writer ignores `SIGTERM` so the
+/// declaration is guaranteed to arrive inside that window rather than racing
+/// group termination.
+fn prove_readiness_racing_a_stop_is_not_fatal(binary: &Path) -> Result<(), Box<dyn Error>> {
+    let runtime = RuntimeDirectory::new_named("readiness-stopping")?;
+    let exit = runtime.root().join("service-may-exit");
+    let notified = runtime.root().join("readiness-sent");
+    let release = runtime.root().join("release-readiness");
+    let started = runtime.root().join("service-started");
+    let stopping = runtime.root().join("service-stopping");
+    let config = ConfigFile::new(
+        "readiness-stopping",
+        &format!(
+            "version: 2\ncommand:\n  - /bin/sh\n  - -c\n  - |\n      trap ': > \"$STOPPING\"; while [ ! -e \"$EXIT\" ]; do /bin/sleep 0.02; done; exit 0' TERM\n      (trap '' TERM; while [ ! -e \"$RELEASE\" ]; do /bin/sleep 0.02; done; eval \"printf 'READY\\n' >&$IMMORTAL_READY_FD\"; : > \"$NOTIFIED\") &\n      : > \"$STARTED\"\n      /bin/sleep 30 &\n      wait\nenvironment:\n  EXIT: '{}'\n  NOTIFIED: '{}'\n  RELEASE: '{}'\n  STARTED: '{}'\n  STOPPING: '{}'\nreadiness:\n  mode: notify-fd\n  timeout_seconds: 60\nrestart:\n  policy: never\n",
+            path_str(&exit)?,
+            path_str(&notified)?,
+            path_str(&release)?,
+            path_str(&started)?,
+            path_str(&stopping)?,
+        ),
+    )?;
+    let supervisor = ChildGuard::new(spawn_immortal(binary, &config, runtime.service())?);
+    runtime.wait_for_socket(COMMAND_TIMEOUT)?;
+    wait_for_file(&started, COMMAND_TIMEOUT)?;
+    let generation = wait_for_state(
+        runtime.socket(),
+        ServiceState::Running,
+        None,
+        COMMAND_TIMEOUT,
+    )?;
+
+    let stop = lifecycle_request(
+        runtime.socket(),
+        runtime.service_name(),
+        Operation::Stop,
+        generation,
+    )?;
+    require_ok(&stop, "stop before readiness")?;
+    wait_for_file(&stopping, COMMAND_TIMEOUT)?;
+
+    // The generation is stopping now, so the declaration below is observed
+    // outside `Running`. The stop grace period bounds this window, so the
+    // child is released as soon as the declaration has been written.
+    fs::write(&release, [])?;
+    wait_for_file(&notified, COMMAND_TIMEOUT)?;
+    fs::write(&exit, [])?;
+    wait_for_state(runtime.socket(), ServiceState::Down, None, COMMAND_TIMEOUT)?;
+
+    // The stopped generation is gone, so the final halt binds to the absence
+    // of a child rather than to a generation.
+    let halt = request(
+        runtime.socket(),
+        &Request {
+            operation: Operation::Halt,
+            service: runtime.service_name().to_owned(),
+            expected_generation: GenerationMatch::NoChild,
+            scope: SignalScope::Main,
+            signal: None,
+        },
+    )?;
+    require_ok(&halt, "halt after stopped readiness")?;
+    assert_status(
+        supervisor.wait(COMMAND_TIMEOUT)?,
+        ExitClass::Success,
+        "supervisor surviving readiness during stop",
     )
 }

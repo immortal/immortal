@@ -7,16 +7,17 @@ use std::{
 
 use tokio::time::Instant as TokioInstant;
 
+use super::events::{handle_generation_ready, owns_generation};
 use super::{
-    DesiredState, ExecutorError, LoggerExecution, LoggerExecutionState, LoggerShutdownTier,
-    advance_childless_state, logger_status, next_logger_shutdown_tier, schedule_logger_restart,
-    supervision_finished,
+    DesiredState, ExecutionContext, ExecutorError, LoggerExecution, LoggerExecutionState,
+    LoggerShutdownTier, ServiceConfig, advance_childless_state, logger_status,
+    next_logger_shutdown_tier, schedule_logger_restart, supervision_finished,
 };
 use crate::{
     config::{BackoffConfig, LoggerRestartConfig, MAX_SCHEDULE_SECONDS},
     process::{BrokerLoggerId, BrokerTaskId, ProcessId},
     status::LoggerStatus,
-    supervisor::{FailureReason, StateMachine},
+    supervisor::{FailureReason, Generation, StateMachine, SupervisorState},
 };
 
 #[test]
@@ -173,5 +174,92 @@ fn childless_start_refuses_an_unrepresentable_start_delay() -> Result<(), Box<dy
         .ok_or("an unrepresentable start delay was scheduled")?;
     assert!(matches!(error, ExecutorError::OperatingSystem(_)));
     assert!(deadline.is_none());
+    Ok(())
+}
+
+/// Drive one execution context to a started, not-yet-ready generation.
+fn started_execution() -> Result<(ExecutionContext, Generation), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let mut execution = ExecutionContext::new(&config, Vec::new(), false);
+    execution.machine.set_desired(DesiredState::Up);
+    execution.machine.begin_start()?;
+    let generation = execution.machine.preconditions_ready()?;
+    execution.machine.child_started(generation)?;
+    execution.deadline = Some(TokioInstant::now() + Duration::from_secs(30));
+    Ok((execution, generation))
+}
+
+#[test]
+fn readiness_publishes_only_for_a_running_generation() -> Result<(), Box<dyn Error>> {
+    let (mut execution, generation) = started_execution()?;
+    handle_generation_ready(generation, &mut execution)?;
+    assert_eq!(
+        execution.machine.state(),
+        SupervisorState::Ready(generation)
+    );
+    assert!(execution.deadline.is_none());
+    Ok(())
+}
+
+#[test]
+fn readiness_records_against_a_paused_generation() -> Result<(), Box<dyn Error>> {
+    let (mut execution, generation) = started_execution()?;
+    execution.machine.child_paused(generation)?;
+    handle_generation_ready(generation, &mut execution)?;
+    assert_eq!(
+        execution.machine.state(),
+        SupervisorState::Paused {
+            generation,
+            ready: true
+        }
+    );
+    execution.machine.child_continued(generation)?;
+    assert_eq!(
+        execution.machine.state(),
+        SupervisorState::Ready(generation)
+    );
+    Ok(())
+}
+
+/// Regression: readiness racing a lifecycle decision aborted the supervisor.
+///
+/// The broker's readiness watcher is independent of supervisor state, so a
+/// `stop` or `restart` during startup delivers readiness for a generation the
+/// supervisor is no longer running. Guarding the arm on `Running` alone routed
+/// the event to `UnexpectedBrokerEvent` and exited the supervisor.
+#[test]
+fn readiness_is_dropped_for_a_stopping_generation() -> Result<(), Box<dyn Error>> {
+    let (mut execution, generation) = started_execution()?;
+    execution.machine.begin_stop(generation)?;
+    let deadline = execution.deadline;
+
+    handle_generation_ready(generation, &mut execution)?;
+    assert_eq!(
+        execution.machine.state(),
+        SupervisorState::Stopping(generation)
+    );
+    assert_eq!(
+        execution.deadline, deadline,
+        "a dropped readiness observation must not clear the stop deadline"
+    );
+    Ok(())
+}
+
+#[test]
+fn readiness_for_an_unowned_generation_is_a_protocol_fault() -> Result<(), Box<dyn Error>> {
+    let (mut execution, generation) = started_execution()?;
+    let foreign =
+        Generation::new(generation.get().saturating_add(1)).ok_or("invalid generation")?;
+    assert!(owns_generation(&execution, generation));
+    assert!(!owns_generation(&execution, foreign));
+
+    execution.machine.begin_stop(generation)?;
+    assert!(owns_generation(&execution, generation));
+    assert!(!owns_generation(&execution, foreign));
+
+    let (mut execution, generation) = started_execution()?;
+    execution.machine.child_paused(generation)?;
+    assert!(owns_generation(&execution, generation));
+    assert!(!owns_generation(&execution, foreign));
     Ok(())
 }

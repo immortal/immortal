@@ -224,6 +224,13 @@ then shuts down and reaps its launcher broker without cancelling a partial
 mutation.
 The controlled executor acquires exclusive runtime ownership before the broker
 fork and binds its authenticated socket only after the Tokio runtime exists.
+The broker's readiness watcher is independent of supervisor state, so a
+declaration or readiness failure can arrive after a concurrent lifecycle or
+job-control command has already moved the generation out of `Running`. The
+executor therefore accepts readiness for any generation the supervisor still
+owns: a paused generation records it so resuming observes the declared value,
+a stopping or terminal generation discards it without disturbing the stop
+grace deadline, and only an unowned generation remains a protocol fault.
 The supervisor event loop remains the sole lifecycle owner. Explicit `Exit`
 sends a generation-bound detach request to the broker; only a successful detach
 transitions the supervisor to `Exited`, after which the empty broker is shut

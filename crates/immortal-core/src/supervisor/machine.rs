@@ -121,17 +121,34 @@ impl StateMachine {
         Ok(())
     }
 
-    /// Record readiness for the current generation.
+    /// Record readiness completion for the exactly owned generation.
+    ///
+    /// Readiness can also complete just as a job-control stop is applied, so a
+    /// paused generation records it in place: the broker's readiness watcher is
+    /// independent of supervisor state and will not repeat the observation, and
+    /// continuation must resume as ready rather than wait for it again.
     ///
     /// # Errors
     ///
     /// Returns an error for a stale generation or invalid current state.
     pub fn child_ready(&mut self, generation: Generation) -> Result<(), TransitionError> {
-        if self.state != SupervisorState::Running(generation) {
-            return Err(self.invalid("child_ready"));
+        match self.state {
+            SupervisorState::Running(current) if current == generation => {
+                self.state = SupervisorState::Ready(generation);
+                Ok(())
+            }
+            SupervisorState::Paused {
+                generation: current,
+                ready: false,
+            } if current == generation => {
+                self.state = SupervisorState::Paused {
+                    generation,
+                    ready: true,
+                };
+                Ok(())
+            }
+            _ => Err(self.invalid("child_ready")),
         }
-        self.state = SupervisorState::Ready(generation);
-        Ok(())
     }
 
     /// Record a job-control stop while retaining exact generation ownership.
