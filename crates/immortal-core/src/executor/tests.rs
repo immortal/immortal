@@ -5,9 +5,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use tokio::net::UnixStream;
 use tokio::time::Instant as TokioInstant;
 
-use super::events::{handle_generation_ready, owns_generation};
+use super::events::{handle_broker_event, handle_generation_ready, owns_generation};
+use super::prepare::prepare_execution;
 use super::{
     DesiredState, ExecutionContext, ExecutorError, LoggerExecution, LoggerExecutionState,
     LoggerShutdownTier, ServiceConfig, advance_childless_state, logger_status,
@@ -15,9 +17,12 @@ use super::{
 };
 use crate::{
     config::{BackoffConfig, LoggerRestartConfig, MAX_SCHEDULE_SECONDS},
-    process::{BrokerLoggerId, BrokerTaskId, ProcessId},
+    process::{
+        BrokerLoggerId, BrokerTaskId, ChildEvent, ProcessBrokerClient, ProcessBrokerEvent,
+        ProcessId,
+    },
     status::LoggerStatus,
-    supervisor::{FailureReason, Generation, StateMachine, SupervisorState},
+    supervisor::{FailureReason, Generation, RestartDecision, StateMachine, SupervisorState},
 };
 
 #[test]
@@ -262,4 +267,146 @@ fn readiness_for_an_unowned_generation_is_a_protocol_fault() -> Result<(), Box<d
     assert!(owns_generation(&execution, generation));
     assert!(!owns_generation(&execution, foreign));
     Ok(())
+}
+
+/// Regression: a reap after a spawn failure aborted the supervisor.
+///
+/// A spawn that fails after forking leaves a process the broker still has to
+/// reap, so it forwards a `Child` event once the supervisor has already handled
+/// `SpawnFailed`. By then the lifecycle is in backoff, failure, or a newer
+/// generation, and `live_generation` reports none of them, so the event fell
+/// through to `UnexpectedBrokerEvent` and exited the supervisor — turning a
+/// recoverable spawn failure into supervision loss.
+#[test]
+fn a_reap_after_spawn_failure_is_stale_rather_than_a_fault() -> Result<(), Box<dyn Error>> {
+    let (mut execution, generation) = started_execution()?;
+    execution.machine.child_reaped(
+        generation,
+        RestartDecision::Restart {
+            base_delay_seconds: 1,
+            jitter_percent: 0,
+        },
+    )?;
+
+    // The state the supervisor reaches after handling the failure no longer
+    // reports a live generation, which is exactly why the event escaped.
+    assert!(execution.machine.state().live_generation().is_none());
+    assert!(
+        execution.machine.issued_generation(generation),
+        "the supervisor issued this generation, so its reap is stale bookkeeping"
+    );
+    Ok(())
+}
+
+/// The same holds once retries are exhausted and no generation is owned at all.
+#[test]
+fn a_reap_after_terminal_failure_is_still_stale() -> Result<(), Box<dyn Error>> {
+    let (mut execution, generation) = started_execution()?;
+    execution
+        .machine
+        .child_reaped(generation, RestartDecision::StayDown)?;
+    execution
+        .machine
+        .fail_without_child(FailureReason::RetryLimit)?;
+
+    assert_eq!(
+        execution.machine.state(),
+        SupervisorState::Failed(FailureReason::RetryLimit)
+    );
+    assert!(execution.machine.state().generation().is_none());
+    assert!(execution.machine.issued_generation(generation));
+    Ok(())
+}
+
+/// A generation this supervisor never issued stays a protocol fault.
+#[test]
+fn a_reap_for_an_unissued_generation_is_a_fault() -> Result<(), Box<dyn Error>> {
+    let (execution, generation) = started_execution()?;
+    let unissued =
+        Generation::new(generation.get().saturating_add(1)).ok_or("invalid test generation")?;
+
+    assert!(execution.machine.issued_generation(generation));
+    assert!(
+        !execution.machine.issued_generation(unissued),
+        "a generation above the next one can only come from a broker fault"
+    );
+    Ok(())
+}
+
+/// Drive the real dispatch: the stale reap must be absorbed, not returned.
+#[tokio::test]
+async fn broker_dispatch_absorbs_a_reap_after_spawn_failure() -> Result<(), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let prepared = prepare_execution(&config, false)?;
+    let (supervisor, _broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let (mut execution, generation) = started_execution()?;
+    execution.machine.child_reaped(
+        generation,
+        RestartDecision::Restart {
+            base_delay_seconds: 1,
+            jitter_percent: 0,
+        },
+    )?;
+
+    handle_broker_event(
+        &mut client,
+        ProcessBrokerEvent::Child {
+            generation,
+            event: ChildEvent::Exited {
+                pid: broker_process()?,
+                code: 1,
+            },
+        },
+        &prepared.execution,
+        &config,
+        &mut execution,
+    )
+    .await?;
+
+    assert!(
+        matches!(
+            execution.machine.state(),
+            SupervisorState::Backoff { generation: current, .. } if current == generation
+        ),
+        "absorbing the stale reap must leave the backoff untouched"
+    );
+    Ok(())
+}
+
+/// A reap for a generation this supervisor never issued stays a protocol fault.
+#[tokio::test]
+async fn broker_dispatch_rejects_a_reap_for_an_unissued_generation() -> Result<(), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let prepared = prepare_execution(&config, false)?;
+    let (supervisor, _broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let (mut execution, generation) = started_execution()?;
+    let unissued =
+        Generation::new(generation.get().saturating_add(1)).ok_or("invalid test generation")?;
+
+    let outcome = handle_broker_event(
+        &mut client,
+        ProcessBrokerEvent::Child {
+            generation: unissued,
+            event: ChildEvent::Exited {
+                pid: broker_process()?,
+                code: 1,
+            },
+        },
+        &prepared.execution,
+        &config,
+        &mut execution,
+    )
+    .await;
+
+    assert!(matches!(
+        outcome,
+        Err(ExecutorError::UnexpectedBrokerEvent(_))
+    ));
+    Ok(())
+}
+
+fn broker_process() -> Result<ProcessId, Box<dyn Error>> {
+    ProcessId::new(1).ok_or_else(|| "invalid test process".into())
 }

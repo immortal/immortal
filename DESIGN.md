@@ -239,6 +239,12 @@ executor therefore accepts readiness for any generation the supervisor still
 owns: a paused generation records it so resuming observes the declared value,
 a stopping or terminal generation discards it without disturbing the stop
 grace deadline, and only an unowned generation remains a protocol fault.
+Reaps follow the same rule for the same reason. A spawn which fails after the
+fork still leaves a process the broker must reap, so its `Child` event arrives
+once the supervisor has already handled the failure and moved into backoff, a
+terminal failure, or a newer generation. Any generation the supervisor has
+already issued is therefore stale bookkeeping and is absorbed, while a reap for
+a generation it never issued remains a protocol fault.
 The supervisor event loop remains the sole lifecycle owner. The control accept
 loop treats peer-attributable and resource-attributable accept failures as
 transient: aborted or reset peers, interrupted accepts, and descriptor or

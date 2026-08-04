@@ -108,6 +108,16 @@ impl StateMachine {
         Ok(generation)
     }
 
+    /// Whether this supervisor ever issued `generation`.
+    ///
+    /// Generations are monotonic and only advance, so every value handed to the
+    /// broker is below the next one. A value at or above it can only come from
+    /// a broker fault or a crossed connection, never from stale bookkeeping.
+    #[must_use]
+    pub fn issued_generation(&self, generation: Generation) -> bool {
+        generation < self.next_generation
+    }
+
     /// Record a successfully executed child which is awaiting readiness.
     ///
     /// # Errors

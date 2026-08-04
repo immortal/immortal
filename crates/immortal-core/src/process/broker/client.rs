@@ -83,6 +83,32 @@ pub struct ProcessBrokerClient {
 }
 
 impl ProcessBrokerClient {
+    /// Build a client over an already-connected socket for in-crate tests.
+    ///
+    /// Lets executor dispatch be exercised against a synthetic peer without
+    /// forking a real broker. Test-only, so no production path can create a
+    /// client whose peer is not the broker it reaps.
+    #[cfg(test)]
+    pub(crate) fn for_test(stream: UnixStream, process: ProcessId) -> Self {
+        let (mut reader, writer) = stream.into_split();
+        let (event_sender, events) = mpsc::channel(SUPERVISOR_EVENT_CAPACITY);
+        let reader_task = tokio::spawn(async move {
+            loop {
+                let event = read_event(&mut reader).await;
+                let terminal = event.is_err();
+                if event_sender.send(event).await.is_err() || terminal {
+                    return;
+                }
+            }
+        });
+        Self {
+            process,
+            writer,
+            events,
+            reader_task,
+        }
+    }
+
     /// Return the direct broker child which owns every service process.
     #[must_use]
     pub const fn process(&self) -> ProcessId {

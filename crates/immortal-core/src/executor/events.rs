@@ -253,6 +253,34 @@ pub(super) fn respond_lifecycle(
     let _ = command.respond(response);
 }
 
+/// Retire a generation whose child never started.
+///
+/// Drops the descriptor lease before completion so a failed start cannot leak
+/// it into the next generation.
+///
+/// # Errors
+///
+/// Returns an error when completing the generation fails.
+async fn handle_service_spawn_failure(
+    client: &mut ProcessBrokerClient,
+    generation: Generation,
+    commands: &PreparedExecution,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    execution.descriptor = None;
+    complete_generation(
+        client,
+        config,
+        generation,
+        ChildResult::Exited(SPAWN_FAILURE_EXIT),
+        true,
+        commands.post_exit.as_ref(),
+        execution,
+    )
+    .await
+}
+
 pub(super) async fn handle_service_broker_event(
     client: &mut ProcessBrokerClient,
     event: ProcessBrokerEvent,
@@ -269,17 +297,7 @@ pub(super) async fn handle_service_broker_event(
         ProcessBrokerEvent::SpawnFailed { generation, .. }
             if execution.machine.state().live_generation() == Some(generation) =>
         {
-            execution.descriptor = None;
-            complete_generation(
-                client,
-                config,
-                generation,
-                ChildResult::Exited(SPAWN_FAILURE_EXIT),
-                true,
-                commands.post_exit.as_ref(),
-                execution,
-            )
-            .await
+            handle_service_spawn_failure(client, generation, commands, config, execution).await
         }
         ProcessBrokerEvent::Child { generation, event }
             if execution.machine.state().live_generation() == Some(generation) =>
@@ -293,6 +311,17 @@ pub(super) async fn handle_service_broker_event(
                 execution,
             )
             .await
+        }
+        // A spawn that fails after forking leaves a process the broker still
+        // has to reap, so its `Child` event arrives once the supervisor has
+        // already handled `SpawnFailed` and moved to backoff, failure, or a
+        // newer generation. That reap reports a lifecycle this supervisor
+        // already decided, so it is stale bookkeeping rather than a protocol
+        // fault. Only a generation this supervisor never issued is a fault.
+        ProcessBrokerEvent::Child { generation, .. }
+            if execution.machine.issued_generation(generation) =>
+        {
+            Ok(())
         }
         ProcessBrokerEvent::SignalDelivered { generation } => {
             finish_signal_request(&mut execution.pending_signals, generation, None)
