@@ -532,6 +532,12 @@ the adapter, storage, and downstream logger.
 `age` accepts bare seconds or `s`, `m`, `h`, `d`, and `w`. `size` accepts bare
 MiB or `B`, `KiB`, `MiB`, and `GiB`. Values must be positive whole numbers.
 `age` and `size` are independent rotation triggers, checked when output arrives.
+`age` measures the live file from when it was created, so restarting an adapter
+does not reset the clock and an `age`-only policy still rotates a continuously
+written file. If the platform cannot report a creation time, an existing file is
+rotated once on the next write and its replacement carries an exact clock.
+Retention is idempotent: an archive another process already removed does not
+fail the write which triggered the sweep.
 `keep` counts rotated archives; the live file is additional. When a trigger is
 present and `keep` is omitted, seven archives are retained. `keep` without a
 trigger is rejected. `num` remains a deprecated input alias for `keep`, and a

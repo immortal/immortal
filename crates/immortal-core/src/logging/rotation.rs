@@ -113,7 +113,19 @@ pub fn archives(path: &Path) -> io::Result<Vec<Archive>> {
         else {
             continue;
         };
-        let metadata = fs::symlink_metadata(&archive_path)?;
+        let metadata = match fs::symlink_metadata(&archive_path) {
+            Ok(metadata) => metadata,
+            // Another adapter, an operator, or this sink's own retention may
+            // remove an archive while the directory is being walked. A
+            // vanished archive simply is not retained, and failing here would
+            // turn a routine log write into a hard error.
+            // Another adapter, an operator, or this sink's own retention may
+            // remove an archive while the directory is being walked. A
+            // vanished archive simply is not retained, and failing here would
+            // turn a routine log write into a hard error.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
         if metadata.is_file() && !metadata.file_type().is_symlink() {
             archives.push(Archive {
                 path: archive_path,
@@ -175,7 +187,14 @@ impl RotatingFile {
             file,
             policy,
             bytes_written: metadata.len(),
-            opened_at: metadata.modified().unwrap_or_else(|_| SystemTime::now()),
+            // The live file's age must survive an adapter restart. Seeding
+            // from the modification time restarted the clock on every open,
+            // because an actively appended file was just modified, so an
+            // age-only policy could never rotate it and the file grew without
+            // bound. When the platform cannot report a creation time, an
+            // existing file is treated as already due: that costs one rotation
+            // at startup, after which the replacement carries a real clock.
+            opened_at: metadata.created().unwrap_or(SystemTime::UNIX_EPOCH),
             archive_sequence: 0,
         };
         sink.enforce_retention()?;
@@ -308,7 +327,15 @@ impl RotatingFile {
             if !(over_count || over_bytes) {
                 break;
             }
-            fs::remove_file(archive.path)?;
+            // Retention is idempotent: an archive somebody else already
+            // removed has met the goal, so it must not fail the write.
+            // Retention is idempotent: an archive somebody else already
+            // removed has met the goal, so it must not fail the write.
+            if let Err(error) = fs::remove_file(&archive.path)
+                && error.kind() != io::ErrorKind::NotFound
+            {
+                return Err(error);
+            }
             remaining = remaining.saturating_sub(1);
             total_bytes = total_bytes.saturating_sub(archive.byte_length);
         }

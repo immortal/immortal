@@ -3,12 +3,22 @@
 use std::{
     error::Error,
     fs,
+    io::Write,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    thread,
     time::{Duration, UNIX_EPOCH},
 };
 
 use super::{RotatingFile, RotationPolicy, archive_path_is_available, archives, unix_nanoseconds};
+
+/// Bounded attempts at scheduling a retention race, so the test always ends.
+const RACE_ITERATIONS: u32 = 3_000;
+/// Archive-shaped files created per churn round by the racing thread.
+const ARCHIVE_CHURN: u32 = 16;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 struct TestDirectory(PathBuf);
@@ -218,4 +228,151 @@ fn archive_contents(directory: &Path, filename: &str) -> Result<Vec<Vec<u8>>, Bo
         .into_iter()
         .map(|archive| fs::read(archive.path).map_err(Into::into))
         .collect()
+}
+
+/// Regression: an age-only policy never rotated across adapter restarts.
+///
+/// `opened_at` was seeded from the modification time, so reopening a log that
+/// had just been appended to restarted the age clock. With no size limit
+/// configured nothing else could trigger a rotation, and the file grew without
+/// bound. The clock must follow when the live file was created, not when it was
+/// last touched.
+///
+/// The sleep separates creation time from modification time, which is the only
+/// way the two seeds differ; it is bounded well above the age limit so the
+/// modification-time seeding cannot pass by accident.
+#[test]
+fn reopening_does_not_reset_the_age_clock() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let path = directory.path().join("api.log");
+    let policy = RotationPolicy {
+        max_age: Some(Duration::from_millis(150)),
+        ..RotationPolicy::default()
+    };
+    let mut sink = RotatingFile::open(&path, policy)?;
+    sink.write_all(b"first\n")?;
+    drop(sink);
+
+    thread::sleep(Duration::from_millis(400));
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)?
+        .write_all(b"extra\n")?;
+
+    // The live file is now far older than the limit even though it was
+    // modified moments ago.
+    let mut sink = RotatingFile::open(&path, policy)?;
+    sink.write_all(b"second\n")?;
+    drop(sink);
+
+    let rotated = archives(&path)?;
+    let [archive] = rotated.as_slice() else {
+        return Err("an aged live file must rotate after a restart".into());
+    };
+    assert_eq!(fs::read(&archive.path)?, b"first\nextra\n");
+    assert_eq!(fs::read(&path)?, b"second\n");
+    Ok(())
+}
+
+/// A fresh destination is not immediately due for age-based rotation.
+#[test]
+fn a_new_destination_is_not_immediately_aged_out() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let path = directory.path().join("api.log");
+    let mut sink = RotatingFile::open(
+        &path,
+        RotationPolicy {
+            max_age: Some(Duration::from_hours(1)),
+            ..RotationPolicy::default()
+        },
+    )?;
+    sink.write_all(b"first\n")?;
+    sink.write_all(b"second\n")?;
+    drop(sink);
+
+    assert!(archives(&path)?.is_empty());
+    assert_eq!(fs::read(&path)?, b"first\nsecond\n");
+    Ok(())
+}
+
+/// Regression: an archive removed concurrently failed the log write.
+///
+/// Retention listed the archive directory, called `symlink_metadata` on every
+/// candidate, then unlinked the oldest ones. An operator or a peer adapter
+/// cleaning the same directory could remove an archive between any two of those
+/// steps, and the resulting `NotFound` propagated out of `write_all` as a hard
+/// logging failure. Losing that race means the goal was already met, so it must
+/// be absorbed.
+///
+/// The race is scheduled rather than simulated: a remover thread churns the
+/// same archives while this thread keeps listing and rotating. The loop is
+/// bounded so the test terminates whether or not the race is observed.
+#[test]
+fn a_concurrent_remover_never_fails_retention() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let path = directory.path().join("api.log");
+    let policy = RotationPolicy {
+        max_bytes: Some(4),
+        keep: Some(2),
+        ..RotationPolicy::default()
+    };
+    let mut sink = RotatingFile::open(&path, policy)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let remover = {
+        let stop = Arc::clone(&stop);
+        let path = path.clone();
+        thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let Ok(existing) = archives(&path) else {
+                    continue;
+                };
+                for archive in existing {
+                    let _ignored = fs::remove_file(&archive.path);
+                }
+            }
+        })
+    };
+
+    let outcome = (0..RACE_ITERATIONS).try_for_each(|_| sink.write_all(b"aaaaa"));
+    stop.store(true, Ordering::Relaxed);
+    remover.join().map_err(|_| "remover thread panicked")?;
+    outcome?;
+    Ok(())
+}
+
+/// Listing archives tolerates entries removed during the directory walk.
+#[test]
+fn archives_tolerates_a_concurrent_remover() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let path = directory.path().join("api.log");
+    let stop = Arc::new(AtomicBool::new(false));
+    let churn = {
+        let stop = Arc::clone(&stop);
+        let directory = directory.path().to_owned();
+        thread::spawn(move || {
+            let mut sequence = 0_u64;
+            while !stop.load(Ordering::Relaxed) {
+                let mut created = Vec::new();
+                for index in 0..ARCHIVE_CHURN {
+                    sequence = sequence.wrapping_add(1);
+                    let candidate = directory.join(format!(
+                        "api.log.@{sequence}.{}.{index}",
+                        std::process::id()
+                    ));
+                    if fs::write(&candidate, b"x").is_ok() {
+                        created.push(candidate);
+                    }
+                }
+                for candidate in created {
+                    let _ignored = fs::remove_file(candidate);
+                }
+            }
+        })
+    };
+
+    let outcome = (0..RACE_ITERATIONS).try_for_each(|_| archives(&path).map(|_| ()));
+    stop.store(true, Ordering::Relaxed);
+    churn.join().map_err(|_| "churn thread panicked")?;
+    outcome?;
+    Ok(())
 }
