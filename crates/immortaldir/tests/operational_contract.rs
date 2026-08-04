@@ -348,11 +348,45 @@ impl TestProcess {
 
 impl Drop for TestProcess {
     fn drop(&mut self) {
+        let abandoned = self.child.id();
         if self.child.try_wait().ok().flatten().is_none() {
             let _ignored = self.child.kill();
             let _ignored = self.child.wait();
         }
+        rescue_abandoned_supervisors(abandoned);
     }
+}
+
+/// Halt any supervisor a killed contract subprocess left behind.
+///
+/// A subprocess killed for exceeding its deadline never runs its own cleanup,
+/// and the supervisors it started are daemons in their own sessions, so they
+/// outlive both the subprocess and its process group and keep restarting their
+/// workloads indefinitely. Their runtime tree is named after the subprocess, so
+/// the parent can still reach them once the subprocess is gone. Every step is
+/// best effort: this is a rescue path for an already failing test, and a
+/// successful contract removes its own tree before this runs.
+fn rescue_abandoned_supervisors(child: u32) {
+    let root = Path::new("/tmp").join(format!("immortaldir-operational-contract-{child}"));
+    if !root.is_dir() {
+        return;
+    }
+    if let Ok(tokio) = Builder::new_current_thread().enable_all().build()
+        && let Ok(entries) = fs::read_dir(&root)
+    {
+        for runtime in entries.flatten().map(|entry| entry.path()) {
+            let Ok(discovered) = discover(&runtime) else {
+                continue;
+            };
+            let names: Vec<String> = discovered.services.keys().cloned().collect();
+            tokio.block_on(async {
+                for name in names {
+                    let _ignored = halt_if_present(&runtime, &name).await;
+                }
+            });
+        }
+    }
+    let _ignored = fs::remove_dir_all(&root);
 }
 
 fn successful_status(status: ExitStatus, context: &str) -> Result<(), Box<dyn Error>> {

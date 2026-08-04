@@ -119,6 +119,23 @@ exact revisions:
   [fuzz run 29658374252](https://github.com/immortal/immortal/actions/runs/29658374252).
   The workspace suite runs `broker_subreaper_orphan_contract` on all three native
   platforms, so COR-007 is Proven at that commit.
+- The current candidate, Immortal commit
+  `9375a5d375c8566f639ffe4b8d1aa539d9163017`, carries the pre-release
+  correctness work: cancellation-safe broker request decoding, validation of
+  materialized direct commands, isolation of unresolvable dependencies,
+  readiness acceptance for any owned generation, an accept loop which absorbs
+  transient failures, broker process-group isolation, a bounded restart
+  history, a trusted definitions directory, and permission-denied answers for
+  unauthorized control peers. It passed its complete native Linux, macOS, and
+  FreeBSD matrix, lifecycle benchmarks, version checks, and FreeBSD cross-check
+  in
+  [Rust CI run 30935888465](https://github.com/immortal/immortal/actions/runs/30935888465).
+  Its audit and dependency-policy jobs passed in
+  [security run 30935887722](https://github.com/immortal/immortal/actions/runs/30935887722),
+  and both bounded parser fuzz targets passed in
+  [fuzz run 30935891204](https://github.com/immortal/immortal/actions/runs/30935891204).
+  Rows whose evidence is the repository suite are therefore Proven at this
+  commit; every real-host, duration, and comparative gate below stays Pending.
 
 This evidence proves the repository contracts above. It does not replace the
 24-hour campaigns, seven-day canary, comparative runs, or release drills.
