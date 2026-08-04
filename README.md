@@ -315,7 +315,8 @@ limits mean retry forever. `max_retries` counts starts after the initial start.
 Exhausting a restart limit normally leaves the controlled supervisor in
 `Failed`; with `exit_when_done: true`, it instead drains its logging graph and
 exits with the preserved failure reason and temporary-failure status. A burst
-value requires both nonzero fields.
+value requires both nonzero fields, and start history is retained only while a
+burst limit is configured, bounded by its `starts` value.
 `success_exit_codes` cannot be empty. Lifecycle, readiness, and condition
 deadlines are capped at 24 hours; scheduled delay/backoff values are capped at
 one year so monotonic deadline construction remains representable. `notify-fd`

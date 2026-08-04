@@ -187,12 +187,12 @@ fn completed_generation_retains_identity_until_hook_finishes() -> Result<(), Box
 #[test]
 fn issue_71_on_failure_exits_after_success() {
     let mut tracker = RestartTracker::default();
-    tracker.record_start(0);
     let restart = RestartConfig {
         policy: RestartPolicy::OnFailure,
         exit_when_done: true,
         ..RestartConfig::default()
     };
+    tracker.record_start(0, &restart);
     assert_eq!(
         tracker.decide(ChildResult::Exited(0), 1, 1, DesiredState::Up, &restart),
         RestartDecision::ExitSupervisor
@@ -202,12 +202,12 @@ fn issue_71_on_failure_exits_after_success() {
 #[test]
 fn custom_success_code_does_not_restart_on_failure_policy() {
     let mut tracker = RestartTracker::default();
-    tracker.record_start(0);
     let mut restart = RestartConfig {
         policy: RestartPolicy::OnFailure,
         ..RestartConfig::default()
     };
     restart.success_exit_codes.insert(2);
+    tracker.record_start(0, &restart);
     assert_eq!(
         tracker.decide(ChildResult::Exited(2), 1, 1, DesiredState::Up, &restart),
         RestartDecision::StayDown
@@ -220,7 +220,7 @@ fn default_restarts_forever_with_capped_exponential_backoff() {
     let restart = RestartConfig::default();
     let mut delays = Vec::new();
     for now in 0..10 {
-        tracker.record_start(now);
+        tracker.record_start(now, &restart);
         let decision = tracker.decide(ChildResult::Signaled(9), 0, now, DesiredState::Up, &restart);
         let RestartDecision::Restart {
             base_delay_seconds, ..
@@ -244,17 +244,17 @@ fn max_retries_stops_a_dependency_crash_loop() {
         ..RestartConfig::default()
     };
 
-    tracker.record_start(0);
+    tracker.record_start(0, &restart);
     assert!(matches!(
         tracker.decide(ChildResult::Exited(1), 0, 0, DesiredState::Up, &restart),
         RestartDecision::Restart { .. }
     ));
-    tracker.record_start(1);
+    tracker.record_start(1, &restart);
     assert!(matches!(
         tracker.decide(ChildResult::Exited(1), 0, 1, DesiredState::Up, &restart),
         RestartDecision::Restart { .. }
     ));
-    tracker.record_start(2);
+    tracker.record_start(2, &restart);
     assert_eq!(
         tracker.decide(ChildResult::Exited(1), 0, 2, DesiredState::Up, &restart),
         RestartDecision::Fail(FailureReason::RetryLimit)
@@ -273,7 +273,7 @@ fn exit_when_done_preserves_exhausted_retry_failure() {
         ..RestartConfig::default()
     };
 
-    tracker.record_start(0);
+    tracker.record_start(0, &restart);
     assert_eq!(
         tracker.decide(ChildResult::Exited(1), 0, 0, DesiredState::Up, &restart),
         RestartDecision::ExitFailure(FailureReason::RetryLimit)
@@ -290,7 +290,7 @@ fn elapsed_and_burst_limits_are_distinct() {
         },
         ..RestartConfig::default()
     };
-    elapsed.record_start(2);
+    elapsed.record_start(2, &elapsed_config);
     assert_eq!(
         elapsed.decide(
             ChildResult::Exited(1),
@@ -313,9 +313,9 @@ fn elapsed_and_burst_limits_are_distinct() {
         },
         ..RestartConfig::default()
     };
-    burst.record_start(0);
-    burst.record_start(1);
-    burst.record_start(2);
+    burst.record_start(0, &burst_config);
+    burst.record_start(1, &burst_config);
+    burst.record_start(2, &burst_config);
     assert_eq!(
         burst.decide(
             ChildResult::Exited(1),
@@ -332,9 +332,9 @@ fn elapsed_and_burst_limits_are_distinct() {
 fn long_healthy_run_resets_backoff() {
     let mut tracker = RestartTracker::default();
     let restart = RestartConfig::default();
-    tracker.record_start(0);
+    tracker.record_start(0, &restart);
     let _ = tracker.decide(ChildResult::Exited(1), 0, 0, DesiredState::Up, &restart);
-    tracker.record_start(1);
+    tracker.record_start(1, &restart);
     let decision = tracker.decide(ChildResult::Exited(1), 60, 61, DesiredState::Up, &restart);
     assert_eq!(
         decision,
@@ -349,7 +349,7 @@ fn long_healthy_run_resets_backoff() {
 fn once_and_down_never_restart() {
     for desired in [DesiredState::Once, DesiredState::Down] {
         let mut tracker = RestartTracker::default();
-        tracker.record_start(0);
+        tracker.record_start(0, &RestartConfig::default());
         assert_eq!(
             tracker.decide(
                 ChildResult::Exited(1),
@@ -430,4 +430,74 @@ fn live_generation_detaches_only_for_explicit_exit() -> Result<(), Box<dyn Error
     machine.child_detached(generation)?;
     assert_eq!(machine.state(), SupervisorState::Exited);
     Ok(())
+}
+
+/// Regression: the default policy retained every start for the process lifetime.
+///
+/// `restart.limits.burst` defaults to `None`, and the only pruning lived inside
+/// the burst check. A long-lived service restarting under the default policy
+/// therefore grew this history without bound.
+#[test]
+fn default_limits_retain_no_restart_history() {
+    let mut tracker = RestartTracker::default();
+    let restart = RestartConfig::default();
+    for now in 0..10_000 {
+        tracker.record_start(now, &restart);
+    }
+    assert_eq!(tracker.recent_start_count(), 0);
+    assert_eq!(tracker.total_starts(), 10_000);
+}
+
+/// A configured burst limit retains only the entries it can still consult.
+#[test]
+fn burst_limit_bounds_retained_restart_history() {
+    let mut tracker = RestartTracker::default();
+    let restart = RestartConfig {
+        limits: RestartLimits {
+            burst: Some(RestartBurstLimit {
+                starts: 3,
+                window_seconds: 10,
+            }),
+            ..RestartLimits::default()
+        },
+        ..RestartConfig::default()
+    };
+    for now in 0..10_000 {
+        tracker.record_start(now, &restart);
+        assert!(tracker.recent_start_count() <= 3);
+    }
+}
+
+/// Bounding the history must not weaken the burst limit it exists to serve.
+#[test]
+fn burst_limit_still_fires_after_a_long_restart_history() {
+    let mut tracker = RestartTracker::default();
+    let restart = RestartConfig {
+        limits: RestartLimits {
+            burst: Some(RestartBurstLimit {
+                starts: 3,
+                window_seconds: 10,
+            }),
+            ..RestartLimits::default()
+        },
+        ..RestartConfig::default()
+    };
+
+    // Starts spaced wider than the window never accumulate.
+    for now in (0..1_000).step_by(20) {
+        tracker.record_start(now, &restart);
+        assert!(matches!(
+            tracker.decide(ChildResult::Exited(1), 19, now, DesiredState::Up, &restart),
+            RestartDecision::Restart { .. }
+        ));
+    }
+
+    // Three starts inside one window still trip the limit.
+    tracker.record_start(1_000, &restart);
+    tracker.record_start(1_001, &restart);
+    tracker.record_start(1_002, &restart);
+    assert_eq!(
+        tracker.decide(ChildResult::Exited(1), 0, 1_002, DesiredState::Up, &restart),
+        RestartDecision::Fail(FailureReason::BurstLimit)
+    );
 }

@@ -250,7 +250,7 @@ pub(super) async fn start_service(
     execution.auxiliary = AuxiliaryExecution::Idle;
     execution
         .tracker
-        .record_start(elapsed_seconds(execution.epoch));
+        .record_start(elapsed_seconds(execution.epoch), &config.restart);
     execution.status.started_at = Some(Instant::now());
     execution.status.down_since = None;
     execution.status.readiness_failed = false;

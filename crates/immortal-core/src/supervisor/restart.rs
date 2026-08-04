@@ -91,10 +91,45 @@ impl RestartTracker {
     }
 
     /// Record a child start using a monotonic timestamp in seconds.
-    pub fn record_start(&mut self, now_seconds: u64) {
+    ///
+    /// Retains only the history the configured burst limit can still consult:
+    /// nothing when no burst limit is set, and at most `burst.starts` recent
+    /// timestamps otherwise. Without that bound a service restarting under the
+    /// default policy grew this history for the supervisor's whole lifetime.
+    pub fn record_start(&mut self, now_seconds: u64, restart: &RestartConfig) {
         self.first_start_seconds.get_or_insert(now_seconds);
         self.total_starts = self.total_starts.saturating_add(1);
+        let Some(burst) = &restart.limits.burst else {
+            self.recent_starts.clear();
+            return;
+        };
+        self.prune_recent_starts(now_seconds, burst.window_seconds);
         self.recent_starts.push_back(now_seconds);
+        // Only the newest `starts` entries can satisfy the burst comparison, so
+        // anything older is unreachable history.
+        while self.recent_starts.len() > burst.starts as usize {
+            self.recent_starts.pop_front();
+        }
+    }
+
+    /// Drop every recorded start that has aged out of the rolling window.
+    fn prune_recent_starts(&mut self, now_seconds: u64, window_seconds: u64) {
+        while self
+            .recent_starts
+            .front()
+            .is_some_and(|started| now_seconds.saturating_sub(*started) >= window_seconds)
+        {
+            self.recent_starts.pop_front();
+        }
+    }
+
+    /// Number of retained start timestamps.
+    ///
+    /// Internal invariant probe: the history must stay bounded by what the
+    /// configured burst limit can still consult.
+    #[cfg(test)]
+    pub(super) fn recent_start_count(&self) -> usize {
+        self.recent_starts.len()
     }
 
     /// Decide what follows a reaped generation.
@@ -168,13 +203,7 @@ impl RestartTracker {
             return Some(FailureReason::ElapsedTimeLimit);
         }
         if let Some(burst) = &restart.limits.burst {
-            while self
-                .recent_starts
-                .front()
-                .is_some_and(|started| now_seconds.saturating_sub(*started) >= burst.window_seconds)
-            {
-                self.recent_starts.pop_front();
-            }
+            self.prune_recent_starts(now_seconds, burst.window_seconds);
             if self.recent_starts.len() >= burst.starts as usize {
                 return Some(FailureReason::BurstLimit);
             }
