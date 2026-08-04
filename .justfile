@@ -18,15 +18,15 @@ yaml-lint:
     yamllint .
 
 clippy:
-    cargo clippy --workspace --all-targets --all-features
+    cargo clippy --workspace --all-targets --all-features --locked
     CARGO_TARGET_DIR={{tools_target}} cargo clippy --manifest-path {{tools_manifest}} --workspace --all-targets --all-features --locked
 
 check:
-    cargo check --workspace --all-targets --all-features
+    cargo check --workspace --all-targets --all-features --locked
     CARGO_TARGET_DIR={{tools_target}} cargo check --manifest-path {{tools_manifest}} --workspace --all-targets --all-features --locked
 
 test:
-    cargo test --workspace
+    cargo test --workspace --locked
     CARGO_TARGET_DIR={{tools_target}} cargo test --manifest-path {{tools_manifest}} --workspace --locked
 
 tools-build:

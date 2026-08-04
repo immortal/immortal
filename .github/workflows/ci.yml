@@ -31,7 +31,7 @@ jobs:
         with:
           components: clippy,rustfmt
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features
+      - run: cargo clippy --workspace --all-targets --all-features --locked
       - run: cargo check --workspace --all-targets --all-features --locked
 
   native-lifecycle:
