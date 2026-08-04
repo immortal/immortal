@@ -506,6 +506,14 @@ fn validate_socket_parent(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(unix)]
+/// Decide whether a connected peer may act on this supervisor.
+///
+/// This is the only authorization predicate in the control protocol. Root and
+/// the uid which owns the socket are accepted; every other peer is refused.
+/// The owner uid is read from the socket the listener created, never from the
+/// request, so a peer cannot assert its own identity. Authorization is
+/// deliberately independent of the socket file mode, which is defense in depth
+/// rather than the check itself.
 pub(in crate::control) const fn peer_is_authorized(peer_uid: u32, owner_uid: u32) -> bool {
     peer_uid == 0 || peer_uid == owner_uid
 }

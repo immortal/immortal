@@ -172,6 +172,20 @@ fn reap_adopted_orphan(
     Ok(())
 }
 
+/// Release a generation's process-group guard and its ownership record.
+///
+/// Takes the guard, drops the broker's ownership of the guard process, and
+/// disarms it under a bounded timeout so the guard exits without killing a
+/// workload which finished normally. Absence is not an error: a generation
+/// which never armed a guard, or whose guard was already disarmed, is a
+/// no-op so shutdown and reap paths can both call this.
+///
+/// # Errors
+///
+/// Returns an error when the guard's process identity is unavailable, when
+/// the ownership table disagrees about who owns the guard, or when disarming
+/// fails. An ownership disagreement means the broker's containment invariant
+/// is already broken, so it is reported rather than ignored.
 pub(super) fn disarm_generation_guard(
     generation: Generation,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
@@ -195,6 +209,11 @@ pub(super) fn disarm_generation_guard(
     Ok(())
 }
 
+/// Send one signal to every live generation's whole process group.
+///
+/// Delivery failures are ignored on purpose: a group which already exited is
+/// the outcome the caller wanted, and shutdown must continue signalling the
+/// remaining groups regardless.
 pub(super) fn signal_every_group(
     generations: &BTreeMap<Generation, BrokerGeneration>,
     requested: ProcessSignal,
@@ -204,6 +223,10 @@ pub(super) fn signal_every_group(
     }
 }
 
+/// Report whether any supervised workload process is still owned.
+///
+/// Guard processes are deliberately excluded, so shutdown waits for real
+/// workloads rather than for the containment guards which outlive them.
 pub(super) fn has_workload_processes(processes: &BTreeMap<ProcessId, BrokerOwnedProcess>) -> bool {
     processes
         .values()

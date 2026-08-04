@@ -36,6 +36,14 @@ watcher dying: a closed native event channel is reported once and its trigger
 arm is retired, leaving periodic safety scans as the sole trigger rather than a
 permanently ready receiver spinning the trigger loop.
 
+### immortallog
+
+Writes one stream to a file and rotates it, as a separate process reading its
+own standard input. Keeping the byte copy and archive sweep out of the
+supervisor means a slow or failing log destination cannot stall supervision,
+and makes the adapter replaceable through `log_adapter` by anything which
+implements the same command-line contract.
+
 ## CLI architecture
 
 The CLI layers use the following flow, inspired by the `cron-when` and `s3m`

@@ -648,19 +648,23 @@ before process setup rather than during supervision.
 
 ## Runtime and control
 
-The system runtime root is `/run/immortal` on Linux and `/var/run/immortal` on
-macOS and FreeBSD; the latter follows their native hierarchy while Linux uses
-the FHS runtime location for transient Unix sockets. The portable user root is
+The system runtime root is `/run/immortal` on Linux, `/var/run/immortal` on
+FreeBSD, and `/var/db/immortal/run` on macOS. Linux and FreeBSD use their
+native ephemeral location for transient Unix sockets. launchd has no pre-start
+hook to recreate an ephemeral root, so macOS uses a persistent one which the
+installer creates once. The portable user root is
 `$HOME/.immortal`. `immortaldir` defaults to the platform system root.
 `immortalctl` automatically discovers both roots, while `--runtime-scope
 system|user` narrows automatic discovery and an explicit `--runtime-dir` or
 `IMMORTAL_SDIR` selects exactly one custom root.
 [FHS `/run`](https://specifications.freedesktop.org/fhs/latest/run.html)
 
-System runtime roots are ephemeral state and must be recreated by the platform
-service manager after boot. Use canonical `/run/immortal` on Linux rather than
-its commonly symlinked `/var/run` alias; FreeBSD and macOS use
-`/var/run/immortal`. An ordinary config or named direct launch instead creates
+The Linux and FreeBSD system runtime roots are ephemeral state and must be
+recreated by the platform service manager after boot; the shipped systemd unit
+does this with `ExecStartPre`. Use canonical `/run/immortal` on Linux rather
+than its commonly symlinked `/var/run` alias, and `/var/run/immortal` on
+FreeBSD. The macOS root persists instead, so it is created once at install
+time. An ordinary config or named direct launch instead creates
 `$HOME/.immortal` with mode `0700` when absent. Existing automatic user roots
 must be real directories owned by the effective UID with exactly that mode.
 Immortal resolves an existing home-directory alias such as

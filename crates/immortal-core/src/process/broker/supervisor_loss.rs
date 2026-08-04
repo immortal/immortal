@@ -33,6 +33,20 @@ struct SupervisorLossCleanup {
     plan: BrokerLifetimePlan,
 }
 
+/// Fail closed after the supervisor connection is gone.
+///
+/// A lost supervisor cannot make restart decisions or reap children, so the
+/// broker stops every generation it owns, disarms its guards, drains and stops
+/// the logging adapters, and consumes the remaining descriptor-lifetime
+/// observations so no tracked descriptor outlives the process. This is a
+/// deliberate kill path: leaving a supervised workload running without a
+/// supervisor would leave an unmanaged process on the host.
+///
+/// # Errors
+///
+/// Returns an error when a stop, reap, or cleanup step leaves ownership
+/// unresolved. The caller exits the broker either way, so the error is
+/// diagnostic rather than recoverable.
 pub(super) async fn cleanup_after_supervisor_loss(
     child_signal: &mut ChildSignal,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,

@@ -4,6 +4,27 @@
 //! transition, rejects stale or out-of-order events without mutation, and maps
 //! a reaped child's restart decision onto the next observable state. All
 //! process I/O is performed by a separate executor.
+//!
+//! The lifecycle flows in one direction per generation:
+//!
+//! ```text
+//! Down --preconditions_ready--> Starting(g) --child_started--> Running(g)
+//!   Running(g) --readiness--> Ready(g)
+//!   Running(g)/Ready(g) --child_paused/child_continued--> Paused(g)
+//!   Running(g)/Ready(g) --stop_requested--> Stopping(g)
+//!   any live state --child_reaped(g, decision)--> Backoff(g) | Down | Completed(g)
+//!   Backoff(g) --preconditions_ready--> Starting(g + 1)
+//!   Down/Backoff(g) --fail_without_child--> Failed(reason)
+//! ```
+//!
+//! Generations are monotonic and never reused: `next_generation` only ever
+//! advances, so an event carrying a generation below it was issued by this
+//! supervisor and one at or above it never was. Every transition checks the
+//! generation *and* the current state, and a mismatch returns a
+//! [`TransitionError`] without mutating anything. That is what makes a late
+//! event from a retired generation safe to absorb rather than a fault: the
+//! model cannot be moved backwards, and a stale child's exit can never be
+//! attributed to a newer generation.
 
 use super::{
     DesiredState, FailureReason, Generation, RestartDecision, SupervisorState, TransitionError,

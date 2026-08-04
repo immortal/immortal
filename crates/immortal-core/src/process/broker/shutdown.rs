@@ -24,6 +24,21 @@ use super::{ProcessId, ProcessSignal};
 pub(super) const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 pub(super) const SHUTDOWN_KILL_WAIT: Duration = Duration::from_secs(3);
 
+/// Stop every owned generation in order, escalating only if it is required.
+///
+/// Signals each live process group with its configured stop signal, keeps
+/// forwarding child events to the supervisor so the reaps are not lost, and
+/// waits up to [`SHUTDOWN_GRACE`] for the workloads to exit. Anything still
+/// running is then killed and reaped within [`SHUTDOWN_KILL_WAIT`]. Guards are
+/// disarmed rather than killed, so a workload which exits normally during the
+/// grace window is never escalated. Logging adapters are drained last so the
+/// final output of a stopping service is not truncated.
+///
+/// # Errors
+///
+/// Returns an error when signalling, waiting, or forwarding fails in a way
+/// which leaves ownership unresolved, which the caller treats as a broker
+/// fault rather than a clean shutdown.
 pub(super) async fn shutdown_owned<W>(
     child_signal: &mut ChildSignal,
     writer: &mut W,
