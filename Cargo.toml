@@ -23,14 +23,14 @@ built = { version = "0.8.1", features = ["git2"] }
 clap = { version = "4.6", features = ["env"] }
 fork = "=0.10.0"
 immortal-core = { path = "crates/immortal-core" }
-jiff = { version = "0.2.32", default-features = false, features = ["std"] }
+jiff = { version = "0.2.35", default-features = false, features = ["std"] }
 libc = "0.2"
 nix = { version = "0.31.3", features = ["user"] }
 notify = "8.2"
 serde = { version = "1", features = ["derive"] }
-serde-saphyr = "0.0.29"
-serde_json = "1.0.150"
-tokio = { version = "1.52", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"] }
+serde-saphyr = "1.1.0"
+serde_json = "1.0.151"
+tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
