@@ -6,13 +6,18 @@ release gates in [RELEASE.md](RELEASE.md).
 
 ## Build and install
 
-Build the complete version-locked workspace in DevPod:
+Validate and build the complete version-locked workspace natively, on the target
+host or on a dedicated VM of the same platform, as described in
+[AGENTS.md](AGENTS.md#required-validation):
 
 ```sh
-scripts/dev-up
-scripts/dev-ssh just ci
-scripts/dev-ssh cargo build --workspace --release --locked
+just ci
+cargo build --workspace --release --locked
 ```
+
+The install commands below read `target/release`. A DevPod build keeps its
+artifacts in the container's `CARGO_TARGET_DIR` volume instead, so it does not
+produce them on the host.
 
 Install all four executables from the same commit. `immortal`, `immortaldir`,
 and usually `immortallog` belong in the system administrator path;
@@ -223,6 +228,10 @@ rehearsal which must print canonical configuration followed by a `START` plan:
 immortal --config examples/services/sleep.yml --check-config
 immortaldir --once --dry-run examples/services
 ```
+
+`immortaldir` refuses a group- or world-writable definitions directory, which a
+checkout created under umask 002 produces; run `chmod go-w examples/services`
+first, or run `scripts/rehearse-upgrade`, which plans a private copy.
 
 Treat runtime directories as disposable observation state, not configuration.
 For `immortaldir`, use `/run/immortal` on Linux and `/var/run/immortal` on

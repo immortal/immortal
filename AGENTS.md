@@ -346,10 +346,25 @@ The initial supported platforms are Linux, macOS, and FreeBSD.
 
 ## Required validation
 
-Run project commands inside DevPod. Host-side commands are limited to DevPod
-lifecycle commands and Git operations.
+Run project commands in one of two isolated environments: the repository
+DevPod, or a dedicated, disposable Linux VM that runs nothing else, as an
+unprivileged user. Process, daemon, signal, and descriptor-exhaustion contracts
+assume they own the environment, so never run them natively on a shared
+workstation; there, host-side commands are limited to DevPod lifecycle commands
+and Git operations.
 
-Before considering a change complete, run from the host:
+A dedicated VM runs the suite natively, like the hosted CI runners, with the
+real init system as PID 1 and no user-namespace remapping. Provision it with the
+[native dependencies](README.md#native-dependencies), through mise or manually,
+and again after `mise.toml` or `rust-toolchain.toml` changes. Before considering
+a change complete, run from the repository root:
+
+```sh
+just ci
+cargo check --workspace --target x86_64-unknown-freebsd --locked
+```
+
+Through DevPod, run the same validation from the host:
 
 ```sh
 scripts/dev-up

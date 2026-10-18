@@ -972,7 +972,16 @@ fast compile gate. Exact candidate revisions, workflow runs, toolchains, and
 retained artifacts are recorded in
 [VALIDATION.md](VALIDATION.md#current-candidate-evidence).
 
-Run project commands inside DevPod:
+Run project commands in a validation environment from
+[AGENTS.md](AGENTS.md#required-validation). On a dedicated VM with the
+[native dependencies](#native-dependencies), run from the repository root:
+
+```sh
+just ci
+cargo check --workspace --target x86_64-unknown-freebsd --locked
+```
+
+Through DevPod, run from the host:
 
 ```sh
 scripts/dev-up
@@ -985,16 +994,53 @@ part of `just ci` and the hosted quality job.
 
 For repeated release-candidate exercise, run the complete contract suite between
 1 and 100 times. Every process contract retains its own hard deadline and
-cleanup guard, so a failing iteration terminates without advancing to the next:
+cleanup guard, so a failing iteration terminates without advancing to the next.
+In DevPod, prefix the command with `scripts/dev-ssh`:
 
 ```sh
-scripts/dev-ssh just soak 10
+just soak 10
 ```
 
 Process changes require native lifecycle tests on Linux, macOS, and FreeBSD.
 Every process test must have a hard timeout and clean up every child and process
 group on both success and failure. Dependency changes must pass `cargo audit`
 and `cargo deny check`.
+
+### Native dependencies
+
+A dedicated VM needs the tools declared in `mise.toml` and
+`rust-toolchain.toml`: the pinned Rust toolchain with clippy, rustfmt, and the
+`x86_64-unknown-freebsd` target, `just`, `rg`, yamllint 1.38.0, `cargo-audit`,
+and `cargo-deny`. With mise, run from the repository root:
+
+```sh
+mise trust
+mise install
+```
+
+Without mise, install them manually from the repository root:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+rustup toolchain install
+cargo install --locked just ripgrep cargo-audit cargo-deny
+pipx install yamllint==1.38.0
+```
+
+`rustup toolchain install` without an argument installs the toolchain,
+components, and targets pinned in `rust-toolchain.toml`. Keep `~/.cargo/bin` and
+`~/.local/bin` on `PATH` in later shells too. Distribution yamllint packages may lag the pinned
+release (Debian 13 ships 1.37.1), so install it with pipx or
+`uv tool install yamllint==1.38.0`. Linking also needs a C toolchain (`cc`), and
+the resource soak samples processes through `ps`. Debian's default umask 002
+leaves the checkout group-writable, and `immortaldir` rightly refuses a
+group-writable definitions directory; `scripts/rehearse-upgrade` plans a private
+copy, but run direct examples after `chmod go-w examples/services`.
+
+Do not mix the two paths on one host. Once `mise install` has run, its shims
+precede `~/.cargo/bin` on `PATH`, including `cargo` and `rustc`, and fail in the
+repository while `mise.toml` is untrusted.
 
 ## Contributing
 
@@ -1012,8 +1058,8 @@ Before submitting a change:
    [DESIGN.md](DESIGN.md).
 3. Confirm the current implementation and its contract coverage before changing
    behavior; roadmap text is not evidence that a feature is absent.
-4. Run the complete DevPod validation described above, including the FreeBSD
-   target check.
+4. Run the complete validation described above, including the FreeBSD target
+   check.
 5. Keep public CLI, configuration, and control-protocol changes deliberate and
    document their rationale and upgrade impact.
 

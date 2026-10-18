@@ -1,5 +1,6 @@
 [settings]
 cargo.binstall = true
+idiomatic_version_file_enable_tools = ["rust"]
 minimum_release_age = "0"
 
 [tools]

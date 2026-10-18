@@ -210,7 +210,7 @@ selected results into documentation.
 
 ### Pull requests
 
-- DevPod `just ci` and the locked FreeBSD cross-check;
+- `just ci` on a dedicated VM or in DevPod, and the locked FreeBSD cross-check;
 - native Linux, macOS, and FreeBSD lifecycle jobs;
 - short bounded configuration and control fuzzing;
 - security and dependency policy.
@@ -239,6 +239,9 @@ A release candidate must pass all existing requirements in `RELEASE.md` plus:
 These campaigns run on maintainer-controlled hosts, not as fake long sleeps in
 GitHub Actions. Their scripts may automate collection, but a human must review
 the complete evidence before changing a requirement to Proven or Observed.
+Collect them natively on the target host or a dedicated VM, not in a container:
+the evidence metadata records the running kernel, so a container run reports
+its virtual machine's platform rather than the host's.
 
 The repository runner repeatedly executes every workspace contract and emits
 schema-checked evidence plus a SHA-256 manifest. It is one input to a real-host
@@ -247,14 +250,14 @@ satisfy the release gate. Run this contract-soak component from a clean
 candidate worktree with a report path outside the repository:
 
 ```sh
-scripts/dev-ssh just validation-campaign 86400 /tmp/immortal-validation-24h
+just validation-campaign 86400 /tmp/immortal-validation-24h
 ```
 
 Use `604800` seconds for the contract-soak component of the FreeBSD canary.
 Validate any copied result before review:
 
 ```sh
-scripts/dev-ssh just validation-evidence /tmp/immortal-validation-24h/results.tsv
+just validation-evidence /tmp/immortal-validation-24h/results.tsv
 ```
 
 A focused single-supervisor resource soak complements that broad runner. It
@@ -267,7 +270,7 @@ harness. Run it from a clean candidate worktree with a report path outside the
 repository:
 
 ```sh
-scripts/dev-ssh just resource-soak 86400 /tmp/immortal-resource-soak-24h
+just resource-soak 86400 /tmp/immortal-resource-soak-24h
 ```
 
 It writes and self-validates schema-checked evidence for both boundaries with a

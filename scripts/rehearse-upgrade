@@ -9,8 +9,14 @@ if [ "$first_line" != "version: 2" ]; then
     exit 1
 fi
 
+# immortaldir refuses a group- or world-writable definitions directory, so plan
+# a private copy instead of inheriting the checkout's umask.
+definitions=$(mktemp -d)
+trap 'rm -rf "$definitions"' EXIT
+trap 'exit 130' HUP INT TERM
+cp examples/services/*.yml "$definitions"
 plan=$(cargo run --quiet --locked -p immortaldir -- \
-    --once --dry-run examples/services)
+    --once --dry-run "$definitions")
 expected=$(printf 'START\tsleep\nSTART\tsleep-2')
 if [ "$plan" != "$expected" ]; then
     echo "unexpected example reconciliation plan: $plan" >&2

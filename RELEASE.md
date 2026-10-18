@@ -28,12 +28,13 @@ process-library dependency.
 
 1. Confirm a clean worktree and review every change since the previous tag.
 2. Set one workspace version and keep every crate on `version.workspace = true`.
-3. Run the required DevPod CI, FreeBSD cross-check, and a ten-iteration soak.
+3. Run the required CI in a validation environment from `AGENTS.md`, the
+   FreeBSD cross-check, and a ten-iteration soak.
 4. Require green native Linux, macOS, and FreeBSD lifecycle jobs, Security, and
    both fuzz targets for the exact candidate commit.
 5. Run `cargo build --workspace --release --locked` and exercise every binary's
    short and long version output from the resulting artifacts.
-6. Run `scripts/dev-ssh scripts/rehearse-upgrade` to validate the strict
+6. Run `scripts/rehearse-upgrade` to validate the strict
    version 2 example with `immortal --check-config` and an
    `immortaldir --once --dry-run` upgrade rehearsal.
 7. Verify that no test or rehearsal leaves a child, process group, socket, lock,
