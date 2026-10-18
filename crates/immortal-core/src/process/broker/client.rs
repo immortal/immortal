@@ -23,6 +23,8 @@ use super::error::ProcessBrokerError;
 use super::event::ProcessBrokerEvent;
 use super::logging::BrokerLoggerId;
 use super::types::{BrokerSignalScope, BrokerTaskId};
+#[cfg(test)]
+use super::wire::write_event;
 use super::wire::{read_event, write_request};
 use super::{
     BrokerEvent, BrokerRequest, BrokerSignalTarget, ProcessCommand, ProcessId, ProcessSignal,
@@ -107,6 +109,39 @@ impl ProcessBrokerClient {
             events,
             reader_task,
         }
+    }
+
+    /// Write one synthetic broker event to the peer of a [`Self::for_test`] client.
+    ///
+    /// Lets executor tests replay an exact broker event order, such as a signal
+    /// acknowledgement which trails the reap that ended supervision. Only the
+    /// service signal acknowledgements and shutdown completion are supported.
+    #[cfg(test)]
+    pub(crate) async fn write_test_event(
+        peer: &mut UnixStream,
+        event: &ProcessBrokerEvent,
+    ) -> Result<(), ProcessBrokerError> {
+        let event = match *event {
+            ProcessBrokerEvent::SignalDelivered { generation } => {
+                BrokerEvent::SignalDelivered { generation }
+            }
+            ProcessBrokerEvent::SignalFailed {
+                generation,
+                os_error,
+            } => BrokerEvent::SignalFailed {
+                generation,
+                os_error,
+            },
+            ProcessBrokerEvent::ShutdownComplete => BrokerEvent::ShutdownComplete,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "unsupported synthetic broker event",
+                )
+                .into());
+            }
+        };
+        write_event(peer, &event).await
     }
 
     /// Return the direct broker child which owns every service process.

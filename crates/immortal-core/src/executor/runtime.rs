@@ -12,7 +12,7 @@ use std::{io, sync::Arc};
 use tokio::{
     runtime::Builder,
     sync::{mpsc, watch},
-    time::{Instant as TokioInstant, timeout},
+    time::{Instant as TokioInstant, timeout, timeout_at},
 };
 
 use super::{
@@ -23,8 +23,8 @@ use super::{
     TerminationSignals, advance_childless_state, advance_logger_shutdown, apply_control_command,
     begin_descriptor_shutdown, begin_supervisor_shutdown, broker_lifetime_plan, cancel_auxiliary,
     fail_childless_start_on_logger_exhaustion, handle_broker_event, handle_due_logger_timers,
-    handle_executor_timer, next_executor_event, outcome, reap_broker, respond_abandoned_signals,
-    run_control_server, shutdown_broker, start_down_loggers, start_process_broker_with_logging,
+    handle_executor_timer, next_executor_event, outcome, reap_broker, run_control_server,
+    shutdown_broker, start_down_loggers, start_process_broker_with_logging,
 };
 
 pub(super) fn run_prepared(
@@ -189,14 +189,16 @@ pub(super) async fn drive_service(
             controls.is_some(),
             execution.first_start,
         );
-        if advance_logger_shutdown(client, lifecycle_finished, &mut execution).await? {
-            respond_abandoned_signals(&mut execution.pending_signals);
-            return Ok(outcome(
-                &execution.machine,
-                &execution.tracker,
-                &execution.status,
-                execution.terminal_failure,
-            ));
+        if let Some(outcome) = finish_supervision(
+            client,
+            &commands,
+            config,
+            &mut execution,
+            lifecycle_finished,
+        )
+        .await?
+        {
+            return Ok(outcome);
         }
 
         match next_executor_event(client, signals, &mut controls, execution.next_deadline()).await?
@@ -245,6 +247,71 @@ pub(super) async fn drive_service(
         }
     }
 }
+/// Decide whether the supervision loop may return, and with which outcome.
+///
+/// A finished lifecycle first drains every signal acknowledgement still owed,
+/// then advances logger shutdown in the same pass, yielding the outcome once it
+/// completes. `None` always means the loop must wait for its next event, so a
+/// drain must never end the pass early: with the acknowledgement consumed and
+/// logger shutdown never started, no event or deadline would remain to wake it.
+/// An unfinished lifecycle keeps its in-flight acknowledgements for the main
+/// event loop.
+///
+/// # Errors
+///
+/// Returns a drain or logger-shutdown failure.
+pub(super) async fn finish_supervision(
+    client: &mut ProcessBrokerClient,
+    commands: &PreparedExecution,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+    lifecycle_finished: bool,
+) -> Result<Option<SupervisionOutcome>, ExecutorError> {
+    if lifecycle_finished && !execution.pending_signals.is_empty() {
+        drain_signal_acknowledgements(client, commands, config, execution).await?;
+    }
+    if !advance_logger_shutdown(client, lifecycle_finished, execution).await? {
+        return Ok(None);
+    }
+    Ok(Some(outcome(
+        &execution.machine,
+        &execution.tracker,
+        &execution.status,
+        execution.terminal_failure,
+    )))
+}
+
+/// Consume every signal acknowledgement still owed once supervision has finished.
+///
+/// A group stop sends TERM and CONT as separate requests, so the broker can reap
+/// the service between them and acknowledge CONT only after the `Child` event
+/// which finished supervision. Left unread, that acknowledgement would reach
+/// broker shutdown as an unexpected event. The broker acknowledges every signal
+/// request synchronously, so the whole drain shares one [`BROKER_EVENT_TIMEOUT`]
+/// deadline which unrelated events cannot extend; only broker events are read,
+/// so a repeated termination signal or control request cannot act on the
+/// finished lifecycle meanwhile.
+///
+/// # Errors
+///
+/// Returns a broker read failure, a broker event the dispatch rejects, or
+/// [`ExecutorError::BrokerTimedOut`] when an owed acknowledgement never arrives.
+async fn drain_signal_acknowledgements(
+    client: &mut ProcessBrokerClient,
+    commands: &PreparedExecution,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    let deadline = TokioInstant::now() + BROKER_EVENT_TIMEOUT;
+    while !execution.pending_signals.is_empty() {
+        let Ok(event) = timeout_at(deadline, client.next_event()).await else {
+            return Err(ExecutorError::BrokerTimedOut("signal acknowledgement"));
+        };
+        handle_broker_event(client, event?, commands, config, execution).await?;
+    }
+    Ok(())
+}
+
 pub(super) fn supervision_finished(
     machine: &StateMachine,
     controlled: bool,

@@ -1,5 +1,8 @@
 //! Black-box contracts for the first operational `immortal --foreground` path.
 
+#[path = "support/stderr_log.rs"]
+mod stderr_log;
+
 use std::{
     error::Error,
     fs,
@@ -25,12 +28,15 @@ use immortal_core::{
 };
 use tokio::{net::UnixStream, runtime::Builder};
 
+use stderr_log::StderrLog;
+
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const TRUE_PROGRAM: &str = "/usr/bin/true";
 
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
+    let _stderr_log = StderrLog::create()?;
     let binary = Path::new(env!("CARGO_BIN_EXE_immortal"));
     let home = TemporaryDirectory::new("real")?;
     let _home_alias = HomeAlias::new(&home.0)?;
@@ -718,7 +724,7 @@ fn spawn_immortal_with_home<'argument>(
         .env("HOME", home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(StderrLog::stdio()?)
         .spawn()
 }
 
@@ -731,8 +737,9 @@ fn assert_status(
         Ok(())
     } else {
         Err(format!(
-            "{context} returned {status}; expected exit {}",
-            expected.value()
+            "{context} returned {status}; expected exit {}\nsupervisor stderr:\n{}",
+            expected.value(),
+            StderrLog::tail()
         )
         .into())
     }
@@ -755,7 +762,9 @@ impl ChildGuard {
         self.child.id()
     }
 
+    #[track_caller]
     fn wait(mut self, timeout: Duration) -> std::io::Result<ExitStatus> {
+        let caller = std::panic::Location::caller();
         let deadline = Instant::now() + timeout;
         loop {
             if let Some(status) = self.child.try_wait()? {
@@ -768,7 +777,12 @@ impl ChildGuard {
                 self.reaped = true;
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
-                    "immortal CLI contract exceeded its deadline",
+                    format!(
+                        "immortal CLI contract waited at {}:{} exceeded its deadline\nsupervisor stderr:\n{}",
+                        caller.file(),
+                        caller.line(),
+                        StderrLog::tail()
+                    ),
                 ));
             }
             thread::sleep(POLL_INTERVAL);
@@ -929,7 +943,7 @@ fn prove_terminal_interrupt_runs_ordered_shutdown(binary: &Path) -> Result<(), B
         .env("HOME", TemporaryDirectory::test_home_path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(StderrLog::stdio()?)
         .process_group(0)
         .spawn()?;
     let child = ChildGuard::new(child);

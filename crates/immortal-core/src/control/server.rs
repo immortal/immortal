@@ -103,6 +103,25 @@ impl ControlCommand {
     pub fn respond(self, response: Response) -> Result<(), Box<Response>> {
         self.response.send(response).map_err(Box::new)
     }
+
+    /// Build an accepted command for in-crate tests, without a socket.
+    ///
+    /// The peer is the current effective user, whom the listener always
+    /// authorizes; the receiver observes the response the executor sends.
+    #[cfg(test)]
+    pub(crate) fn for_test(request: Request) -> (Self, oneshot::Receiver<Response>) {
+        let (response, receiver) = oneshot::channel();
+        let command = Self {
+            request,
+            peer: PeerCredentials {
+                uid: nix::unistd::geteuid().as_raw(),
+                gid: nix::unistd::getegid().as_raw(),
+                pid: None,
+            },
+            response,
+        };
+        (command, receiver)
+    }
 }
 
 /// Run the authenticated socket side of the control server.

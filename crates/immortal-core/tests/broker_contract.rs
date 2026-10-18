@@ -99,6 +99,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .into());
             }
         }
+        // A group stop's CONT can reach the broker after the reap above. The
+        // generation is gone by then, so the broker still answers it, with a
+        // failure the supervisor must drain before it shuts the broker down.
+        client
+            .signal(signaled, BrokerSignalScope::Group, ProcessSignal::Continue)
+            .await?;
+        match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await?? {
+            ProcessBrokerEvent::SignalFailed {
+                generation,
+                os_error: None,
+            } if generation == signaled => {}
+            event => {
+                return Err(io::Error::other(format!(
+                    "expected a failed acknowledgement after the reap, received {event:?}"
+                ))
+                .into());
+            }
+        }
 
         let ready = generation(4)?;
         let mut command = ProcessCommand::new("/bin/sh");

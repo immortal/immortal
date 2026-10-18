@@ -375,48 +375,41 @@ pub(super) fn finish_completion(
     Ok(())
 }
 
+/// Settle the oldest owed signal request with the broker's acknowledgement.
+///
+/// `delivery` is `Err` for every failed acknowledgement, including one without
+/// an OS error: the broker answers a signal for a generation it has already
+/// reaped that way, so an operator request racing the service's exit is told it
+/// failed rather than receiving its prepared success.
 pub(super) fn finish_signal_request(
     pending: &mut VecDeque<PendingSignal>,
     generation: Generation,
-    os_error: Option<i32>,
+    delivery: Result<(), Option<i32>>,
 ) -> Result<(), ExecutorError> {
     let Some(signal) = pending.pop_front() else {
-        return Err(ExecutorError::UnexpectedBrokerEvent(os_error.map_or(
-            ProcessBrokerEvent::SignalDelivered { generation },
-            |os_error| ProcessBrokerEvent::SignalFailed {
+        return Err(ExecutorError::UnexpectedBrokerEvent(match delivery {
+            Ok(()) => ProcessBrokerEvent::SignalDelivered { generation },
+            Err(os_error) => ProcessBrokerEvent::SignalFailed {
                 generation,
-                os_error: Some(os_error),
+                os_error,
             },
-        )));
+        }));
     };
     if let PendingSignal::Control {
         command,
         mut success,
     } = signal
     {
-        if let Some(os_error) = os_error {
+        if let Err(os_error) = delivery {
             success.code = ResponseCode::Internal;
-            success.message =
-                format!("signal delivery failed with operating-system error {os_error}");
+            success.message = os_error.map_or_else(
+                || "signal delivery failed because the service had already exited".to_owned(),
+                |os_error| format!("signal delivery failed with operating-system error {os_error}"),
+            );
         }
         let _ = command.respond(*success);
     }
     Ok(())
-}
-
-pub(super) fn respond_abandoned_signals(pending: &mut VecDeque<PendingSignal>) {
-    while let Some(signal) = pending.pop_front() {
-        if let PendingSignal::Control {
-            command,
-            mut success,
-        } = signal
-        {
-            success.code = ResponseCode::Internal;
-            "supervisor exited before signal delivery was acknowledged"
-                .clone_into(&mut success.message);
-            let _ = command.respond(*success);
-        }
-    }
 }
 
 pub(super) fn outcome(

@@ -61,7 +61,7 @@ use self::{
     completion::{
         LifetimeResult, complete_generation, finish_completion, finish_descriptor_generation,
         finish_detach, finish_signal_request, handle_lifetime_event, handle_service_child_event,
-        outcome, publish_readiness, respond_abandoned_signals,
+        outcome, publish_readiness,
     },
     context::{
         AuxiliaryExecution, DescriptorExecution, ExecutionContext, ExecutorEvent,

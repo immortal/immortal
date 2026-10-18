@@ -261,6 +261,16 @@ once the supervisor has already handled the failure and moved into backoff, a
 terminal failure, or a newer generation. Any generation the supervisor has
 already issued is therefore stale bookkeeping and is absorbed, while a reap for
 a generation it never issued remains a protocol fault.
+Signal acknowledgements can trail a reap in the same way. A group stop sends
+TERM and then CONT as separate broker requests, so the broker can reap a service
+which dies on TERM before it reads CONT, and then acknowledge CONT as failed for
+the generation it has already removed. The supervisor therefore drains every
+owed acknowledgement within one bounded broker-event deadline, then begins
+logger shutdown in the same pass, so the loop never waits without an event or
+deadline to wake it; broker shutdown keeps rejecting any acknowledgement left
+unread. A failed acknowledgement settles an operator signal as failed even
+without an OS error, so a signal racing the service's exit is never reported as
+delivered.
 The supervisor event loop remains the sole lifecycle owner. The control accept
 loop treats peer-attributable and resource-attributable accept failures as
 transient: aborted or reset peers, interrupted accepts, and descriptor or

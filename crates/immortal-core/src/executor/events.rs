@@ -324,12 +324,12 @@ pub(super) async fn handle_service_broker_event(
             Ok(())
         }
         ProcessBrokerEvent::SignalDelivered { generation } => {
-            finish_signal_request(&mut execution.pending_signals, generation, None)
+            finish_signal_request(&mut execution.pending_signals, generation, Ok(()))
         }
         ProcessBrokerEvent::SignalFailed {
             generation,
             os_error,
-        } => finish_signal_request(&mut execution.pending_signals, generation, os_error),
+        } => finish_signal_request(&mut execution.pending_signals, generation, Err(os_error)),
         ProcessBrokerEvent::GenerationReady { generation }
             if owns_generation(execution, generation) =>
         {

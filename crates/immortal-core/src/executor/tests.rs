@@ -1,6 +1,7 @@
 //! Tests spanning executor logger state and foreground terminal detection.
 
 use std::{
+    collections::VecDeque,
     error::Error,
     time::{Duration, Instant},
 };
@@ -8,17 +9,23 @@ use std::{
 use tokio::net::UnixStream;
 use tokio::time::Instant as TokioInstant;
 
-use super::completion::handle_service_child_event;
+use super::broker::shutdown_broker;
+use super::completion::{finish_signal_request, handle_service_child_event};
+use super::control::begin_supervisor_shutdown;
 use super::events::{handle_broker_event, handle_generation_ready, owns_generation};
 use super::prepare::prepare_execution;
+use super::runtime::finish_supervision;
 use super::timers::handle_executor_timer;
 use super::{
     DesiredState, ExecutionContext, ExecutorError, LoggerExecution, LoggerExecutionState,
-    LoggerShutdownTier, ServiceConfig, advance_childless_state, logger_status,
-    next_logger_shutdown_tier, schedule_logger_restart, supervision_finished,
+    LoggerShutdownState, LoggerShutdownTier, PendingSignal, ServiceConfig, advance_childless_state,
+    logger_status, next_logger_shutdown_tier, schedule_logger_restart, supervision_finished,
 };
 use crate::{
     config::{BackoffConfig, LoggerRestartConfig, MAX_SCHEDULE_SECONDS},
+    control::{
+        ControlCommand, GenerationMatch, Operation, Request, Response, ResponseCode, SignalScope,
+    },
     process::{
         BrokerLoggerId, BrokerTaskId, ChildEvent, ProcessBrokerClient, ProcessBrokerEvent,
         ProcessId,
@@ -540,4 +547,327 @@ async fn a_timer_in_a_paused_state_disarms_instead_of_faulting() -> Result<(), B
         }
     );
     Ok(())
+}
+
+/// Regression: a CONT acknowledgement trailing the reap failed broker shutdown.
+///
+/// A group stop sends TERM and CONT as separate requests. When the broker reaps
+/// the service between them, the `Child` event finishes supervision while the
+/// CONT acknowledgement is still owed, and broker shutdown met it as an
+/// unexpected event: a graceful SIGINT exited 70 on a loaded FreeBSD host. The
+/// loop's exit decision must drain it and yield the outcome in the same pass:
+/// returning early after the drain left the loop waiting for an event that
+/// could no longer arrive.
+#[tokio::test]
+async fn group_stop_drains_a_continue_acknowledgement_that_trails_the_reap()
+-> Result<(), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let prepared = prepare_execution(&config, false)?;
+    let (supervisor, mut broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let (mut execution, generation) = started_execution()?;
+
+    begin_supervisor_shutdown(
+        &mut client,
+        &mut execution.machine,
+        &mut execution.pending_stop,
+        &mut execution.deadline,
+        &mut execution.stop_kill_sent,
+        &mut execution.pending_signals,
+    )
+    .await?;
+    assert_eq!(execution.pending_signals.len(), 2, "TERM and CONT are owed");
+    for event in [
+        ProcessBrokerEvent::SignalDelivered { generation },
+        ProcessBrokerEvent::Child {
+            generation,
+            event: ChildEvent::Signaled {
+                pid: broker_process()?,
+                signal: 15,
+            },
+        },
+    ] {
+        handle_broker_event(
+            &mut client,
+            event,
+            &prepared.execution,
+            &config,
+            &mut execution,
+        )
+        .await?;
+    }
+    let finished = supervision_finished(&execution.machine, false, execution.first_start);
+    assert!(finished, "the reap finishes supervision");
+    assert_eq!(
+        execution.pending_signals.len(),
+        1,
+        "the CONT acknowledgement is still owed after the reap"
+    );
+
+    ProcessBrokerClient::write_test_event(
+        &mut broker,
+        &ProcessBrokerEvent::SignalFailed {
+            generation,
+            os_error: None,
+        },
+    )
+    .await?;
+    let outcome = finish_supervision(
+        &mut client,
+        &prepared.execution,
+        &config,
+        &mut execution,
+        finished,
+    )
+    .await?
+    .ok_or("one pass must drain the acknowledgement and finish supervision")?;
+    assert!(execution.pending_signals.is_empty());
+    assert_eq!(outcome.state, SupervisorState::Exited);
+
+    ProcessBrokerClient::write_test_event(&mut broker, &ProcessBrokerEvent::ShutdownComplete)
+        .await?;
+    shutdown_broker(&mut client).await?;
+    Ok(())
+}
+
+/// Regression: draining a trailing acknowledgement stalled logger shutdown.
+///
+/// With loggers configured, the pass which drains the acknowledgement must
+/// also begin closing logger inputs and arm a deadline; returning after the
+/// drain alone left no event or deadline to wake the supervision loop, so a
+/// halted logged service never exited.
+#[tokio::test]
+async fn draining_a_trailing_acknowledgement_starts_logger_shutdown() -> Result<(), Box<dyn Error>>
+{
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let prepared = prepare_execution(&config, false)?;
+    let (supervisor, mut broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let mut execution =
+        ExecutionContext::new(&config, vec![BrokerLoggerId::shared_logger()], false);
+    for logger in &mut execution.loggers {
+        logger.state = LoggerExecutionState::Running {
+            task: BrokerTaskId::new(1).ok_or("invalid test task")?,
+            started_at: Instant::now(),
+        };
+    }
+    execution.machine.set_desired(DesiredState::Up);
+    execution.machine.begin_start()?;
+    let generation = execution.machine.preconditions_ready()?;
+    execution.machine.child_started(generation)?;
+
+    begin_supervisor_shutdown(
+        &mut client,
+        &mut execution.machine,
+        &mut execution.pending_stop,
+        &mut execution.deadline,
+        &mut execution.stop_kill_sent,
+        &mut execution.pending_signals,
+    )
+    .await?;
+    for event in [
+        ProcessBrokerEvent::SignalDelivered { generation },
+        ProcessBrokerEvent::Child {
+            generation,
+            event: ChildEvent::Signaled {
+                pid: broker_process()?,
+                signal: 15,
+            },
+        },
+    ] {
+        handle_broker_event(
+            &mut client,
+            event,
+            &prepared.execution,
+            &config,
+            &mut execution,
+        )
+        .await?;
+    }
+    ProcessBrokerClient::write_test_event(
+        &mut broker,
+        &ProcessBrokerEvent::SignalFailed {
+            generation,
+            os_error: None,
+        },
+    )
+    .await?;
+
+    let finished = supervision_finished(&execution.machine, false, execution.first_start);
+    let outcome = finish_supervision(
+        &mut client,
+        &prepared.execution,
+        &config,
+        &mut execution,
+        finished,
+    )
+    .await?;
+
+    assert!(outcome.is_none(), "logger shutdown is still in progress");
+    assert!(execution.pending_signals.is_empty());
+    assert!(
+        matches!(
+            execution.logger_shutdown,
+            LoggerShutdownState::ClosingInputs { .. }
+        ),
+        "the draining pass must begin closing logger inputs"
+    );
+    assert!(
+        execution.next_deadline().is_some(),
+        "the supervision loop must have a deadline to wake on"
+    );
+    Ok(())
+}
+
+/// An unfinished lifecycle leaves in-flight acknowledgements to the event loop.
+#[tokio::test]
+async fn finishing_supervision_ignores_acknowledgements_owed_by_a_live_generation()
+-> Result<(), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let prepared = prepare_execution(&config, false)?;
+    let (supervisor, _broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let (mut execution, _generation) = started_execution()?;
+    execution
+        .pending_signals
+        .push_back(PendingSignal::Lifecycle);
+
+    let finished = finish_supervision(
+        &mut client,
+        &prepared.execution,
+        &config,
+        &mut execution,
+        false,
+    )
+    .await?;
+
+    assert!(finished.is_none());
+    assert_eq!(execution.pending_signals.len(), 1);
+    Ok(())
+}
+
+/// Broker shutdown stays strict, so an owed acknowledgement must be drained first.
+#[tokio::test]
+async fn broker_shutdown_rejects_an_unread_signal_acknowledgement() -> Result<(), Box<dyn Error>> {
+    let (supervisor, mut broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let generation = Generation::new(1).ok_or("invalid test generation")?;
+    let trailing = ProcessBrokerEvent::SignalFailed {
+        generation,
+        os_error: None,
+    };
+    ProcessBrokerClient::write_test_event(&mut broker, &trailing).await?;
+
+    match shutdown_broker(&mut client).await {
+        Err(ExecutorError::UnexpectedBrokerEvent(event)) if event == trailing => Ok(()),
+        outcome => {
+            Err(format!("expected the unread acknowledgement to fail, got {outcome:?}").into())
+        }
+    }
+}
+
+/// An owed acknowledgement which can never arrive fails instead of hanging.
+#[tokio::test]
+async fn finishing_supervision_fails_when_the_broker_closes_with_an_acknowledgement_owed()
+-> Result<(), Box<dyn Error>> {
+    let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let prepared = prepare_execution(&config, false)?;
+    let (supervisor, broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let (mut execution, _generation) = started_execution()?;
+    execution
+        .pending_signals
+        .push_back(PendingSignal::Lifecycle);
+    drop(broker);
+
+    match finish_supervision(
+        &mut client,
+        &prepared.execution,
+        &config,
+        &mut execution,
+        true,
+    )
+    .await
+    {
+        Err(ExecutorError::Broker(_)) => {}
+        outcome => {
+            return Err(format!("expected a broker read failure, got {outcome:?}").into());
+        }
+    }
+    assert_eq!(execution.pending_signals.len(), 1);
+    Ok(())
+}
+
+/// A pending operator signal with the response its prepared success sends.
+fn pending_operator_signal(
+    generation: Generation,
+) -> (PendingSignal, tokio::sync::oneshot::Receiver<Response>) {
+    let (command, response) = ControlCommand::for_test(Request {
+        operation: Operation::Signal,
+        service: "trailing".to_owned(),
+        expected_generation: GenerationMatch::Any,
+        scope: SignalScope::Main,
+        signal: None,
+    });
+    let success = Response {
+        code: ResponseCode::Ok,
+        generation: Some(generation),
+        message: "signal delivered".to_owned(),
+        status: None,
+    };
+    let pending = PendingSignal::Control {
+        command,
+        success: Box::new(success),
+    };
+    (pending, response)
+}
+
+/// A delivered acknowledgement answers the operator with the prepared success.
+#[test]
+fn a_delivered_acknowledgement_keeps_the_operator_success() -> Result<(), Box<dyn Error>> {
+    let generation = Generation::new(1).ok_or("invalid test generation")?;
+    let (signal, mut response) = pending_operator_signal(generation);
+    let mut pending = VecDeque::from([signal]);
+
+    finish_signal_request(&mut pending, generation, Ok(()))?;
+
+    assert_eq!(response.try_recv()?.code, ResponseCode::Ok);
+    assert!(pending.is_empty());
+    Ok(())
+}
+
+/// Regression: a signal for an already-reaped generation answered the operator Ok.
+///
+/// The broker acknowledges such a signal as failed without an OS error. That
+/// acknowledgement was settled as delivered, so an operator signal racing the
+/// service's exit was told it succeeded once supervision drained it.
+#[test]
+fn a_failed_acknowledgement_without_an_os_error_fails_the_operator_signal()
+-> Result<(), Box<dyn Error>> {
+    let generation = Generation::new(1).ok_or("invalid test generation")?;
+    let (signal, mut response) = pending_operator_signal(generation);
+    let mut pending = VecDeque::from([signal]);
+
+    finish_signal_request(&mut pending, generation, Err(None))?;
+
+    let answered = response.try_recv()?;
+    assert_eq!(answered.code, ResponseCode::Internal);
+    assert!(answered.message.contains("already exited"));
+    assert!(pending.is_empty());
+    Ok(())
+}
+
+/// An acknowledgement nobody is owed is reported as the failure it was.
+#[test]
+fn an_unowed_failed_acknowledgement_is_reported_as_failed() -> Result<(), Box<dyn Error>> {
+    let generation = Generation::new(1).ok_or("invalid test generation")?;
+    match finish_signal_request(&mut VecDeque::new(), generation, Err(None)) {
+        Err(ExecutorError::UnexpectedBrokerEvent(ProcessBrokerEvent::SignalFailed {
+            generation: reported,
+            os_error: None,
+        })) if reported == generation => Ok(()),
+        outcome => {
+            Err(format!("expected an unexpected failed acknowledgement, got {outcome:?}").into())
+        }
+    }
 }
