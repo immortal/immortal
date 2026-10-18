@@ -122,6 +122,14 @@ func (s *Supervisor) Terminate(err error) bool {
 			s.wait = time.Second - uptime
 		}
 	}
+	exitcode := 0
+	if exitError, ok := err.(*exec.ExitError); ok {
+		exitcode = exitError.ExitCode()
+	}
+	// halt when exit code 0 if retry until exit 0 option is enabled
+	if s.daemon.cfg.RetryUntilExit0 && exitcode == 0 && err == nil {
+		return true
+	}
 	// behavior based on the retries
 	if s.daemon.cfg.Retries >= 0 {
 		//  0 run only once (don't retry)

@@ -47,6 +47,9 @@ func (p *Parse) Parse(fs *flag.FlagSet) (*Flags, error) {
 	fs.StringVar(&p.Flags.User, "u", "", "Execute command on behalf `user`")
 	fs.StringVar(&p.Flags.Wrkdir, "d", "", "Change to `dir` before starting the command")
 	fs.UintVar(&p.Flags.Wait, "w", 0, "`seconds` to wait before starting")
+	fs.BoolVar(&p.Flags.RetryUntilExit0, "z", false, "Halt when exit code 0, retrying on non-zero")
+	fs.BoolVar(&p.Flags.RetryUntilExit0, "exit-zero", false, "Halt when exit code 0, retrying on non-zero")
+	fs.BoolVar(&p.Flags.RetryUntilExit0, "retry-until-exit-0", false, "Halt when exit code 0, retrying on non-zero")
 
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
@@ -64,6 +67,9 @@ func (p *Parse) parseYml(file string) (*Config, error) {
 	var cfg = Config{Retries: -1}
 	if err := yaml.Unmarshal(f, &cfg); err != nil {
 		return nil, fmt.Errorf("unable to parse YAML file %q %s", file, err)
+	}
+	if cfg.ExitZero {
+		cfg.RetryUntilExit0 = true
 	}
 	return &cfg, nil
 }
@@ -120,7 +126,7 @@ func (p *Parse) checkUser(u string) (*user.User, error) {
 // Usage prints to standard error a usage message
 func (p *Parse) Usage(fs *flag.FlagSet) func() {
 	return func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [-v] [-n] [-cc] [-c run.yml] [-ctl dir] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-r retries] [-u user] [-w seconds] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [-v] [-n] [-cc] [-c run.yml] [-ctl dir] [-d dir] [-e dir] [-f pidfile] [-l logfile] [-logger logger] [-p child_pidfile] [-P supervisor_pidfile] [-r retries] [-u user] [-w seconds] [-z] command\n\n   command\n        The command with arguments if any, to supervise\n\n", os.Args[0])
 		var flags []string
 		fs.VisitAll(func(f *flag.Flag) {
 			flags = append(flags, f.Name)
@@ -214,6 +220,11 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 
 		cfg.ctl = sdir
 
+		// if -z
+		if flags.RetryUntilExit0 {
+			cfg.RetryUntilExit0 = true
+		}
+
 		// print config and exit 0 if config ok
 		if flags.CheckConfig {
 			y, _ := yaml.Marshal(&cfg)
@@ -283,6 +294,11 @@ func ParseArgs(p Parser, fs *flag.FlagSet) (cfg *Config, err error) {
 	// if -r
 	if flags.Retries >= 0 {
 		cfg.Retries = flags.Retries
+	}
+
+	// if -z
+	if flags.RetryUntilExit0 {
+		cfg.RetryUntilExit0 = true
 	}
 
 	// if -w

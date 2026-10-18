@@ -252,3 +252,236 @@ func TestRetries(t *testing.T) {
 		})
 	}
 }
+
+func TestRetryUntilExit0_CleanExit(t *testing.T) {
+	sdir, err := os.MkdirTemp("", "TestRetryUntilExit0_CleanExit")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
+	log.SetOutput(io.Discard)
+	log.SetFlags(0)
+
+	cfg := &Config{
+		Env:             map[string]string{"GO_WANT_HELPER_PROCESS": "nosleep"},
+		command:         []string{os.Args[0]},
+		Cwd:             sdir,
+		ctl:             sdir,
+		Retries:         -1,
+		RetryUntilExit0: true,
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		Supervise(d)
+	}()
+
+	status := &Status{}
+	// wait for first run to finish and halt
+	time.Sleep(500 * time.Millisecond)
+	for i := 0; i < 10; i++ {
+		GetJSON(filepath.Join(sdir, "immortal.sock"), "/", status)
+		time.Sleep(100 * time.Millisecond)
+	}
+	close(d.quit)
+	wg.Wait()
+	d.RLock()
+	expect(t, 1, d.count)
+	d.RUnlock()
+}
+
+func TestRetryUntilExit0_CleanExitWithRetriesConfigured(t *testing.T) {
+	sdir, err := os.MkdirTemp("", "TestRetryUntilExit0_CleanExitWithRetriesConfigured")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
+	log.SetOutput(io.Discard)
+	log.SetFlags(0)
+
+	cfg := &Config{
+		Env:             map[string]string{"GO_WANT_HELPER_PROCESS": "nosleep"},
+		command:         []string{os.Args[0]},
+		Cwd:             sdir,
+		ctl:             sdir,
+		Retries:         3,
+		RetryUntilExit0: true,
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		Supervise(d)
+	}()
+
+	status := &Status{}
+	time.Sleep(500 * time.Millisecond)
+	for i := 0; i < 10; i++ {
+		GetJSON(filepath.Join(sdir, "immortal.sock"), "/", status)
+		time.Sleep(100 * time.Millisecond)
+	}
+	close(d.quit)
+	wg.Wait()
+	d.RLock()
+	expect(t, 1, d.count)
+	d.RUnlock()
+}
+
+func TestRetryUntilExit0_NonZeroExitRetries(t *testing.T) {
+	sdir, err := os.MkdirTemp("", "TestRetryUntilExit0_NonZeroExitRetries")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
+	log.SetOutput(io.Discard)
+	log.SetFlags(0)
+
+	cfg := &Config{
+		Env:             map[string]string{"GO_WANT_HELPER_PROCESS": "exit1"},
+		command:         []string{os.Args[0]},
+		Cwd:             sdir,
+		ctl:             sdir,
+		Retries:         2,
+		RetryUntilExit0: true,
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		Supervise(d)
+	}()
+
+	status := &Status{}
+	for status.Count < 3 {
+		err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/", status)
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	close(d.quit)
+	wg.Wait()
+	d.RLock()
+	expect(t, 3, d.count)
+	d.RUnlock()
+}
+
+func TestRetryUntilExit0_FailThenSuccess(t *testing.T) {
+	sdir, err := os.MkdirTemp("", "TestRetryUntilExit0_FailThenSuccess")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
+	log.SetOutput(io.Discard)
+	log.SetFlags(0)
+
+	markerFile := filepath.Join(sdir, "marker")
+	cfg := &Config{
+		Env: map[string]string{
+			"GO_WANT_HELPER_PROCESS": "failOnce",
+			"TEST_FAIL_ONCE_MARKER":  markerFile,
+		},
+		command:         []string{os.Args[0]},
+		Cwd:             sdir,
+		ctl:             sdir,
+		Retries:         5,
+		RetryUntilExit0: true,
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		Supervise(d)
+	}()
+
+	status := &Status{}
+	// wait until count is 2 (first attempt exit 1, second attempt exit 0 and halts)
+	for status.Count < 2 {
+		err := GetJSON(filepath.Join(sdir, "immortal.sock"), "/", status)
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	// give it time to verify it does not retry a 3rd time
+	for i := 0; i < 5; i++ {
+		time.Sleep(200 * time.Millisecond)
+		GetJSON(filepath.Join(sdir, "immortal.sock"), "/", status)
+	}
+	close(d.quit)
+	wg.Wait()
+	d.RLock()
+	expect(t, 2, d.count)
+	d.RUnlock()
+}
+
+func TestRetryUntilExit0_CLI_Exit(t *testing.T) {
+	sdir, err := os.MkdirTemp("", "TestRetryUntilExit0_CLI_Exit")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(sdir)
+	log.SetOutput(io.Discard)
+	log.SetFlags(0)
+
+	cfg := &Config{
+		Env:             map[string]string{"GO_WANT_HELPER_PROCESS": "nosleep"},
+		command:         []string{os.Args[0]},
+		Cwd:             sdir,
+		ctl:             sdir,
+		Retries:         -1,
+		RetryUntilExit0: true,
+		cli:             true,
+	}
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- Supervise(d)
+	}()
+
+	select {
+	case <-done:
+		// Supervise returned because exit 0 closed s.daemon.quit
+	case <-time.After(5 * time.Second):
+		t.Fatal("Supervise did not exit in time")
+	}
+	d.RLock()
+	expect(t, 1, d.count)
+	d.RUnlock()
+}
+

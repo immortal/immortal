@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,6 +30,10 @@ func TestMain(m *testing.M) {
 		GWHPsignalsFiFo()
 	case "logSIGPIPE":
 		GWHPlogSIGPIPE()
+	case "exit1":
+		os.Exit(1)
+	case "failOnce":
+		GWHPfailOnce()
 	default:
 		os.Exit(m.Run())
 	}
@@ -36,7 +41,7 @@ func TestMain(m *testing.M) {
 
 // GWHPsleep1 - test function, exit 1 after sleeping 10 seconds
 func GWHPsleep10() {
-	c := make(chan os.Signal)
+	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)
 	select {
 	case <-c:
@@ -54,7 +59,7 @@ func GWHPnosleep() {
 // GWHPsignalsUDOT - test function for signals up, down, once, terminate
 func GWHPsignalsUDOT() {
 	fmt.Println("5D675098-45D7-4089-A72C-3628713EA5BA")
-	c := make(chan os.Signal)
+	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)
 	select {
 	case <-c:
@@ -73,6 +78,7 @@ func GWHPlogstdoutstderr() {
 			fmt.Printf("STDOUT i: %d\n", i)
 		}
 	}
+	os.Exit(0)
 }
 
 // GWHPsignalsFiFo - test signals via pipe
@@ -91,7 +97,17 @@ func GWHPsignalsFiFo() {
 		syscall.SIGUSR2,
 		syscall.SIGWINCH,
 	)
-	fifo, err := OpenFifo(filepath.Join(tmpdir, "fifo"))
+	var (
+		fifo io.WriteCloser
+		err  error
+	)
+	for i := 0; i < 20; i++ {
+		fifo, err = OpenFifo(filepath.Join(tmpdir, "fifo"))
+		if err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -200,3 +216,17 @@ func (b *myBuffer) Reset() {
 	defer b.Unlock()
 	b.b.Reset()
 }
+
+// GWHPfailOnce - test helper, exits 1 on first invocation, exits 0 on subsequent calls
+func GWHPfailOnce() {
+	marker := os.Getenv("TEST_FAIL_ONCE_MARKER")
+	if marker == "" {
+		os.Exit(1)
+	}
+	if _, err := os.Stat(marker); os.IsNotExist(err) {
+		os.WriteFile(marker, []byte("1"), 0644)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+

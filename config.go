@@ -16,9 +16,11 @@ type Config struct {
 	RequireCmd string            `yaml:"require_cmd,omitempty"`
 	PostExit   string            `yaml:"post_exit,omitempty"`
 	User       string            `yaml:",omitempty" json:",omitempty"`
-	Wait       uint              `yaml:",omitempty"`
-	Retries    int               `yaml:",omitempty"`
-	Pid        `yaml:",omitempty" json:",omitempty"`
+	Wait            uint              `yaml:",omitempty"`
+	Retries         int               `yaml:",omitempty"`
+	RetryUntilExit0 bool              `yaml:"retry_until_exit_0,omitempty" json:"retry_until_exit_0,omitempty"`
+	ExitZero        bool              `yaml:"exit_zero,omitempty" json:"exit_zero,omitempty"`
+	Pid             `yaml:",omitempty" json:",omitempty"`
 	cli        bool
 	command    []string
 	configFile string

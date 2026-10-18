@@ -70,6 +70,9 @@ Options start with one dash. Many of the options require an additional value nex
 -w <seconds>
         Seconds (int) to wait before starting.
 
+-z
+        Halt when the process exits with code 0, retrying on non-zero exit status.
+
 -cc
 
         Checks the config file, print the config and exits with code 0 if no error was found, or exits with code 1 an error was found.
@@ -101,6 +104,7 @@ Options start with one dash. Many of the options require an additional value nex
         user: <user>                     # option -u
         wait: <int>                      # option -w
         retries: <int>                   # option -r
+        retry_until_exit_0: <bool>       # option -z, halt when exit code is 0
         require:                         # list of services that need to be running before starting
           - foo
           - bar

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -26,6 +27,7 @@ type process struct {
 	errch        chan error
 	quit         chan struct{}
 	sTime, eTime time.Time
+	logWg        sync.WaitGroup
 }
 
 // SetEnv set environment variables - If the Cmd.Env contains duplicate
@@ -97,12 +99,20 @@ func (p *process) Start() (*process, error) {
 		prStdout, pwStdout, e = os.Pipe()
 		if e == nil {
 			p.cmd.Stdout = pwStdout
-			go p.Logger.Log(prStdout)
+			p.logWg.Add(1)
+			go func() {
+				defer p.logWg.Done()
+				p.Logger.Log(prStdout)
+			}()
 		}
 		prStderr, pwStderr, e = os.Pipe()
 		if e == nil {
 			p.cmd.Stderr = pwStderr
-			go p.LoggerStderr.Log(prStderr)
+			p.logWg.Add(1)
+			go func() {
+				defer p.logWg.Done()
+				p.LoggerStderr.Log(prStderr)
+			}()
 		}
 	} else if p.Logger.IsLogging() {
 		// create the pipes for Stdout
@@ -110,14 +120,22 @@ func (p *process) Start() (*process, error) {
 		if e == nil {
 			p.cmd.Stdout = pwStdout
 			p.cmd.Stderr = pwStdout
-			go p.Logger.Log(prStdout)
+			p.logWg.Add(1)
+			go func() {
+				defer p.logWg.Done()
+				p.Logger.Log(prStdout)
+			}()
 		}
 	} else if p.LoggerStderr.IsLogging() {
 		// create the pipes for Stdout
 		prStderr, pwStderr, e = os.Pipe()
 		if e == nil {
 			p.cmd.Stderr = pwStderr
-			go p.LoggerStderr.Log(prStderr)
+			p.logWg.Add(1)
+			go func() {
+				defer p.logWg.Done()
+				p.LoggerStderr.Log(prStderr)
+			}()
 		}
 	}
 
@@ -145,6 +163,7 @@ func (p *process) Wait(stdout, stderr *os.File) {
 	if stderr != nil {
 		stderr.Close()
 	}
+	p.logWg.Wait()
 	p.errch <- err
 }
 

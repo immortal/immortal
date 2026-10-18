@@ -71,6 +71,7 @@ func TestParseDefault(t *testing.T) {
 	expect(t, false, flags.Nodaemon)
 	expect(t, false, flags.Version)
 	expect(t, false, flags.CheckConfig)
+	expect(t, false, flags.RetryUntilExit0)
 	expect(t, uint(0), flags.Wait)
 }
 
@@ -97,8 +98,12 @@ func TestParseFlags(t *testing.T) {
 		{[]string{"cmd", "-u", "nbari"}, "User", "nbari"},
 		{[]string{"cmd", "-w", "3"}, "Wait", 3},
 		{[]string{"cmd", "-r", "2"}, "Retries", 2},
+		{[]string{"cmd", "-z"}, "RetryUntilExit0", true},
+		{[]string{"cmd", "-exit-zero"}, "RetryUntilExit0", true},
+		{[]string{"cmd", "-retry-until-exit-0"}, "RetryUntilExit0", true},
 		{[]string{"cmd"}, "Nodaemon", false},
 		{[]string{"cmd"}, "Retries", -1},
+		{[]string{"cmd"}, "RetryUntilExit0", false},
 		{[]string{"cmd"}, "Wait", 0},
 	}
 
@@ -690,6 +695,66 @@ retries: 10`)
 		t.Error("help called for regular flag")
 	}
 	expect(t, 10, cfg.Retries)
+}
+
+func TestParseYamlRetryUntilExit0(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "TestParseYamlRetryUntilExit0")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	yaml := []byte(`
+cmd: command
+retry_until_exit_0: true`)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", tmpfile.Name()}
+	parser := &Parse{}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseYamlRetryUntilExit0", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	cfg, err := ParseArgs(parser, fs)
+	if err != nil {
+		t.Error(err)
+	}
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	expect(t, true, cfg.RetryUntilExit0)
+}
+
+func TestParseYamlExitZero(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "TestParseYamlExitZero")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.Remove(tmpfile.Name())
+	yaml := []byte(`
+cmd: command
+exit_zero: true`)
+	err = os.WriteFile(tmpfile.Name(), yaml, 0644)
+	if err != nil {
+		t.Error(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"cmd", "-c", tmpfile.Name()}
+	parser := &Parse{}
+	var helpCalled = false
+	fs := flag.NewFlagSet("TestParseYamlExitZero", flag.ContinueOnError)
+	fs.Usage = func() { helpCalled = true }
+	cfg, err := ParseArgs(parser, fs)
+	if err != nil {
+		t.Error(err)
+	}
+	if helpCalled {
+		t.Error("help called for regular flag")
+	}
+	expect(t, true, cfg.RetryUntilExit0)
 }
 
 func TestParseBadYaml(t *testing.T) {

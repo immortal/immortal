@@ -100,6 +100,7 @@ func NewLogger(cfg *Config, quit chan struct{}) *log.Logger {
 		}
 
 		if err := runLogger(); err != nil {
+			cancel()
 			log.Printf("logger error: %s", err)
 		} else {
 			// keep logger up

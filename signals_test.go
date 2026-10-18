@@ -44,6 +44,10 @@ func TestSignalsFiFo(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+	// Make fifo in/out
+	if err := MakeFifo(filepath.Join(tmpdir, "fifo")); err != nil {
+		t.Fatal(err)
+	}
 	// create new process
 	p, err := d.Run(NewProcess(cfg))
 	if err != nil {
@@ -63,10 +67,6 @@ func TestSignalsFiFo(t *testing.T) {
 		t.Error(err)
 	} else {
 		expect(t, p.Pid(), pid)
-	}
-	// Make fifo in/out
-	if err := MakeFifo(filepath.Join(tmpdir, "fifo")); err != nil {
-		t.Fatal(err)
 	}
 	// sync fifo
 	time.Sleep(time.Second)

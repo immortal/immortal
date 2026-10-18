@@ -13,9 +13,10 @@ type Flags struct {
 	Logger      string
 	Name        string
 	Nodaemon    bool
-	ParentPid   string
-	Retries     int
-	User        string
+	ParentPid       string
+	Retries         int
+	RetryUntilExit0 bool
+	User            string
 	Version     bool
 	Wait        uint
 	Wrkdir      string

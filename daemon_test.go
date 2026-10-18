@@ -42,6 +42,9 @@ func TestDaemonNewCtl(t *testing.T) {
 }
 
 func TestDaemonNewCtlErr(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping test; root ignores permissions")
+	}
 	dir, err := os.MkdirTemp("", "TestDaemonNewCtlErr")
 	if err != nil {
 		t.Error(err)
@@ -161,6 +164,9 @@ func TestBadPid(t *testing.T) {
 }
 
 func TestUser(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping test; root can run as uid 0")
+	}
 	dir, err := os.MkdirTemp("", "TestUser")
 	if err != nil {
 		t.Error(err)
@@ -349,7 +355,7 @@ func TestSignalsUDOT(t *testing.T) {
 	t.Log("testing up")
 	go func() {
 		if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "up"); err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 	}()
 	<-d.run
@@ -388,7 +394,7 @@ func TestSignalsUDOT(t *testing.T) {
 	t.Log("testing u")
 	go func() {
 		if _, err := ctl.SendSignal(filepath.Join(sdir, "immortal.sock"), "u"); err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
 	}()
 	<-d.run
