@@ -840,6 +840,8 @@ the definitions/runtime filesystems and basic networking machinery exist, then
 use each service's broker-executed `start_condition` for the exact resource it
 needs. Interfaces, routes, DNS, remote peers, and credentials can change after
 boot, so “the network target ran” is not application readiness.
+[`examples/conditions/network-online.yml`](examples/conditions/network-online.yml)
+waits for a default route, such as one configured by DHCP, before every start.
 
 - On Linux with systemd, install a normal `Type=simple` unit for
   `immortaldir`. Add both `Wants=network-online.target` and

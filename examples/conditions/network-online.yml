@@ -1,0 +1,22 @@
+---
+# Start the service only after the host has a default route, for example once
+# DHCP has configured an interface (issue #68). The condition runs before every
+# start and retries with its own backoff; failed checks never consume restart
+# limits. Prefer checking the exact resource the service needs, such as a DNS
+# name or a TCP port, because a route alone does not prove that a peer is up.
+version: 2
+command: [/bin/sleep, "30"]
+restart:
+  policy: always
+start_condition:
+  # `ip` on Linux; `route -n get` on FreeBSD and macOS.
+  command:
+    - /bin/sh
+    - -c
+    - ip -4 route show default 2>/dev/null | grep -q . || route -n get default > /dev/null 2>&1
+  timeout_seconds: 10
+  backoff:
+    initial_seconds: 1
+    max_seconds: 30
+    multiplier: 2
+    jitter_percent: 20

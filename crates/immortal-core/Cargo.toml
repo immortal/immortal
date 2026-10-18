@@ -86,6 +86,11 @@ path = "tests/condition_retry_contract.rs"
 harness = false
 
 [[test]]
+name = "condition_wait_contract"
+path = "tests/condition_wait_contract.rs"
+harness = false
+
+[[test]]
 name = "condition_timeout_contract"
 path = "tests/condition_timeout_contract.rs"
 harness = false

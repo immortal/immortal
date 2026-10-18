@@ -6,14 +6,32 @@
 //! read these files, so a schema change could leave the first thing a new
 //! operator runs broken while every test still passed. This asserts they parse
 //! through the same public entry point the supervisor uses.
+//!
+//! `examples/conditions/*.yml` are standalone start-condition examples, such as
+//! waiting for a configured network (issue 68); each must also keep its
+//! `start_condition`.
 
 use std::{error::Error, fs, path::PathBuf};
 
-use immortal_core::config::{self, ConfigError};
+use immortal_core::config::{self, ConfigError, ServiceConfig};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let directory = examples_directory()?;
-    let mut names: Vec<PathBuf> = fs::read_dir(&directory)?
+    let examples = examples_directory()?;
+    parse_examples(&examples.join("services"))?;
+    for (path, config) in parse_examples(&examples.join("conditions"))? {
+        if config.start_condition.is_none() {
+            return Err(format!("{} must define a start_condition", path.display()).into());
+        }
+    }
+
+    prove_a_broken_example_is_rejected(&examples.join("services"))
+}
+
+/// Parse every `*.yml` definition in `directory`, which must contain at least one.
+fn parse_examples(
+    directory: &std::path::Path,
+) -> Result<Vec<(PathBuf, ServiceConfig)>, Box<dyn Error>> {
+    let mut names: Vec<PathBuf> = fs::read_dir(directory)?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| path.extension().is_some_and(|extension| extension == "yml"))
         .collect();
@@ -23,15 +41,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(format!("no example definitions found in {}", directory.display()).into());
     }
 
-    for path in &names {
-        let config = config::parse_file(path)
+    let mut parsed = Vec::with_capacity(names.len());
+    for path in names {
+        let config = config::parse_file(&path)
             .map_err(|error| format!("{} must parse: {error}", path.display()))?;
         if config.command.is_empty() {
             return Err(format!("{} must define a command", path.display()).into());
         }
+        parsed.push((path, config));
     }
-
-    prove_a_broken_example_is_rejected(&directory)
+    Ok(parsed)
 }
 
 /// The contract only means something if the same entry point rejects bad input.
@@ -51,5 +70,5 @@ fn examples_directory() -> Result<PathBuf, Box<dyn Error>> {
         .parent()
         .and_then(|crates| crates.parent())
         .ok_or("workspace root is not reachable from the manifest directory")?;
-    Ok(root.join("examples").join("services"))
+    Ok(root.join("examples"))
 }
