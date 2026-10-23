@@ -504,7 +504,10 @@ fn closed_lifetime_group_is_awaited_after_its_launcher_exits() -> Result<(), Box
             .argument("-c")
             .argument(format!("{}{}", bounded_shell::PREFIX, concat!(
                 "(exec 4>&-; trap \"\" TERM; : > \"$MARK\"; wait_for \"$STOP\") & ",
-                "wait_for \"$MARK\" 4>&-; exec sleep 30 4>&-",
+                // Close the descriptor permanently before exec: macOS's bash
+                // 3.2 saves it for `exec sleep 30 4>&-`, and sleep inherits
+                // that copy, so the lifetime never closes.
+                "wait_for \"$MARK\" 4>&-; exec 4>&-; exec sleep 30",
             )))
             .environment(environment);
         client
