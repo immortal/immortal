@@ -41,6 +41,9 @@
 //! - `spawn` owns service/logger spawn preparation and group containment.
 //! - `reap` owns child reaping, adopted-orphan hygiene, guard disarming, and
 //!   group signaling.
+//! - `retiring` owns the set of killed groups which must drain before the
+//!   broker exits.
+//! - `settle` owns the bounded wake-ups used by shutdown and cleanup waits.
 //! - `shutdown` owns bounded terminate-then-kill shutdown.
 //! - `supervisor_loss` owns descriptor-tracked cleanup after supervisor loss.
 //! - `wire` owns the bounded frame read/write pairing used by every request
@@ -56,7 +59,9 @@ mod event;
 mod launch;
 mod logging;
 mod reap;
+mod retiring;
 mod runtime;
+mod settle;
 mod shutdown;
 mod spawn;
 mod state;
@@ -72,7 +77,8 @@ use super::{
         BrokerEvent, BrokerProtocolError, BrokerReadinessFailure, BrokerRequest,
         BrokerSignalTarget, HEADER_BYTES, MAX_FRAME_BYTES, declared_frame_length,
     },
-    reap_any_event, signal, spawn as spawn_process, spawn_with_descriptors_in_group,
+    current_process_group, process_group_exists, reap_any_event, signal, spawn as spawn_process,
+    spawn_with_descriptors_in_group,
 };
 
 pub use self::client::{ProcessBrokerClient, ProcessBrokerEndpoint};
@@ -81,4 +87,5 @@ pub use self::event::ProcessBrokerEvent;
 pub(crate) use self::launch::start_process_broker_with_logging;
 pub use self::launch::{start_process_broker, start_process_broker_with_lifetime};
 pub(crate) use self::logging::{BrokerFileRoute, BrokerLoggerId, BrokerLoggingPlan};
+pub(crate) use self::shutdown::BROKER_SHUTDOWN_BOUND;
 pub use self::types::{BrokerLifetimePlan, BrokerSignalScope, BrokerTaskId, ReadinessFailure};

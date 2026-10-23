@@ -64,6 +64,17 @@ definition migration, and rollback.
 
 ## Safety model
 
+- Before daemonization or any process-broker fork, `immortal` and `immortaldir`
+  restore inherited ignored `SIGCHLD` (or `SA_NOCLDWAIT`) to the default
+  disposition so exited children remain waitable. Correction emits one warning;
+  an already waitable policy, including a valid installed handler, is left
+  unchanged. This process hygiene runs in `immortal-core` before children or
+  runtime threads exist, through one idempotent policy boundary shared by the
+  executor and direct broker startup, so a second call emits no duplicate
+  warning. Correction failure aborts startup before creating a broker
+  (`immortaldir` reports OS-error exit 71). Cleanup refuses broker PID signals
+  if policy or exact-child ownership has been lost. Embedders must preserve
+  exclusive policy and reaping ownership throughout supervision.
 - The process broker remains the direct parent and sole reaper of managed
   children, and where the platform supports it also reaps descendants orphaned
   inside its subtree so they never leak to init. If the broker is force-killed,
@@ -74,7 +85,9 @@ definition migration, and rollback.
 - A service generation is identified by a monotonic generation, never by a PID
   file or signal-0 probe.
 - Each foreground generation owns a process group; lifecycle cleanup targets the
-  owned group and broker loss triggers bounded containment.
+  owned group and broker loss triggers bounded containment. The broker waits,
+  bounded and fail-closed, until every group it killed has no member left
+  before it exits, so nothing it owned reparents to the supervisor.
 - PID files are observation-only metadata.
 - Foreground execution is preferred. Self-daemonizing software requires explicit
   descriptor tracking and lifecycle hooks; numeric PID adoption is unsupported.
@@ -405,7 +418,19 @@ reload hook. Other raw signals and supervisor detachment are rejected because
 there is no adopted PID to target. Hook failure or timeout restores the live
 generation instead of pretending it stopped. If the supervisor connection is
 lost, the pre-runtime broker owns one materialized fallback copy of the stop
-contract, executes it, and waits for lifetime closure before exiting.
+contract, executes it, and waits for lifetime closure before exiting; group
+members still exiting after closure get up to 3 seconds to drain before cleanup
+fails. While the generation is live, its group guard's helper reserves the
+service's process-group ID even after the launcher is reaped. Broker shutdown
+sends `SIGTERM` through that helper to the members still in the group and
+`SIGKILL` after a 2-second grace. Helper loss fails delivery rather than risking
+a direct signal to a reused group ID. A daemon that called `setsid` has left
+the group and is beyond that signal, so shutdown also waits for the lifetime
+descriptor to close and the group to empty, and reports a failed shutdown
+(exit 70) if either persists. Members that closed the descriptor early and
+outlive the generation's completion are awaited, never signalled. The
+generation then stays owned, so supervisor-loss cleanup still runs the stop
+command.
 
 Foreground mode remains preferred because it preserves direct parentage and
 process-group control. Common upstream-supported forms include:

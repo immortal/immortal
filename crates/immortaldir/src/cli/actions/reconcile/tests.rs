@@ -26,7 +26,7 @@ struct TestDirectory(PathBuf);
 impl TestDirectory {
     fn new() -> Result<Self, Box<dyn Error>> {
         let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-        let path = Path::new("/tmp").join(format!(
+        let path = Path::new("/var/tmp").join(format!(
             "immortaldir-action-{}-{sequence}",
             std::process::id()
         ));
@@ -164,7 +164,7 @@ fn repeated_plans_confirm_deletion_without_duplicate_stop() -> Result<(), Box<dy
         &mut repeated,
         &mut Vec::new(),
     )?;
-    assert!(repeated.is_empty());
+    assert_eq!(repeated, Vec::<u8>::new());
     Ok(())
 }
 

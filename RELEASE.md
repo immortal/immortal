@@ -16,13 +16,17 @@ workflow definition or an unreviewed local measurement is not sufficient.
 
 These gates cannot be checked by elapsed time, intention, or generated text.
 
-The process-library gate is complete. Immortal locks the published crates.io
-`fork` 0.10.0 release, including the broker-death containment and child-subreaper
-APIs, without a Git or local patch override. The combined Immortal dependency
-checkpoint passes its native Linux, macOS, and FreeBSD matrices, and `Cargo.lock`
-records the registry source and checksum. Release eligibility remains blocked by
-the external real-host, campaign, and drill gates above, not by the
-process-library dependency.
+The process-library dependency is the published crates.io `fork` 0.11.0
+release, built from fork commit `bf240d69e96b6f5f3ee58861307cdbb623f02b07` and
+locked in `Cargo.lock` with its registry source and checksum
+`9b8b9dc1312e1668be5ffa350e3c0adc9b501b2eeebb1b31206477240cc96554`, without a
+Git or local patch override. It adds the process-group probe, the anchor-pinned
+guard group with helper-mediated delivery, and the waitable-children policy
+APIs that COR-008 and COR-009 rely on; its own native Linux, macOS, and FreeBSD
+matrix is recorded in [VALIDATION.md](VALIDATION.md). The gate completes when
+the Immortal checkpoint locked to it passes its native matrices, which
+VALIDATION.md records under COR-008 and COR-009. Release eligibility remains
+blocked by the external real-host, campaign, and drill gates above.
 
 ## Candidate validation
 

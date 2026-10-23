@@ -2,7 +2,9 @@
 //!
 //! The executor asks the broker to perform child cleanup from inside Tokio, then
 //! drops the runtime and reaps the broker synchronously. A timeout escalates to
-//! killing only the known broker PID and waiting for that exact child event.
+//! killing only a still-owned broker child under waitable policy. An exact
+//! nonblocking wait immediately before delivery consumes and reports a terminal
+//! event instead of signaling its released PID; an idle/stopped child stays pinned.
 //!
 //! After an abnormal broker exit the broker's surviving children reparent to
 //! this supervisor, which holds the child-subreaper role, so the reap also
@@ -16,17 +18,33 @@ use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
 use super::{
-    BROKER_EVENT_TIMEOUT, BROKER_REAP_TIMEOUT, ChildEvent, ExecutorError, ProcessBrokerClient,
-    ProcessBrokerEvent, ProcessSignal, SignalTarget, reap_any_event, signal, wait_for_event,
+    BROKER_REAP_TIMEOUT, BROKER_SHUTDOWN_TIMEOUT, ChildEvent, ExecutorError, ProcessBrokerClient,
+    ProcessBrokerEvent, ProcessSignal, reap_any_event, wait_for_event,
 };
+use crate::process::signal_child;
 
+/// Ask the broker to shut down and wait for its answer.
+///
+/// Reaps and unsolicited generation observations, such as a lifetime closing
+/// or a readiness result that raced the request, may precede the answer and
+/// are ignored. Every other event, including an owed signal acknowledgement,
+/// stays unexpected, so acknowledgements must be drained before shutdown.
+///
+/// # Errors
+///
+/// Returns a failed or timed-out shutdown, an unexpected event, or a broker
+/// I/O error.
 pub(super) async fn shutdown_broker(client: &mut ProcessBrokerClient) -> Result<(), ExecutorError> {
     client.shutdown().await?;
     loop {
-        match timeout(BROKER_EVENT_TIMEOUT, client.next_event()).await {
+        match timeout(BROKER_SHUTDOWN_TIMEOUT, client.next_event()).await {
             Ok(Ok(ProcessBrokerEvent::ShutdownComplete)) => return Ok(()),
             Ok(Ok(
                 ProcessBrokerEvent::Child { .. }
+                | ProcessBrokerEvent::LifetimeClosed { .. }
+                | ProcessBrokerEvent::LifetimeFailed { .. }
+                | ProcessBrokerEvent::GenerationReady { .. }
+                | ProcessBrokerEvent::ReadinessFailed { .. }
                 | ProcessBrokerEvent::TaskStarted { .. }
                 | ProcessBrokerEvent::TaskSpawnFailed { .. }
                 | ProcessBrokerEvent::TaskChild { .. }
@@ -43,6 +61,9 @@ pub(super) async fn shutdown_broker(client: &mut ProcessBrokerClient) -> Result<
     }
 }
 
+/// Collect the broker, escalating only with verified waitable-child ownership.
+/// Returns broker-exit, policy, wait or delivery errors; uncertain ownership
+/// never permits a deadline signal to a potentially reused numeric PID.
 pub(super) fn reap_broker(process: crate::process::ProcessId) -> Result<(), ExecutorError> {
     let deadline = Instant::now() + BROKER_REAP_TIMEOUT;
     let broker_outcome = loop {
@@ -59,8 +80,10 @@ pub(super) fn reap_broker(process: crate::process::ProcessId) -> Result<(), Exec
             Err(error) => return Err(error.into()),
         }
         if Instant::now() >= deadline {
-            let _ = signal(SignalTarget::Process(process), ProcessSignal::Kill);
-            let event = wait_for_event(process)?;
+            let event = match signal_child(process, ProcessSignal::Kill)? {
+                Some(event) => event,
+                None => wait_for_event(process)?,
+            };
             return Err(ExecutorError::BrokerExited(event));
         }
         std::thread::sleep(Duration::from_millis(5));

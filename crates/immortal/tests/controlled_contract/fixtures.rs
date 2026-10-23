@@ -60,7 +60,8 @@ impl RuntimeDirectory {
     }
 
     pub(crate) fn new_named(service_name: &str) -> std::io::Result<Self> {
-        let root = Path::new("/tmp").join(format!(
+        // Keep Unix-socket fixture paths short and on persistent storage.
+        let root = Path::new("/var/tmp").join(format!(
             "immortal-{}-{}",
             std::process::id(),
             RUNTIME_SEQUENCE.fetch_add(1, Ordering::Relaxed)

@@ -32,7 +32,7 @@ struct TestDirectory(PathBuf);
 impl TestDirectory {
     fn new() -> Result<Self, Box<dyn Error>> {
         let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-        let path = Path::new("/tmp").join(format!(
+        let path = Path::new("/var/tmp").join(format!(
             "immortalctl-action-{}-{sequence}",
             std::process::id()
         ));
@@ -97,7 +97,7 @@ fn automatic_roots_merge_scopes_and_reject_ambiguous_names() -> Result<(), Box<d
     let mut diagnostics = Vec::new();
     let (services, failed) = discover_from_roots(roots, &mut diagnostics)?;
     assert!(!failed);
-    assert!(diagnostics.is_empty());
+    assert_eq!(diagnostics, Vec::<u8>::new());
     assert_eq!(services.len(), 2);
     assert!(matches!(
         select_targets(services, &Target::Service("api".to_owned()), false),
@@ -134,7 +134,7 @@ fn automatic_roots_isolate_an_unsafe_peer_root() -> Result<(), Box<dyn Error>> {
         services.first().map(|service| service.origin),
         Some(RuntimeOrigin::User)
     );
-    assert!(!diagnostics.is_empty());
+    assert_ne!(diagnostics, Vec::<u8>::new());
     Ok(())
 }
 

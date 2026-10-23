@@ -26,6 +26,11 @@ path = "tests/operational_contract.rs"
 harness = false
 
 [[test]]
+name = "waitable_policy_contract"
+path = "tests/waitable_policy_contract.rs"
+harness = false
+
+[[test]]
 name = "routing_contract"
 path = "tests/routing_contract.rs"
 harness = false

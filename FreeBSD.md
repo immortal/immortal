@@ -222,6 +222,33 @@ only *reveals* the reaper; the real leak appears when a killed broker's orphaned
 service, handed to `init`, is left as a zombie holding its process group. It
 does not build on Linux or macOS, which have no `procctl` reaper interface.
 
+## Why an orderly broker exit waits for killed groups
+
+The nesting has a second consequence for orderly exits. When the broker kills a
+group, for example the background children left behind when a service's main
+process exits, it used to forget that group at once. A killed member which had
+not finished exiting when ordered shutdown completed was still the broker's
+child, so when the broker exited, FreeBSD handed it to the broker's reaper: the
+supervisor, which found a child it never expected. A dedicated FreeBSD loop
+reproduced this about 15 times in 1000 runs of
+`broker_subreaper_orphan_contract`, after it first surfaced 206 clean samples
+into a 24-hour campaign. The same sequence is possible on Linux, where an orphan
+also reparents to its nearest subreaper ancestor, but it was observed only on
+FreeBSD.
+
+The broker now keeps every group it kills in a retiring set and, before it
+exits, waits until the `fork` null-signal probe reports each one empty. A
+zombie still counts as a member of its process group, so an empty group means
+every member has been reaped, normally by the broker itself. The wait is
+bounded and fails closed: ordered shutdown reports failure rather than exiting
+while a member remains. The same rule covers groups killed during
+supervisor-loss cleanup and a descriptor group's leftovers after its lifetime
+closes. Because a probe never proves which group an ID names, the broker
+signals a group only while its guard is armed, whose helper keeps the group's
+anchor as an unreaped zombie so the ID cannot be reused, or while its own
+unreaped child is still a member and its PID equals the PGID; any other group
+is awaited without a signal.
+
 ## Where this lives in the code
 
 - `crates/immortal-core/src/process/subreaper.rs` — the cross-platform
@@ -234,6 +261,12 @@ does not build on Linux or macOS, which have no `procctl` reaper interface.
   the broker's orphaned subtree to `ECHILD`.
 - `crates/immortal-core/tests/broker_death_contract.rs` — the contract test that
   kills the broker and asserts the service process group disappears.
+- `crates/immortal-core/src/process/broker/retiring.rs` and `shutdown.rs` — the
+  retiring set and the ordered shutdown which waits for it to drain.
+- `crates/immortal-core/tests/broker_retiring_group_contract.rs` and the
+  residual-child checks in `broker_subreaper_orphan_contract.rs` and
+  `broker_supervisor_loss_contract.rs` — prove nothing the broker killed
+  reparents to its parent.
 
 ## Further reading
 

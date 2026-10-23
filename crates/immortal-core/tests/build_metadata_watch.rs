@@ -90,7 +90,10 @@ fn linked_worktree_resolves_common_refs() -> io::Result<()> {
 #[test]
 fn packaged_source_without_git_metadata_has_no_watch_paths() -> io::Result<()> {
     let directory = TestDirectory::new()?;
-    assert!(build_support::git_watch_paths(directory.path()).is_empty());
+    assert_eq!(
+        build_support::git_watch_paths(directory.path()),
+        Vec::<PathBuf>::new()
+    );
     Ok(())
 }
 

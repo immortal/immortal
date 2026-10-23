@@ -7,8 +7,9 @@
 //! startup channel until the detached daemon calls [`DaemonStartup::notify_ready`]
 //! or the timeout elapses. Every stage that can fail is reported as a stable
 //! [`DaemonStage`]/[`DaemonFailure`] pair together with any process or process
-//! group `fork` left for the caller to reap or terminate, so a failed
-//! detachment never silently orphans a child.
+//! group still pending after bounded cleanup. Those IDs are observations, not
+//! signal authority: the intermediate pin may already have been released. An
+//! intermediate collection obligation requires exclusive child ownership.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -54,7 +55,8 @@ pub enum DaemonFailure {
     InvalidHandshake,
 }
 
-/// Residual daemon ownership after fork's bounded cleanup attempt.
+/// Residual observations and collection obligations after bounded cleanup.
+/// No returned numeric ID by itself authorizes a signal.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DaemonCleanup {
     intermediate: Option<ProcessId>,
@@ -62,13 +64,15 @@ pub struct DaemonCleanup {
 }
 
 impl DaemonCleanup {
-    /// Return an intermediate direct child which still requires reaping.
+    /// Return an intermediate direct child which still requires collection.
+    /// The caller must retain exclusive waitable ownership; this is not a signal token.
     #[must_use]
     pub const fn intermediate(self) -> Option<ProcessId> {
         self.intermediate
     }
 
-    /// Return a daemon process group which may still require termination.
+    /// Return a daemon group for bounded observation only, never signal authority.
+    /// Its intermediate pin may already be reaped and its numeric ID reused.
     #[must_use]
     pub const fn process_group(self) -> Option<ProcessGroupId> {
         self.process_group
@@ -103,7 +107,7 @@ impl DaemonError {
         self.failure
     }
 
-    /// Return residual process ownership after bounded cleanup.
+    /// Return pending collection and group observations, not signal authority.
     #[must_use]
     pub const fn cleanup_pending(&self) -> DaemonCleanup {
         self.cleanup_pending
@@ -171,6 +175,7 @@ impl DaemonStartup {
 #[derive(Debug)]
 pub enum Daemonized {
     /// The original invoker after the detached supervisor reported ready.
+    /// Both numeric IDs are observations, not ownership or permission to signal.
     Parent {
         process: ProcessId,
         process_group: ProcessGroupId,
@@ -183,11 +188,16 @@ pub enum Daemonized {
 ///
 /// The supervisor changes to `/`, redirects all standard streams to `/dev/null`,
 /// and resets portable signal state. Service paths and environment must be
-/// materialized before calling this function.
+/// materialized before calling this function. Call while single-threaded, with
+/// `SIGCHLD` not ignored and `SA_NOCLDWAIT` unset. Serialize policy changes and child
+/// collection throughout this operation; handlers must not collect its children.
+/// This wrapper does not change owner policy: executor startup explicitly does.
 ///
 /// # Errors
 ///
 /// Returns preparation, fork/session, handshake, timeout, or cleanup failures.
+/// Auto-reaping owner policy is rejected before fork at `SignalState` with an
+/// underlying `InvalidInput` error and no pending cleanup.
 pub fn daemonize(startup_timeout: Duration) -> Result<Daemonized, DaemonError> {
     let mut options = fork::DaemonOptions::new();
     options

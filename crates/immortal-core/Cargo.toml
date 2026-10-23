@@ -16,6 +16,7 @@ nix.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 fork.workspace = true
@@ -41,6 +42,11 @@ path = "tests/process_contract.rs"
 harness = false
 
 [[test]]
+name = "fixture_ownership_contract"
+path = "tests/fixture_ownership_contract.rs"
+harness = false
+
+[[test]]
 name = "broker_contract"
 path = "tests/broker_contract.rs"
 harness = false
@@ -58,6 +64,21 @@ harness = false
 [[test]]
 name = "broker_subreaper_orphan_contract"
 path = "tests/broker_subreaper_orphan_contract.rs"
+harness = false
+
+[[test]]
+name = "broker_signal_budget_contract"
+path = "tests/broker_signal_budget_contract.rs"
+harness = false
+
+[[test]]
+name = "broker_retiring_group_contract"
+path = "tests/broker_retiring_group_contract.rs"
+harness = false
+
+[[test]]
+name = "broker_lifetime_release_contract"
+path = "tests/broker_lifetime_release_contract.rs"
 harness = false
 
 [[test]]

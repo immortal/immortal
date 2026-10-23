@@ -37,7 +37,7 @@ struct TestDirectory(PathBuf);
 impl TestDirectory {
     fn new() -> Result<Self, Box<dyn Error>> {
         let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-        let path = Path::new("/tmp").join(format!(
+        let path = Path::new("/var/tmp").join(format!(
             "immortal-reconcile-{}-{sequence}",
             std::process::id()
         ));
@@ -574,7 +574,7 @@ fn dependency_plan_groups_independent_services() -> Result<(), Box<dyn Error>> {
             vec!["api".to_owned(), "worker".to_owned()],
         ]
     );
-    assert!(plan.unresolvable.is_empty());
+    assert_eq!(plan.unresolvable, []);
     Ok(())
 }
 

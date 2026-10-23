@@ -46,6 +46,13 @@ pub use self::foreground::{run_foreground, run_foreground_controlled};
 pub use self::outcome::{DaemonRunOutcome, SupervisionOutcome};
 
 const BROKER_EVENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long the supervisor waits for each event while the broker shuts down.
+///
+/// A fail-closed shutdown stays silent for the broker's whole bound before it
+/// answers, so the wait must outlast that bound by an ordinary event timeout;
+/// otherwise the supervisor reports a timeout instead of the broker's answer.
+const BROKER_SHUTDOWN_TIMEOUT: std::time::Duration =
+    crate::process::BROKER_SHUTDOWN_BOUND.saturating_add(BROKER_EVENT_TIMEOUT);
 const CHILD_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const BROKER_REAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const DAEMON_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -101,8 +108,8 @@ use crate::{
         BrokerFileRoute, BrokerLifetimePlan, BrokerLoggerId, BrokerLoggingPlan, BrokerSignalScope,
         BrokerTaskId, ChildEvent, DaemonError, DaemonStartup, Daemonized, ProcessBrokerClient,
         ProcessBrokerError, ProcessBrokerEvent, ProcessCommand, ProcessGroupId, ProcessId,
-        ProcessSignal, SignalTarget, daemonize, reap_any_event, signal,
-        start_process_broker_with_logging, wait_for_event,
+        ProcessSignal, daemonize, reap_any_event, start_process_broker_with_logging,
+        wait_for_event,
     },
     runtime::RuntimeOwner,
     shutdown::TerminationSignals,

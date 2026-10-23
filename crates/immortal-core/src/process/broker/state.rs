@@ -4,12 +4,15 @@
 //! Every type here is a plain data holder destructured or mutated by its
 //! sibling modules rather than exposing its own behavior: [`BrokerGeneration`]
 //! and [`BrokerOwnedProcess`] track which processes the broker must reap and
-//! why, [`BrokerRuntimeState`] is the single event-loop-owned aggregate, and
-//! [`ReadinessObservation`]/[`LifetimeObservation`] carry results back from
+//! why, [`RetiringGroups`] tracks killed groups which must drain before the
+//! broker exits, [`BrokerRuntimeState`] is the single event-loop-owned aggregate, and
+//! its optional phase deadline bounds helper signalling even during reap drains,
+//! and [`ReadinessObservation`]/[`LifetimeObservation`] carry results back from
 //! detached readiness/lifetime-wait tasks through their bounded channels.
 
 use std::collections::BTreeMap;
 use std::io;
+use std::time::Instant;
 
 use tokio::sync::mpsc;
 
@@ -17,6 +20,7 @@ use crate::readiness::ReadinessError;
 use crate::supervisor::Generation;
 
 use super::logging::BrokerLogging;
+use super::retiring::RetiringGroups;
 use super::types::BrokerLifetimePlan;
 use super::{ProcessGroupGuard, ProcessGroupId, ProcessId, SpawnedProcess};
 
@@ -48,6 +52,11 @@ pub(super) struct BrokerRuntimeState {
     pub(super) lifetime_sender: mpsc::Sender<LifetimeObservation>,
     pub(super) processes: BTreeMap<ProcessId, BrokerOwnedProcess>,
     pub(super) readiness_sender: mpsc::Sender<ReadinessObservation>,
+    /// Groups the broker killed or released which must drain before it may exit.
+    pub(super) retiring: RetiringGroups,
+    /// Active ordered-shutdown/supervisor-loss phase deadline, shared by signal
+    /// sweeps and foreground-reap kills. None outside those phases.
+    pub(super) signal_deadline: Option<Instant>,
     /// Whether this broker holds the child-subreaper role and therefore reaps
     /// adopted orphans instead of treating an unowned reap as a fatal error.
     pub(super) subreaper_active: bool,
@@ -69,4 +78,5 @@ pub(super) struct BrokerSpawnState<'a> {
     pub(super) processes: &'a mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     pub(super) readiness_sender: &'a mpsc::Sender<ReadinessObservation>,
     pub(super) logging: &'a BrokerLogging,
+    pub(super) retiring: &'a mut RetiringGroups,
 }

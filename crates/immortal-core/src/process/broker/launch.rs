@@ -2,8 +2,12 @@
 //!
 //! [`start_process_broker`], [`start_process_broker_with_lifetime`], and
 //! [`start_process_broker_with_logging`] each fork before Tokio or any other
-//! thread exists; the child never returns, materializing its logging plan,
-//! acquiring the child-subreaper role for its supervised subtree, building a
+//! thread exists. The shared child-policy boundary first corrects inherited
+//! auto-reaping, warning only on a change and failing before fork on error.
+//! This also covers direct callers such as immortaldir; executor entries call
+//! the same idempotent boundary earlier, before preparation/daemonization.
+//! The child never returns, materializing its logging plan, acquiring the
+//! child-subreaper role for its supervised subtree, building a
 //! dedicated current-thread runtime, and running the event loop until it exits
 //! with a status the parent never observes directly. Acquiring the subreaper
 //! role while still single-threaded and pre-runtime keeps that process-wide
@@ -59,7 +63,8 @@ const BROKER_EXIT_SOFTWARE: i32 = 70;
 ///
 /// # Errors
 ///
-/// Returns a socket-pair or fork error in the supervisor process.
+/// Returns a child-policy, socket-pair or fork error in the supervisor process.
+/// Inherited auto-reaping is corrected before fork; correction emits one warning.
 pub fn start_process_broker() -> io::Result<ProcessBrokerEndpoint> {
     start_process_broker_with_logging(BrokerLoggingPlan::default(), None)
 }
@@ -71,7 +76,8 @@ pub fn start_process_broker() -> io::Result<ProcessBrokerEndpoint> {
 ///
 /// # Errors
 ///
-/// Returns a socket-pair or fork error in the supervisor process.
+/// Returns a child-policy, socket-pair or fork error in the supervisor process.
+/// Inherited auto-reaping is corrected before fork; correction emits one warning.
 pub fn start_process_broker_with_lifetime(
     lifetime: BrokerLifetimePlan,
 ) -> io::Result<ProcessBrokerEndpoint> {
@@ -82,6 +88,7 @@ pub(crate) fn start_process_broker_with_logging(
     logging: BrokerLoggingPlan,
     lifetime_cleanup: Option<BrokerLifetimePlan>,
 ) -> io::Result<ProcessBrokerEndpoint> {
+    crate::process::prepare_child_policy()?;
     let pair = fork::socket_pair_cloexec()?;
     let (supervisor_socket, broker_socket) = pair.into_parts();
     acquire_supervisor_subreaper();

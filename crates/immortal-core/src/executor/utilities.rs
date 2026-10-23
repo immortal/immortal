@@ -34,7 +34,7 @@ pub(super) fn jittered_backoff_seed(
         return Duration::from_secs(base_seconds);
     }
     let width = spread.saturating_mul(2).saturating_add(1);
-    let broker_seed = u64::try_from(broker.get()).map_or(0, |value| value);
+    let broker_seed = u64::try_from(broker.get()).unwrap_or_default();
     let mut seed = seed ^ broker_seed;
     seed ^= seed >> 30;
     seed = seed.wrapping_mul(0xbf58_476d_1ce4_e5b9);

@@ -132,6 +132,9 @@ impl ProcessBrokerClient {
                 generation,
                 os_error,
             },
+            ProcessBrokerEvent::LifetimeClosed { generation } => {
+                BrokerEvent::LifetimeClosed { generation }
+            }
             ProcessBrokerEvent::ShutdownComplete => BrokerEvent::ShutdownComplete,
             _ => {
                 return Err(io::Error::new(

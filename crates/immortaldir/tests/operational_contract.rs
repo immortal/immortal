@@ -367,7 +367,7 @@ impl Drop for TestProcess {
 /// best effort: this is a rescue path for an already failing test, and a
 /// successful contract removes its own tree before this runs.
 fn rescue_abandoned_supervisors(child: u32) {
-    let root = Path::new("/tmp").join(format!("immortaldir-operational-contract-{child}"));
+    let root = Path::new("/var/tmp").join(format!("immortaldir-operational-contract-{child}"));
     if !root.is_dir() {
         return;
     }
@@ -955,7 +955,8 @@ struct TestRoot(PathBuf);
 
 impl TestRoot {
     fn new() -> Result<Self, Box<dyn Error>> {
-        let path = Path::new("/tmp").join(format!(
+        // Keep the rescue path and Unix-socket root short and persistent.
+        let path = Path::new("/var/tmp").join(format!(
             "immortaldir-operational-contract-{}",
             std::process::id()
         ));

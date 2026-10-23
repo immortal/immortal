@@ -871,3 +871,31 @@ fn an_unowed_failed_acknowledgement_is_reported_as_failed() -> Result<(), Box<dy
         }
     }
 }
+
+/// A fail-closed broker shutdown is silent for its whole bound before it
+/// answers, so the supervisor must keep waiting past that bound to read the
+/// broker's `ShutdownFailed` rather than report its own timeout.
+#[test]
+fn broker_shutdown_wait_outlasts_the_brokers_silent_bound() {
+    assert!(super::BROKER_SHUTDOWN_TIMEOUT > crate::process::BROKER_SHUTDOWN_BOUND);
+    assert!(super::BROKER_SHUTDOWN_TIMEOUT >= super::BROKER_EVENT_TIMEOUT);
+}
+
+/// A generation observation which raced the shutdown request is not an owed
+/// acknowledgement, so the supervisor still reads the broker's answer.
+#[tokio::test]
+async fn broker_shutdown_ignores_an_unsolicited_lifetime_observation() -> Result<(), Box<dyn Error>>
+{
+    let (supervisor, mut broker) = UnixStream::pair()?;
+    let mut client = ProcessBrokerClient::for_test(supervisor, broker_process()?);
+    let generation = Generation::new(1).ok_or("invalid test generation")?;
+    ProcessBrokerClient::write_test_event(
+        &mut broker,
+        &ProcessBrokerEvent::LifetimeClosed { generation },
+    )
+    .await?;
+    ProcessBrokerClient::write_test_event(&mut broker, &ProcessBrokerEvent::ShutdownComplete)
+        .await?;
+    shutdown_broker(&mut client).await?;
+    Ok(())
+}

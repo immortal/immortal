@@ -38,6 +38,8 @@ Requirement identifiers are grouped by prefix: COR (correctness), RES
 | COR-005 | Unexpected broker death cannot create a duplicate replacement or leave a live member in an owned process group. | `broker_death_contract` plus `fork` group-guard contracts | All | Proven |
 | COR-006 | Deliberate process-group or session escape is never misrepresented as portable containment. | Documented limitation and `fork` escape fixture | All | Proven |
 | COR-007 | An orphaned descendant adopted after process-group or session escape is reaped as hygiene and never becomes a workload event or aborts the broker. | `broker_subreaper_orphan_contract` and `fork` subreaper acquisition | All | Proven |
+| COR-008 | Every group the broker kills, owns, or releases drains before the broker exits; armed-group signals are delivered by the helper while it holds the anchor (helper loss fails without direct delivery); unarmed groups are signalled only through a verified unreaped member leader's pin, and any other group is awaited, never signalled; helper exchanges and foreground-reap kills share phase deadlines, preserving the five-second ordered-shutdown signal/settle budget; an unacknowledged foreground kill closes the guard fail-closed rather than disarming it; a group it cannot prove empty fails closed. | `broker_signal_budget_contract` (Linux stopped-helper sweeps, foreground reaps, and a TERM-ignoring sibling after broker exit), `broker_retiring_group_contract`, `broker_lifetime_release_contract`, residual-child checks in `broker_subreaper_orphan_contract` and `broker_supervisor_loss_contract`, and `a_nonleader_membership_snapshot_never_authorizes_direct_group_delivery`, `another_nonleader_membership_snapshot_is_not_a_pin`, `armed_group_signals_never_use_direct_delivery`, `helper_gone_kill_retires_without_direct_delivery`, and the `fork` 0.11.0 helper-mediated signal, stopped-helper/anchor, and group probe contracts | All | Pending |
+| COR-009 | Supervisor startup owns waitable children before forking, and broker deadline cleanup never signals after policy or exact-child ownership loss. | `waitable_policy_contract`, fork `waitable_children` and `sigchld_ignored`; fixture ownership/release regression in `fixture_ownership_contract` | Shared production code; preload schedules GNU/Linux only | Pending |
 | RES-001 | Supervisor loss makes the broker stop and clean every owned group. | Broker supervisor-loss contract | All | Proven |
 | RES-002 | Lost or coalesced child notifications cannot leave an owned zombie. | Delayed reap sweep and native lifecycle contracts | All | Proven |
 | RES-003 | Logger failure, backpressure, and shutdown preserve the configured lossless contract. | Logger restart, file-adapter, drain, and foreground contracts | All | Proven |
@@ -49,6 +51,12 @@ Requirement identifiers are grouped by prefix: COR (correctness), RES
 `Proven` describes repository contracts, not production readiness. A candidate
 must still pass the real-host gates below for its exact commit.
 
+Contract scratch space must survive a host reboot when used for release evidence:
+set `TMPDIR` under `/var/tmp`. Fixtures that deliberately need a short root for
+Unix-socket length limits use `/var/tmp` directly, including their parent-side
+rescue lookup; stderr captures honor `TMPDIR`. No fixture should force writes to
+a reboot-volatile `/tmp` regardless of the configured scratch directory.
+
 COR-005 is deliberately bounded by COR-006. A process which creates a new
 session or joins another process group has escaped the portable ownership unit;
 the project must expose that limitation rather than claiming cgroup- or
@@ -59,10 +67,38 @@ but it neither signals nor tracks them as owned work. The released `fork` 0.10.0
 crate passes its running, stopped, empty-startup, descriptor-isolation,
 subreaper-acquisition, and cleanup contracts on native Linux, macOS, and
 FreeBSD, including an explicit session-escape fixture; Linux and FreeBSD acquire
-the child-subreaper role while macOS retains init reparenting.
+the child-subreaper role while macOS retains init reparenting. The released
+`fork` 0.11.0 crate, built from fork commit
+`bf240d69e96b6f5f3ee58861307cdbb623f02b07`, passed its native Linux, macOS,
+FreeBSD, and musl matrix, coverage, and minor-release API check in
+[fork CI run 39908664585](https://github.com/immortal/fork/actions/runs/39908664585).
 The combined Immortal candidate passes its broker-death and complete workspace
-contracts on the same three native platforms. Immortal locks the exact crates.io
-release and checksum; no Git or local patch overrides the reviewed source.
+contracts on the same three native platforms.
+
+COR-008 closes the gap the FreeBSD 24-hour campaign exposed at candidate
+`dded7ad`: a member of a group the broker had killed could still be exiting when
+ordered shutdown completed, and then reparented to the supervisor. Its contracts
+fail on the tree before the retiring set and pass with it. Immortal now locks
+the exact crates.io `fork` 0.11.0 release and checksum
+`9b8b9dc1312e1668be5ffa350e3c0adc9b501b2eeebb1b31206477240cc96554`; no Git or
+local patch overrides the reviewed source. COR-008 and COR-009 remain Pending
+until this locked candidate passes the native Linux, macOS, and FreeBSD matrix.
+
+COR-009 includes the inherited-exec ignored-SIGCHLD regression, a broker exiting
+at its cleanup deadline, explicit post-creation policy/collection violations,
+and policy-reset failure. The fixture regression also exercises early-return
+unwinding with an exited broker and surviving member, and modeled group reuse.
+`broker_lifetime_release_contract::failed_completion_releases_delayed_member`
+additionally rejects launcher exit 73 before successful completion while delaying
+the member's first release poll. Release ownership is installed before startup;
+member guards are installed before fallible completion checks. Lifetime, retiring
+and supervisor-loss fixtures retain release directories through descendant
+collection and recorded-group absence (or retain them on a cleanup timeout), and
+shell handshakes have independent 20-second deadlines. This closes the transient
+release-marker gap that an already-installed-member-guard test did not exercise.
+Linux interposition records/suppresses unsafe deliveries; it does not claim
+actual PID recycling. Native macOS/FreeBSD execution of this candidate remains
+required; cross-checking alone does not establish that runtime evidence.
 
 RES-005 has deterministic contracts for a bounded stop/continue storm,
 descriptor exhaustion before broker creation, active control-client limits,

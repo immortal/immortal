@@ -17,6 +17,10 @@
 
 #[path = "support/broker_guard.rs"]
 mod broker_guard;
+#[path = "support/residual_children.rs"]
+mod residual_children;
+#[path = "support/subtree_guard.rs"]
+mod subtree_guard;
 
 use std::{error::Error, io, time::Duration};
 
@@ -30,15 +34,30 @@ use immortal_core::{
 use tokio::runtime::Builder;
 
 use crate::broker_guard::BrokerGuard;
+use crate::residual_children::assert_no_residual_children;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
-const EVENT_TIMEOUT: Duration = Duration::from_secs(3);
+const EVENT_TIMEOUT: Duration = Duration::from_secs(6);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 fn main() -> Result<(), Box<dyn Error>> {
-    run_orphan_scenario(group_killed_orphan_is_hygiene)?;
-    run_orphan_scenario(self_exiting_orphan_is_hygiene)?;
-    run_orphan_scenario(orphan_does_not_disturb_owned_service)?;
+    let _orphans = subtree_guard::SubtreeGuard;
+    run_orphan_scenario(
+        "group-killed orphan scenario",
+        group_killed_orphan_is_hygiene,
+    )?;
+    run_orphan_scenario(
+        "self-exiting orphan scenario",
+        self_exiting_orphan_is_hygiene,
+    )?;
+    run_orphan_scenario(
+        "owned-service orphan scenario",
+        orphan_does_not_disturb_owned_service,
+    )?;
+    run_orphan_scenario(
+        "immediate shutdown after a killed group",
+        killed_group_drains_before_shutdown_completes,
+    )?;
     Ok(())
 }
 
@@ -48,8 +67,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 /// this single-threaded runtime and the same [`BrokerGuard`], so a scenario that
 /// leaves the broker wedged still terminates and reaps it. The scenario owns
 /// only a borrow of the client; the shutdown handshake stays here so every
-/// scenario proves the broker returns to a quiescent, closeable state.
-fn run_orphan_scenario<S>(scenario: S) -> Result<(), Box<dyn Error>>
+/// scenario proves the broker returns to a quiescent, closeable state, and the
+/// residual check proves it reaped everything itself rather than handing a
+/// child to this process, which would otherwise surface in a later scenario.
+fn run_orphan_scenario<S>(description: &str, scenario: S) -> Result<(), Box<dyn Error>>
 where
     S: AsyncFnOnce(&mut ProcessBrokerClient) -> Result<(), Box<dyn Error>>,
 {
@@ -75,6 +96,31 @@ where
     })?;
     drop(runtime);
     broker.wait()?;
+    assert_no_residual_children(description)?;
+    Ok(())
+}
+
+/// A foreground service backgrounds several grandchildren and exits at once.
+///
+/// Reaping the main shell kills the whole group, and the shutdown request
+/// follows immediately, while those just-killed grandchildren may still be
+/// exiting. Shutdown must not report completion until the broker has reaped
+/// every member of the group it killed; otherwise the stragglers reparent to
+/// this process after the broker exits and the residual check fails.
+async fn killed_group_drains_before_shutdown_completes(
+    client: &mut ProcessBrokerClient,
+) -> Result<(), Box<dyn Error>> {
+    let service = generation(1)?;
+    let mut command = ProcessCommand::new("/bin/sh");
+    command
+        .argument("-c")
+        .argument("for i in 1 2 3 4 5 6 7 8; do /bin/sleep 30 & done; exit 0");
+    client.spawn(service, command, STARTUP_TIMEOUT).await?;
+    expect_event(client, "service start", |event| started(event, service)).await?;
+    expect_event(client, "service exit", |event| {
+        child_exited(event, service, 0)
+    })
+    .await?;
     Ok(())
 }
 

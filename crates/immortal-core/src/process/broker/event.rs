@@ -93,6 +93,11 @@ pub enum ProcessBrokerEvent {
     },
     LoggerInputsClosed,
     ShutdownComplete,
+    /// Ordered shutdown did not settle before its kill wait expired.
+    ///
+    /// A workload, or a group the broker owns, killed, or released, still had
+    /// a member. The broker keeps every remaining generation, guard, and retiring
+    /// group. `os_error` carries the last group-probe failure, if any.
     ShutdownFailed {
         os_error: Option<i32>,
     },

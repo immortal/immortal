@@ -2,6 +2,8 @@
 
 #[path = "support/broker_guard.rs"]
 mod broker_guard;
+#[path = "support/subtree_guard.rs"]
+mod subtree_guard;
 
 use std::{
     error::Error,
@@ -33,6 +35,7 @@ const LARGE_FRAME_VARIABLE_BYTES: usize = 512;
 
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
+    let _orphans = subtree_guard::SubtreeGuard;
     let endpoint = start_process_broker()?;
     let mut broker = BrokerGuard::new(endpoint.process(), EVENT_TIMEOUT, POLL_INTERVAL);
     let runtime = Builder::new_current_thread()

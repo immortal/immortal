@@ -10,6 +10,8 @@
 
 #[path = "support/broker_guard.rs"]
 mod broker_guard;
+#[path = "support/subtree_guard.rs"]
+mod subtree_guard;
 
 use std::{
     env,
@@ -65,6 +67,7 @@ const STORM_TIMEOUT: Duration = Duration::from_secs(30);
 const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let _orphans = subtree_guard::SubtreeGuard;
     if env::var_os(CHILD_MODE).is_some() {
         return descriptor_exhaustion_child();
     }
@@ -298,7 +301,7 @@ struct RuntimeDirectory(PathBuf);
 
 impl RuntimeDirectory {
     fn new() -> Result<Self, Box<dyn Error>> {
-        let path = Path::new("/tmp").join(format!("immortal-accept-{}", std::process::id()));
+        let path = Path::new("/var/tmp").join(format!("immortal-accept-{}", std::process::id()));
         fs::create_dir(&path)?;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
         Ok(Self(fs::canonicalize(path)?))

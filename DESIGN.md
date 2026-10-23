@@ -134,6 +134,38 @@ Tokio supervisor <---- bounded typed IPC ----> single-threaded broker
                                                -> wait/reap events
 ```
 
+The supervisor deliberately owns a waitable-child policy. At the single-threaded
+executor boundary, before preparation or daemonization, and at the shared
+process-broker start boundary (including direct `immortaldir` launches), core's
+idempotent `prepare_child_policy` calls `process::ensure_waitable_children`.
+Correction and its warning are implemented in one place; a second call with
+valid policy emits nothing. Failure returns before socket creation, fork or
+runtime construction. Inherited `SIGCHLD=SIG_IGN` survives exec;
+explicit ignoring or `SA_NOCLDWAIT` is corrected to default disposition, empty
+handler mask and no flags, with one diagnostic. A valid existing handler is left
+unchanged. This is core supervisor process hygiene, not executable-entrypoint
+policy; embedding callers must enter before children, threads or dependent
+handlers exist and retain exclusive policy/collection ownership afterwards.
+
+Broker deadline cleanup rechecks waitable policy and performs an exact-child
+nonblocking wait through `process::signal_child`. A terminal event is consumed
+and returned to the owner instead of followed by a signal; a nonterminal result
+leaves the child unreaped, reserving its PID even if it exits before delivery.
+`ECHILD`, auto-reaping policy and observation errors never authorize delivery.
+This uses fork's existing consuming wait API without needing a third public API:
+only the nonterminal branch authorizes signaling. Neither the policy query nor
+the wait is a lock against another handler/thread stealing child ownership.
+
+Fixture guards follow the same ownership discipline. Broker and directly owned
+leader guards collect exact PIDs, while indirect members are released through
+private file handshakes rather than signal-0 observations. Auxiliary broker
+STOP/CONT/KILL actions borrow the same guard, which caches any consumed terminal
+event so a later wait cannot lose the outcome or retain signal authority. A final signal-free
+subtree guard drains adopted children only after signal-capable fixture owners
+have dropped; consumed terminal events never retain signal authority.
+Daemon-wrapper returned IDs and cleanup groups are likewise observation-only,
+not tokens authorizing later numeric signals.
+
 The broker remains the direct parent and sole reaper of every managed child.
 Where the platform offers a child-subreaper role it also claims that role, so
 descendants orphaned inside its subtree reparent to the broker and are reaped as
@@ -163,6 +195,8 @@ broker stop and reap owned groups before exiting. For a descriptor-tracked
 generation whose direct launcher has already exited, the broker instead owns a
 pre-runtime materialized stop command: it executes that command with a hard
 deadline and requires lifetime-descriptor EOF before reporting clean shutdown.
+It then waits a further bounded interval for group members which closed the
+descriptor but are still exiting, and fails closed if one survives.
 Broker death places the
 supervisor in a terminal failure state; it must never spawn an untracked
 replacement path. Daemon startup is reported to the invoking process only after
@@ -171,23 +205,38 @@ the broker, service lock, runtime directory, and control socket are ready.
 Every broker-created service, logger, and hook group has a fail-closed lifetime
 capability supplied by `fork`. Creation follows one ordered transaction:
 
-1. a short-lived anchor reserves a fresh group before any workload exists;
-2. an out-of-group helper starts with only its owner-lifetime socket;
+1. an out-of-group helper starts with only its owner-lifetime socket;
+2. the helper forks an anchor which creates a fresh group and exits at once,
+   and leaves it unreaped, so the anchor's zombie keeps the group and its ID
+   reserved before any workload exists;
 3. the prepared workload joins the reserved group and completes exec startup;
-4. the broker activates the guard by disarming and reaping the anchor; and
-5. normal group cleanup disarms and reaps the persistent helper.
+4. the broker activates the guard; and
+5. normal group cleanup disarms the guard: the helper reaps the anchor,
+   releasing the reservation, and exits, and the broker reaps the helper.
 
-The broker exclusively owns the write endpoint and the typed guard value.
+The broker exclusively owns the write endpoint and the typed guard value. It
+keeps `SIGCHLD` non-ignored without `SA_NOCLDWAIT`, so helpers and workloads remain
+waitable until its serialized collection. Fork retains guard/spawn creation
+under auto-reaping for 0.10.0 compatibility, but owner-side cleanup refuses
+signals without waitable policy and a child pin; stopped helpers or failed
+spawn children can remain as cleanup obligations. The supervisor deliberately
+normalizes policy so it can collect children and complete that cleanup.
+Checked daemonization alone rejects auto-reaping before fork because its
+mandatory intermediate wait could not succeed under that policy in 0.10.0.
 Prepared child descriptor closure prevents the service, logger, control IPC,
 locks, and readiness channels from retaining that endpoint. If the broker is
 forcibly killed, kernel descriptor closure wakes the helper, which sends
-`SIGKILL` to the complete group even when that group is stopped. Unexpected
+`SIGKILL` to the complete group even when that group is stopped, while the
+anchor still pins its ID, and then reaps the anchor. Unexpected
 helper exit is a typed containment failure: the live broker kills the affected
-group and the supervisor enters a terminal error instead of restarting through
-an untracked path. Startup uses two helper forks and retains one sleeping helper
-and one socket endpoint per active group. It introduces no `Arc`, mutex, shared
-configuration copy, or asynchronous task; registration, lookup, and cleanup
-remain logarithmic in the broker's existing ordered ownership maps.
+group only if a verified unreaped member leader still pins it; otherwise it
+awaits the group without signalling. The supervisor enters a terminal error
+instead of restarting through an untracked path. Startup uses two forks, the
+helper and its anchor, and retains one sleeping helper, one zombie anchor, and
+one socket endpoint per active group. The fork guard's owner-side mutex
+serializes signal exchanges; no `Arc`, shared configuration copy, or
+asynchronous task is introduced. Registration, lookup, and cleanup remain
+logarithmic in the broker's existing ordered ownership maps.
 
 This is process-group containment, not a portable cgroup or FreeBSD process
 reaper. A workload which deliberately calls `setsid`, changes process group, or
@@ -223,8 +272,114 @@ child-subreaper role it is an adopted orphan, reaped as hygiene and never
 forwarded as a workload event nor allowed to abort the broker; without that role
 an unowned reap remains a fatal ownership violation. A delayed 250 ms safety
 sweep performs the same drain so a lost or platform-specific notification edge
-cannot leave an exited child unreaped; it runs whenever the broker owns children
-or holds the subreaper role, and stays idle only when neither applies.
+cannot leave an exited child unreaped; it runs whenever the broker owns children,
+holds the subreaper role, or awaits a killed group, and stays idle otherwise.
+
+The broker signals a process group only while something pins its numeric ID
+to the group the broker created; no portable handle otherwise stops an empty
+group's ID from being reused, and the `fork` probe never proves identity. An
+armed group's signals are delivered by the guard helper while it holds its
+unreaped anchor. The ID stays reserved even after every workload member has
+gone, the launcher of a self-daemonizing service included. A dead helper makes
+these requests fail instead of reaching a reused ID, even before its exit event
+is observed. There is never a direct group-signal fallback for an armed guard.
+Outside cleanup phases each helper round trip uses `GROUP_SIGNAL_TIMEOUT`
+(500 ms). During ordered shutdown or a supervisor-loss stage, each exchange
+uses the lesser of that cap and the phase's remaining time. Once the deadline
+expires no further helper request is queued; skipped or failed kills still
+retire the group. The active deadline belongs to broker runtime state, so
+foreground-reap kills during a drain cannot start fresh timeouts. Request IDs
+make success acknowledge the exact request; timeout does not cancel it.
+After a foreground reap, only an acknowledged group kill or ESRCH permits
+intentional disarm. Otherwise the broker closes the guard owner fail-closed,
+so the resumed helper consumes any queued request and then kills the still-pinned
+group on EOF. A retiring-set no-op is not a delivery acknowledgment and also
+selects fail-closed release, without another explicit group request. The group
+stays retired until it drains. This release uses fork's three-second helper
+cleanup deadline, followed by kernel-dependent final reaping; safety cleanup
+can outlast the signal/settle budget. Descriptor completion and detach still
+disarm intentionally.
+Without an armed guard, for example once the helper exited, only an unreaped
+direct child whose PID equals the PGID and which is still a member pins the
+group; membership is checked with `getpgid` immediately before each group signal. A live nonleader can leave
+between that query and delivery, so its membership never authorizes an unarmed
+group signal: only its owned PID is signalled and the old group is retired.
+A leader's PID remains reserved even if it moves after the query. FreeBSD and
+macOS do not report a zombie's group, so there an exited child pins nothing and a helper
+which dies with it leaves its group awaited without a signal. A child that left its
+group in place, for example by calling `setsid` itself, is also signalled as a
+process, which its unreaped PID pins, and that delivery answers the
+supervisor's request: the group signal then only reaches members left behind,
+and macOS, which skips zombie members, answers it with `EPERM` once only the
+anchor remains. Without the guard's pin, the group the child left is awaited
+without a signal. The kernel frees a group ID only once the old
+group is gone, so when another live generation's armed guard or member leader
+pins a group with the same ID, that ID names the other generation's group: no
+retire or kill made on behalf of a generation which no longer pins it touches
+that ID, or the other generation could never be stopped. A daemon which calls
+`setsid` leaves the reserved group and is beyond any group signal. A probe
+reporting a group present is never a reason to signal it.
+
+Killing a group does not end the broker's ownership of it, and neither does
+releasing one it can no longer signal. Every kill goes through one path that
+records the group in a retiring set: a foreground generation's group when its
+main child is reaped, through the armed helper, a pinned group whose
+guard exits, a group the supervisor asks it to kill, every pinned group at
+supervisor loss and at shutdown escalation, an overrunning supervisor-loss stop
+hook's group, and the reserved group of a guarded spawn that fails, which the
+dropped guard kills while its anchor still pins it. A descriptor group whose
+guard exits has no pin left and is retired without any signal. A tracked
+generation that completes, whichever of launcher reaping and lifetime closure
+comes last, has ended by its own contract, so its group is retired without a
+signal before its guard is disarmed. A member which closed the lifetime
+descriptor may still be running, so it is awaited rather than released
+untracked. A group leaves the set once the `fork`
+null-signal probe reports that it has no member left; zombies count as members,
+so a group drains only once every member has been reaped. Without this wait a
+member still exiting outlived the broker and reparented to the supervisor. A
+reused ID, an `EPERM` member, or a probe failure only keeps a group retiring
+until the bounded wait fails closed. The set offers no iteration, and no group
+signal, a supervisor request included, reaches a group it contains; a retiring
+generation's unreaped child can still be signalled as a process. A foreground
+group whose guard already exited is not killed again when its main child is
+reaped. An ID which a newly registered or detached
+generation leads has provably drained and is forgotten, at registration and
+before any acknowledgement is written.
+
+Ordered shutdown sends TERM to every live generation as above and to every
+descriptor group whose guard is still armed, spends a 2-second grace on both
+signal delivery and settling, then kills the same targets and retires their
+groups, with 3 more seconds for delivery and settling. Retiring groups are awaited and never signalled. A tracked generation
+completes only when its lifetime descriptor closes, never because its group
+looks empty: a daemon that called `setsid` leaves its reserved group while it
+still holds the descriptor. Shutdown
+applies and forwards lifetime observations while it waits, so a service that
+ends during the wait completes normally and the supervisor never misses the
+closure. Shutdown completes only
+when no workload, open tracked lifetime, or retiring group remains; otherwise
+it reports `ShutdownFailed` and keeps every remaining generation, armed guard,
+and retiring group, so supervisor-loss cleanup can still run a tracked
+service's stop command. A tracked service whose escaped daemon still holds the
+lifetime descriptor, or whose members outlive its completed generation,
+therefore fails shutdown closed instead of being killed by an ID nothing pins.
+Both phase deadlines start before their signal sweeps, keeping delivery plus
+settling within two plus three seconds regardless of helper count. As with all
+process cleanup, final kernel reaping and event-write scheduling are not hard
+real-time guarantees. The supervisor waits for the shutdown answer longer than
+the broker's 5-second signal/settle budget, so it reports the
+broker's own failure rather than a timeout of its own, and it ignores reaps
+and generation observations that race the request while still rejecting an
+owed signal acknowledgement. Each settle step drains reaps
+and wakes on `SIGCHLD` or a short backed-off poll, because a member reaped by
+another parent, or by launchd on macOS, sends the broker no signal.
+Supervisor-loss cleanup waits only for owned workloads before it runs the
+descriptor stop command, so a killed group held by a process outside the
+broker's reach cannot keep the command from stopping the service, and drains
+every retiring group last, within the same 3-second bound, on every path.
+Each supervisor-loss stage likewise shares its deadline between helper
+exchanges, foreground-reap kills, and settling, rather than restarting the
+clock after a signal sweep.
+Processes which escaped the reserved group remain outside this guarantee.
 The supervisor owns one persistent broker-reader task feeding a bounded queue;
 selecting between process events, control work, timers, and Unix signals can
 therefore cancel a queue receive without cancelling a partially read frame.
@@ -281,7 +436,8 @@ loop, because a fatal accept classification stops the whole supervisor and lets
 the broker kill a healthy service. Explicit `Exit`
 sends a generation-bound detach request to the broker; only a successful detach
 transitions the supervisor to `Exited`, after which the empty broker is shut
-down and reaped while the service is deliberately reparented to the OS.
+down and reaped while the service is deliberately reparented to the OS; the
+released group also leaves the retiring set, so shutdown never awaits it.
 
 Pre-start conditions and post-exit hooks use broker task identities rather than
 service generations, but retain the same bounded IPC, process-group isolation,
@@ -306,7 +462,9 @@ forks may inherit that capability; the broker endpoint observes only EOF and
 rejects data. Reaping the original launcher clears the observed main PID but
 does not complete the logical generation. Completion requires both launcher
 reaping and lifetime closure, in either order. A clean launcher followed by EOF
-is published as `LifetimeClosed`; descriptor misuse is `LifetimeFailed`.
+is published as `LifetimeClosed`; descriptor misuse is `LifetimeFailed`. On
+completion the broker retires the group without a signal and disarms the group
+guard, so shutdown waits for any member that closed the descriptor early.
 
 The supervisor owns stop and reload policy while the broker continues to own
 all process creation and waiting. Stop, restart, halt, readiness failure, and OS
@@ -363,6 +521,8 @@ The canonical sibling `fork` crate must provide safe, portable primitives for:
   with child PID and `EINTR` handling;
 - positive PID/process-group newtypes, `setpgid`, and explicit process versus
   process-group signal delivery without accepting ambiguous raw negative PIDs;
+- a null-signal process-group membership probe which rejects the broadcast
+  group, reports `EPERM` as present, and never claims identity;
 - CLOEXEC pipe/socket pairs, owned descriptors, reviewed `dup2`/close actions,
   and an explicit inherited-descriptor allow-list;
 - checked double-fork/session setup which does not exit the invoking process

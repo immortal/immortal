@@ -27,6 +27,7 @@ pub fn run_daemon(
     config: &ServiceConfig,
     control_directory: Option<&Path>,
 ) -> Result<DaemonRunOutcome, ExecutorError> {
+    crate::process::prepare_child_policy()?;
     let commands = prepare_execution(config, control_directory.is_some())?;
     match daemonize(DAEMON_STARTUP_TIMEOUT)? {
         Daemonized::Parent { .. } => Ok(DaemonRunOutcome::Parent),

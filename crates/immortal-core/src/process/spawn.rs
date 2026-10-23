@@ -4,7 +4,9 @@
 //! inside a brand-new process group through the canonical `fork` crate, and
 //! [`spawn_with_descriptors_in_group`] joins an already-reserved group so the
 //! broker can guard a spawn with [`ProcessGroupGuard`] before the workload can
-//! run unsupervised. Only descriptors named in the explicit allow-list survive
+//! run unsupervised. Armed-group signals cross that guard's helper, which owns
+//! the anchor: an unobserved helper death must not enable direct numeric-ID
+//! delivery. Only descriptors named in the explicit allow-list survive
 //! `execve`; every other descriptor is closed by the `fork` boundary first.
 //! Success means the child completed its startup handshake before the bounded
 //! deadline. Any stage that fails after the child exists — a missing process
@@ -13,7 +15,13 @@
 //!
 //! This module is intended to run only inside Immortal's single-threaded
 //! process broker; it must not be called from the multi-threaded supervisor
-//! runtime.
+//! runtime. Immortal's broker retains waitable children (SIGCHLD not ignored
+//! and `SA_NOCLDWAIT` unset) and serializes policy changes and collection.
+//! Fork also permits guard/spawn creation under auto-reaping, but then refuses
+//! unpinned owner-side cleanup signals: stopped helpers cannot be resumed or
+//! killed, and failed-spawn children may be reported rather than terminated.
+//! Returned cleanup PIDs are collection obligations, not independent signal
+//! authority. Group IDs after disarm are observation-only and may be reused.
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -23,6 +31,7 @@ use std::time::Duration;
 
 use super::command::{ProcessCommand, SupplementaryGroups};
 use super::identity::{ProcessGroupId, ProcessId};
+use super::signal::ProcessSignal;
 
 /// Successfully executed direct child and its dedicated generation group.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,14 +40,19 @@ pub struct SpawnedProcess {
     group: ProcessGroupId,
 }
 
+/// Own the helper whose unreaped anchor reserves a generation's group.
+/// Armed-group signals must cross this helper, not use the numeric ID directly.
 #[derive(Debug)]
 pub(crate) struct ProcessGroupGuard(fork::ProcessGroupGuard);
 
 impl ProcessGroupGuard {
+    /// Create a helper-owned anchor pin without changing the owner's policy.
+    /// Auto-reaping does not prevent creation, but limits owner-side cleanup.
     pub(crate) fn new() -> io::Result<Self> {
         fork::ProcessGroupGuard::new().map(Self)
     }
 
+    /// Observe the reserved group; armed delivery must still cross the helper.
     pub(crate) fn group(&self) -> io::Result<ProcessGroupId> {
         ProcessGroupId::new(self.0.process_group().get()).ok_or_else(|| {
             io::Error::new(
@@ -48,6 +62,7 @@ impl ProcessGroupGuard {
         })
     }
 
+    /// Identify the helper for reap correlation, not independent signal authority.
     pub(crate) fn process(&self) -> io::Result<ProcessId> {
         ProcessId::new(self.0.guard_process().get()).ok_or_else(|| {
             io::Error::new(
@@ -57,10 +72,20 @@ impl ProcessGroupGuard {
         })
     }
 
+    /// Record workload membership; activation does not release the anchor.
     pub(crate) fn activate(&mut self, timeout: Duration) -> io::Result<()> {
         self.0.activate(timeout)
     }
 
+    /// Deliver through the helper while it holds the anchor, never directly.
+    /// Returns timeout, helper-loss, or delivery errors; timeout does not cancel
+    /// an already queued request, and helper loss must not trigger a direct retry.
+    pub(crate) fn signal_group(&self, signal: ProcessSignal, timeout: Duration) -> io::Result<()> {
+        self.0.signal_group(signal.into_fork(), timeout)
+    }
+
+    /// Release the pin after helper cleanup; its group is then observation-only.
+    /// Returns cleanup/policy errors; final helper collection depends on kernel progress.
     pub(crate) fn disarm(self, timeout: Duration) -> io::Result<()> {
         self.0.disarm(timeout)
     }
@@ -102,13 +127,20 @@ impl ProcessDescriptor {
 }
 
 impl SpawnedProcess {
+    /// Describe a child for unit tests that must not spawn one.
+    #[cfg(test)]
+    pub(crate) const fn for_test(process: ProcessId, group: ProcessGroupId) -> Self {
+        Self { process, group }
+    }
+
     /// Return the main direct child.
     #[must_use]
     pub const fn process(self) -> ProcessId {
         self.process
     }
 
-    /// Return the process group owned by this generation.
+    /// Return the group observed at creation, not a permanent signal token.
+    /// Delivery requires a retained guard pin or an owned unreaped leader PID.
     #[must_use]
     pub const fn group(self) -> ProcessGroupId {
         self.group
@@ -176,7 +208,8 @@ impl SpawnError {
         self.failure
     }
 
-    /// Return a killed but not yet reaped child retained as a broker obligation.
+    /// Return a child retained as a collection obligation, not signal authority.
+    /// The owner must retain waitable ownership and serialize its collection.
     #[must_use]
     pub const fn cleanup_pending(&self) -> Option<ProcessId> {
         self.cleanup_pending

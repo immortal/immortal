@@ -410,7 +410,8 @@ struct RuntimeDirectory {
 
 impl RuntimeDirectory {
     fn new() -> io::Result<Self> {
-        let root = Path::new("/tmp").join(format!(
+        // Unix-socket paths need a short root; /var/tmp survives host reboots.
+        let root = Path::new("/var/tmp").join(format!(
             "immortal-binsoak-{}-{}",
             std::process::id(),
             RUNTIME_SEQUENCE.fetch_add(1, Ordering::Relaxed)

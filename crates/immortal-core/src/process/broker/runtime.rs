@@ -3,7 +3,8 @@
 //!
 //! [`run_broker`] is a single `tokio::select!` over the supervisor request
 //! stream, the `SIGCHLD` signal (immediate reap), a low-frequency reap
-//! interval (closes platform notification gaps), and the readiness/lifetime
+//! interval (closes platform notification gaps and keeps pruning killed groups
+//! which drain without signalling the broker), and the readiness/lifetime
 //! observation channels populated by detached wait tasks. Supervisor EOF
 //! routes to supervisor-loss cleanup instead of returning an error, since
 //! losing the connection is an expected, handled transition rather than a
@@ -36,7 +37,8 @@ use crate::supervisor::Generation;
 use super::dispatch::handle_broker_request;
 use super::error::{ProcessBrokerError, ProcessBrokerErrorKind};
 use super::logging::BrokerLogging;
-use super::reap::{disarm_generation_guard, forward_child_events};
+use super::reap::{disarm_generation_guard, forward_child_events, retire_completed_group};
+use super::retiring::RetiringGroups;
 use super::state::{
     BrokerGeneration, BrokerOwnedProcess, BrokerRuntimeState, LifetimeObservation, LifetimeState,
     ReadinessObservation,
@@ -129,12 +131,14 @@ pub(super) async fn run_broker(
         writer,
     };
     let mut state = BrokerRuntimeState {
+        signal_deadline: None,
         generations: BTreeMap::new(),
         logging,
         lifetime_cleanup,
         lifetime_sender,
         processes: BTreeMap::new(),
         readiness_sender,
+        retiring: RetiringGroups::default(),
         subreaper_active,
     };
 
@@ -146,12 +150,8 @@ pub(super) async fn run_broker(
         Err(error) if error.is_end_of_stream() => {
             cleanup_after_supervisor_loss(
                 &mut session.child_signal,
-                &mut state.generations,
-                &mut state.processes,
-                &mut state.logging,
                 &mut session.lifetime_events,
-                state.lifetime_cleanup.take(),
-                state.subreaper_active,
+                &mut state,
             )
             .await
         }
@@ -183,6 +183,7 @@ async fn supervise_generations(
                 if handle_broker_request(
                     request,
                     &mut session.child_signal,
+                    &mut session.lifetime_events,
                     &mut session.writer,
                     state,
                 ).await? {
@@ -193,22 +194,12 @@ async fn supervise_generations(
                 if signal.is_none() {
                     return Err(ProcessBrokerError(ProcessBrokerErrorKind::SignalStreamClosed));
                 }
-                forward_child_events(
-                    &mut session.writer,
-                    &mut state.generations,
-                    &mut state.processes,
-                    &mut state.logging,
-                    state.subreaper_active,
-                ).await?;
+                forward_child_events(&mut session.writer, state).await?;
             }
-            _ = session.child_reap.tick(), if !state.processes.is_empty() || state.subreaper_active => {
-                forward_child_events(
-                    &mut session.writer,
-                    &mut state.generations,
-                    &mut state.processes,
-                    &mut state.logging,
-                    state.subreaper_active,
-                ).await?;
+            _ = session.child_reap.tick(), if !state.processes.is_empty()
+                || state.subreaper_active
+                || !state.retiring.is_empty() => {
+                forward_child_events(&mut session.writer, state).await?;
             }
             Some(observation) = session.readiness_events.recv() => {
                 if state.generations.contains_key(&observation.generation) {
@@ -225,12 +216,7 @@ async fn supervise_generations(
                 }
             }
             Some(observation) = session.lifetime_events.recv() => {
-                handle_lifetime_observation(
-                    observation,
-                    &mut session.writer,
-                    &mut state.generations,
-                    &mut state.processes,
-                ).await?;
+                handle_lifetime_observation(observation, &mut session.writer, state).await?;
             }
         }
     }
@@ -239,22 +225,37 @@ async fn supervise_generations(
 async fn handle_lifetime_observation<W>(
     observation: LifetimeObservation,
     writer: &mut W,
-    generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
+    state: &mut BrokerRuntimeState,
 ) -> Result<(), ProcessBrokerError>
 where
     W: AsyncWrite + Unpin,
 {
-    if let Some(event) = record_lifetime_observation(&observation, generations, processes)? {
+    if let Some(event) = record_lifetime_observation(
+        &observation,
+        &mut state.generations,
+        &mut state.processes,
+        &mut state.retiring,
+    )? {
         write_event(writer, &event).await?;
     }
     Ok(())
 }
 
+/// Apply a lifetime observation and return the event to forward, if any.
+///
+/// A generation whose launcher was already reaped completes here. Completion
+/// ends the service by its own contract, so its group is retired, never
+/// signalled, for shutdown to await any member which closed the descriptor but
+/// is still exiting; the guard is disarmed afterwards, releasing its pin.
+///
+/// # Errors
+///
+/// Returns a guard ownership or disarm failure.
 pub(super) fn record_lifetime_observation(
     observation: &LifetimeObservation,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
+    retiring: &mut RetiringGroups,
 ) -> Result<Option<BrokerEvent>, ProcessBrokerError> {
     let Some(entry) = generations.get_mut(&observation.generation) else {
         return Ok(None);
@@ -274,7 +275,11 @@ pub(super) fn record_lifetime_observation(
         }
     };
     let generation_finished = entry.child.is_none();
+    let (group, armed) = (entry.group, entry.guard.is_some());
     if generation_finished {
+        // An armed guard's anchor still pins the group here, so no other
+        // generation can hold its ID; a guard which already exited retired it.
+        retire_completed_group(group, armed, retiring);
         disarm_generation_guard(observation.generation, generations, processes)?;
         generations.remove(&observation.generation);
     }

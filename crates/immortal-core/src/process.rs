@@ -11,8 +11,10 @@
 //!
 //! - `identity` — checked, always-positive process and process-group
 //!   identifiers, and the explicit [`SignalTarget`] they compose into.
-//! - `signal` — the portable [`ProcessSignal`] vocabulary and the single
-//!   checked delivery entry point.
+//! - `signal` — the portable [`ProcessSignal`] vocabulary, the single
+//!   checked delivery entry point, and the null-signal process-group probe.
+//! - `child_policy` — explicit startup hygiene, read-only policy observation,
+//!   and exact-child PID delivery that reports terminal reaps instead of signaling.
 //! - `command` — deterministic command, environment, and numeric-identity
 //!   preparation, performed before the broker forks so configuration mistakes
 //!   surface as typed errors in the supervisor.
@@ -34,6 +36,7 @@
 
 mod broker;
 mod broker_protocol;
+mod child_policy;
 mod command;
 mod daemon;
 mod identity;
@@ -43,13 +46,16 @@ mod subreaper;
 mod wait;
 
 pub(crate) use self::broker::{
-    BrokerFileRoute, BrokerLoggerId, BrokerLoggingPlan, start_process_broker_with_logging,
+    BROKER_SHUTDOWN_BOUND, BrokerFileRoute, BrokerLoggerId, BrokerLoggingPlan,
+    start_process_broker_with_logging,
 };
 pub use self::broker::{
     BrokerLifetimePlan, BrokerSignalScope, BrokerTaskId, ProcessBrokerClient,
     ProcessBrokerEndpoint, ProcessBrokerError, ProcessBrokerEvent, ReadinessFailure,
     start_process_broker, start_process_broker_with_lifetime,
 };
+pub(crate) use self::child_policy::prepare_child_policy;
+pub use self::child_policy::{children_are_waitable, ensure_waitable_children, signal_child};
 pub use self::command::{
     ProcessCommand, ProcessCredentials, ProcessEnvironment, SupplementaryGroups,
     resolve_environment,
@@ -60,7 +66,8 @@ pub use self::daemon::{
 pub use self::identity::{
     InvalidProcessGroupId, InvalidProcessId, ProcessGroupId, ProcessId, SignalTarget,
 };
-pub use self::signal::{ProcessSignal, signal};
+pub(crate) use self::signal::current_process_group;
+pub use self::signal::{ProcessSignal, process_group_exists, signal};
 pub(crate) use self::spawn::ProcessGroupGuard;
 // `spawn_with_descriptors_in_group` stays `pub(super)` in `spawn`, so this
 // import keeps its original module-private reach: visible only within
@@ -71,4 +78,4 @@ pub use self::spawn::{
     spawn_with_descriptors,
 };
 pub use self::subreaper::{SubreaperStatus, acquire_subreaper, is_subreaper, release_subreaper};
-pub use self::wait::{ChildEvent, reap_any_event, wait_for_event};
+pub use self::wait::{ChildEvent, reap_any_event, reap_event, wait_for_event};

@@ -74,6 +74,21 @@ pub fn reap_any_event() -> io::Result<Option<ChildEvent>> {
         .transpose()
 }
 
+/// Collect one pending event from only this exact direct child without blocking.
+/// A terminal event releases ownership; callers must record it before any later
+/// signal. `Ok(None)` leaves the child unreaped, not necessarily running.
+///
+/// # Errors
+///
+/// Returns OS wait errors (including `ECHILD` for lost ownership) or invalid data.
+pub fn reap_event(process: ProcessId) -> io::Result<Option<ChildEvent>> {
+    let process = fork::ProcessId::try_from(process.get())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    fork::wait_event_nohang(process)?
+        .map(child_event_from_fork)
+        .transpose()
+}
+
 /// Wait for one state change from an exact direct child.
 ///
 /// This blocking operation is used to reap the broker itself after the Tokio

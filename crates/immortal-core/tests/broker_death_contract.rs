@@ -5,6 +5,9 @@
 //! remove the running or stopped group within a hard deadline. Cleanup guards
 //! kill any surviving owned group and reap the direct broker on every path.
 
+#[path = "support/subtree_guard.rs"]
+mod subtree_guard;
+
 use std::{
     error::Error,
     fmt, io, thread,
@@ -14,8 +17,8 @@ use std::{
 use immortal_core::{
     process::{
         BrokerSignalScope, ChildEvent, ProcessBrokerEndpoint, ProcessBrokerEvent, ProcessCommand,
-        ProcessGroupId, ProcessId, ProcessSignal, SignalTarget, reap_any_event, signal,
-        start_process_broker,
+        ProcessGroupId, ProcessId, ProcessSignal, process_group_exists, reap_any_event, reap_event,
+        signal_child, start_process_broker,
     },
     supervisor::Generation,
 };
@@ -39,6 +42,7 @@ fn step<T, E: fmt::Debug + fmt::Display>(
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let _orphans = subtree_guard::SubtreeGuard;
     broker_death_contains_group(false)?;
     broker_death_contains_group(true)?;
     broker_death_without_workload_is_bounded()?;
@@ -88,10 +92,7 @@ async fn start_and_kill_broker(
         require_stopped(next_event(&mut client).await?, generation)?;
     }
 
-    step(
-        "kill broker",
-        signal(SignalTarget::Process(broker), ProcessSignal::Kill),
-    )?;
+    step("kill broker", signal_child(broker, ProcessSignal::Kill))?;
     match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await {
         Ok(Err(_)) => Ok(group),
         Ok(Ok(event)) => Err(io::Error::other(format!(
@@ -119,7 +120,7 @@ fn broker_death_without_workload_is_bounded() -> Result<(), Box<dyn Error>> {
         require_ready(&next_event(&mut client).await?)?;
         step(
             "kill empty broker",
-            signal(SignalTarget::Process(broker_process), ProcessSignal::Kill),
+            signal_child(broker_process, ProcessSignal::Kill),
         )?;
         match tokio::time::timeout(EVENT_TIMEOUT, client.next_event()).await {
             Ok(Err(_)) => Ok::<(), Box<dyn Error>>(()),
@@ -209,14 +210,17 @@ fn require_broker_killed(
     }
 }
 
+/// Wait until the killed workload group has no member left.
+///
+/// The null-signal probe counts unreaped zombies and members this process may
+/// not signal as present, so the loop keeps reaping reparented orphans until
+/// the group is definitely empty instead of failing on a platform's `EPERM`.
 fn wait_for_group_absence(group: ProcessGroupId) -> io::Result<()> {
     let deadline = Instant::now() + EVENT_TIMEOUT;
     loop {
         reap_orphans()?;
-        match signal(SignalTarget::Group(group), ProcessSignal::WindowChange) {
-            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => return Ok(()),
-            Ok(()) => {}
-            Err(error) => return Err(error),
+        if !process_group_exists(group)? {
+            return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(io::Error::new(
@@ -293,7 +297,11 @@ impl GroupGuard {
 impl Drop for GroupGuard {
     fn drop(&mut self) {
         if !self.absent {
-            let _ = signal(SignalTarget::Group(self.group), ProcessSignal::Kill);
+            // This fixture has only a sleep leader. Signal it only if adopted
+            // as our exact unreaped child, never from a group-presence probe.
+            if let Ok(leader) = ProcessId::try_from(self.group.get()) {
+                let _ = signal_child(leader, ProcessSignal::Kill);
+            }
         }
     }
 }
@@ -314,7 +322,7 @@ impl ForcedBrokerGuard {
     fn wait(&mut self) -> io::Result<ChildEvent> {
         let deadline = Instant::now() + EVENT_TIMEOUT;
         loop {
-            match reap_any_event()? {
+            match reap_event(self.process)? {
                 Some(event) if event.pid() == self.process && event.is_terminal() => {
                     self.reaped = true;
                     return Ok(event);
@@ -340,17 +348,12 @@ impl Drop for ForcedBrokerGuard {
         if self.reaped {
             return;
         }
-        let _ = signal(SignalTarget::Process(self.process), ProcessSignal::Kill);
-        let deadline = Instant::now() + EVENT_TIMEOUT;
-        while Instant::now() < deadline {
-            match reap_any_event() {
-                Ok(Some(event)) if event.pid() == self.process && event.is_terminal() => {
-                    self.reaped = true;
-                    return;
-                }
-                Ok(Some(_) | None) => thread::sleep(POLL_INTERVAL),
-                Err(_) => return,
+        match signal_child(self.process, ProcessSignal::Kill) {
+            Ok(Some(_)) => self.reaped = true,
+            Ok(None) => {
+                let _ = self.wait();
             }
+            Err(_) => {}
         }
     }
 }

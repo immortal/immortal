@@ -24,6 +24,8 @@ mod resource_sampler;
 mod soak_evidence;
 #[path = "support/soak_thresholds.rs"]
 mod soak_thresholds;
+#[path = "support/subtree_guard.rs"]
+mod subtree_guard;
 
 use std::env;
 use std::error::Error;
@@ -62,6 +64,7 @@ const ENV_SAMPLE_SECONDS: &str = "IMMORTAL_SOAK_SAMPLE_SECONDS";
 const ENV_EVIDENCE: &str = "IMMORTAL_SOAK_EVIDENCE";
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let _orphans = subtree_guard::SubtreeGuard;
     let config = SoakConfig::from_env()?;
     let report = collect_soak(&config)?;
     let assessment = assess(&report);

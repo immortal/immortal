@@ -290,7 +290,7 @@ fn a_new_destination_is_not_immediately_aged_out() -> Result<(), Box<dyn Error>>
     sink.write_all(b"second\n")?;
     drop(sink);
 
-    assert!(archives(&path)?.is_empty());
+    assert_eq!(archives(&path)?, []);
     assert_eq!(fs::read(&path)?, b"first\nsecond\n");
     Ok(())
 }

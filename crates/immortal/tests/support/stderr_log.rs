@@ -10,7 +10,7 @@
 
 use std::{
     fs, io,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{self, Stdio},
 };
 
@@ -53,5 +53,5 @@ impl Drop for StderrLog {
 }
 
 fn path() -> PathBuf {
-    Path::new("/tmp").join(format!("im-fg-stderr-{}.log", process::id()))
+    std::env::temp_dir().join(format!("im-fg-stderr-{}.log", process::id()))
 }

@@ -24,6 +24,11 @@ tokio.workspace = true
 workspace = true
 
 [[test]]
+name = "waitable_policy_contract"
+path = "tests/waitable_policy_contract.rs"
+harness = false
+
+[[test]]
 name = "foreground_contract"
 path = "tests/foreground_contract.rs"
 harness = false

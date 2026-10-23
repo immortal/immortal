@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(triggers.next().await.reason, TriggerReason::Initial);
         triggers.simulate_watcher_loss();
         let first = timeout(Duration::from_secs(2), triggers.next()).await?;
-        assert!(!first.watcher_errors.is_empty());
+        assert_ne!(first.watcher_errors, Vec::<String>::new());
 
         let second = timeout(Duration::from_secs(2), triggers.next()).await?;
         assert_eq!(second.reason, TriggerReason::Periodic);

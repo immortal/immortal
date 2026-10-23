@@ -1,14 +1,35 @@
 //! Descriptor-tracked generation cleanup after the supervisor connection is lost.
 //!
-//! [`cleanup_after_supervisor_loss`] kills every owned group, reaps without
-//! forwarding events (there is no supervisor left to receive them), and then
-//! — if exactly one descriptor-tracked generation remains and a
-//! [`BrokerLifetimePlan`] was configured — runs the fallback stop command and
-//! waits for the tracked generation's lifetime descriptor to close. The
-//! broker treats any survivor, timeout, or an ambiguous multi-generation
-//! state as a hard failure rather than guessing at owner intent.
+//! [`cleanup_after_supervisor_loss`] runs without a supervisor to receive
+//! events, so it reaps and discards them. The flow is:
+//!
+//! 1. Kill every live generation, through its group while its armed guard or
+//!    member leader pins it, retire the group, and wait, up to
+//!    [`SHUTDOWN_KILL_WAIT`], until no workload process is owned. A descriptor
+//!    group whose launcher was reaped is left for its stop command.
+//! 2. If exactly one descriptor-tracked generation remains and a
+//!    [`BrokerLifetimePlan`] was configured, run its stop command. A hook which
+//!    overruns its stop timeout is killed the same way and its group retired.
+//! 3. Wait for the tracked generation's lifetime descriptor to close. That
+//!    completes the generation, which retires its group without a signal: a
+//!    member which closed the descriptor may still be exiting. A hook overrun
+//!    whose own group never drains returns before this step, so the service
+//!    group is not retired then and its armed guard still contains it.
+//! 4. On every path, wait up to [`SHUTDOWN_KILL_WAIT`] until every retired
+//!    group has drained.
+//!
+//! Draining is deliberately last: a killed group held by a process outside the
+//! broker's reach must not stop the configured stop command from ending a
+//! tracked service, so earlier stages wait only for owned workloads. Every wait
+//! drains through [`collect_child_events`] and wakes through
+//! [`wait_for_change`], so members reparented to the broker are reaped and a
+//! group drained by another parent is still noticed. The broker treats any
+//! survivor, timeout, or an ambiguous multi-generation state as a hard failure
+//! rather than guessing at owner intent. Each stage starts its deadline before
+//! any signal sweep; helper exchanges and foreground-reap kills share that
+//! deadline with settling. An expired budget skips delivery, never adds another
+//! per-helper wait, and still retires killed groups.
 
-use std::collections::BTreeMap;
 use std::io;
 
 use tokio::signal::unix::Signal as ChildSignal;
@@ -17,14 +38,16 @@ use tokio::time::{Instant, timeout_at};
 
 use crate::supervisor::Generation;
 
-use super::error::{ProcessBrokerError, ProcessBrokerErrorKind};
-use super::logging::BrokerLogging;
-use super::reap::{collect_child_events, has_workload_processes, signal_every_group};
+use super::error::ProcessBrokerError;
+use super::reap::{
+    GroupPin, collect_child_events, has_workload_processes, kill_every_group, kill_live_group,
+};
 use super::runtime::record_lifetime_observation;
+use super::settle::{POLL_START, wait_for_change};
 use super::shutdown::{SHUTDOWN_GRACE, SHUTDOWN_KILL_WAIT};
-use super::state::{BrokerGeneration, BrokerOwnedProcess, LifetimeObservation, LifetimeState};
+use super::spawn_process;
+use super::state::{BrokerOwnedProcess, BrokerRuntimeState, LifetimeObservation, LifetimeState};
 use super::types::BrokerLifetimePlan;
-use super::{ProcessId, ProcessSignal, SignalTarget, signal, spawn_process};
 
 /// A descriptor-tracked generation paired with the plan for cleaning it up
 /// after the supervisor connection is lost.
@@ -36,37 +59,56 @@ struct SupervisorLossCleanup {
 /// Fail closed after the supervisor connection is gone.
 ///
 /// A lost supervisor cannot make restart decisions or reap children, so the
-/// broker stops every generation it owns, disarms its guards, drains and stops
-/// the logging adapters, and consumes the remaining descriptor-lifetime
-/// observations so no tracked descriptor outlives the process. This is a
-/// deliberate kill path: leaving a supervised workload running without a
-/// supervisor would leave an unmanaged process on the host.
+/// broker stops every generation it owns, disarms its guards, consumes the
+/// remaining descriptor-lifetime observations so no tracked descriptor
+/// outlives the process, and finally waits for every group it killed or
+/// released to drain. This is a deliberate kill path: leaving a supervised
+/// workload running without a supervisor would leave an unmanaged process on
+/// the host.
 ///
 /// # Errors
 ///
-/// Returns an error when a stop, reap, or cleanup step leaves ownership
-/// unresolved. The caller exits the broker either way, so the error is
-/// diagnostic rather than recoverable.
+/// Returns an error when a stop, reap, drain, or cleanup step leaves ownership
+/// unresolved; a stop failure takes precedence over a drain timeout. The caller
+/// exits the broker either way, so the error is diagnostic rather than
+/// recoverable.
 pub(super) async fn cleanup_after_supervisor_loss(
     child_signal: &mut ChildSignal,
-    generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
-    logging: &mut BrokerLogging,
     lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
-    lifetime_cleanup: Option<BrokerLifetimePlan>,
-    subreaper_active: bool,
+    state: &mut BrokerRuntimeState,
 ) -> Result<(), ProcessBrokerError> {
-    signal_every_group(generations, ProcessSignal::Kill);
-    if !reap_without_events(
-        Instant::now() + SHUTDOWN_KILL_WAIT,
-        child_signal,
-        generations,
-        processes,
-        logging,
-        subreaper_active,
-    )
-    .await?
-    {
+    let stopped = stop_after_supervisor_loss(child_signal, lifetime_events, state).await;
+    // Whatever stopping concluded, give every killed or released group a
+    // bounded chance to drain so none of its members reparents after exit.
+    let deadline = Instant::now() + SHUTDOWN_KILL_WAIT;
+    let drained = reap_without_events(deadline, child_signal, state, groups_drained).await;
+    state.signal_deadline = None;
+    stopped?;
+    if drained? {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "killed process groups survived supervisor-loss cleanup",
+        )
+        .into())
+    }
+}
+
+/// Kill live groups, then run the descriptor stop hook and await closure.
+async fn stop_after_supervisor_loss(
+    child_signal: &mut ChildSignal,
+    lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
+    state: &mut BrokerRuntimeState,
+) -> Result<(), ProcessBrokerError> {
+    let deadline = Instant::now() + SHUTDOWN_KILL_WAIT;
+    state.signal_deadline = Some(deadline.into_std());
+    kill_every_group(
+        &state.generations,
+        &mut state.retiring,
+        state.signal_deadline,
+    );
+    if !reap_without_events(deadline, child_signal, state, workloads_reaped).await? {
         return Err(io::Error::new(
             io::ErrorKind::TimedOut,
             "broker children survived supervisor-loss cleanup",
@@ -74,7 +116,7 @@ pub(super) async fn cleanup_after_supervisor_loss(
         .into());
     }
 
-    let mut tracked = generations.iter().filter_map(|(generation, entry)| {
+    let mut tracked = state.generations.iter().filter_map(|(generation, entry)| {
         (entry.lifetime != LifetimeState::Foreground).then_some(*generation)
     });
     let generation = tracked.next();
@@ -85,16 +127,13 @@ pub(super) async fn cleanup_after_supervisor_loss(
         )
         .into());
     }
-    let complete = match (generation, lifetime_cleanup) {
+    let complete = match (generation, state.lifetime_cleanup.take()) {
         (Some(generation), Some(plan)) => {
             run_supervisor_loss_hook(
                 SupervisorLossCleanup { generation, plan },
                 child_signal,
-                generations,
-                processes,
-                logging,
                 lifetime_events,
-                subreaper_active,
+                state,
             )
             .await?
         }
@@ -112,14 +151,20 @@ pub(super) async fn cleanup_after_supervisor_loss(
     }
 }
 
+/// Run the stop hook, then await the tracked generation's lifetime closure.
+///
+/// Returns whether the hook finished on its own and the lifetime closed.
+/// Closure completes the generation, and completion retires its group, even
+/// when the hook overran, so the final drain awaits any member still exiting.
+///
+/// # Errors
+///
+/// Returns a reap or lifetime-stream failure.
 async fn run_supervisor_loss_hook(
     cleanup: SupervisorLossCleanup,
     child_signal: &mut ChildSignal,
-    generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
-    logging: &mut BrokerLogging,
     lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
-    subreaper_active: bool,
+    state: &mut BrokerRuntimeState,
 ) -> Result<bool, ProcessBrokerError> {
     let SupervisorLossCleanup { generation, plan } = cleanup;
     let BrokerLifetimePlan {
@@ -129,86 +174,104 @@ async fn run_supervisor_loss_hook(
     } = plan;
     let hook = match spawn_process(stop, SHUTDOWN_GRACE) {
         Ok(hook) => {
-            processes.insert(hook.process(), BrokerOwnedProcess::Generation(generation));
+            state
+                .processes
+                .insert(hook.process(), BrokerOwnedProcess::Generation(generation));
             Some(hook)
         }
         Err(error) => {
             if let Some(process) = error.cleanup_pending() {
-                processes.insert(process, BrokerOwnedProcess::Generation(generation));
+                state
+                    .processes
+                    .insert(process, BrokerOwnedProcess::Generation(generation));
             }
             None
         }
     };
-    let hook_finished = reap_without_events(
-        Instant::now() + stop_timeout,
-        child_signal,
-        generations,
-        processes,
-        logging,
-        subreaper_active,
-    )
-    .await?;
+    let deadline = Instant::now() + stop_timeout;
+    let hook_finished =
+        reap_without_events(deadline, child_signal, state, workloads_reaped).await?;
     if let Some(hook) = hook
         && !hook_finished
     {
-        let _ = signal(SignalTarget::Group(hook.group()), ProcessSignal::Kill);
-        let reaped = reap_without_events(
-            Instant::now() + SHUTDOWN_KILL_WAIT,
-            child_signal,
-            generations,
-            processes,
-            logging,
-            subreaper_active,
-        )
-        .await?;
-        if !reaped {
+        // The overrunning hook still pins its group unless it was reaped while
+        // another owned process kept the wait open; then the group is awaited.
+        // No generation can register during supervisor-loss cleanup, so no
+        // other generation can have reused the hook's group ID. The hook has
+        // no guard, so membership plus its unreaped PID == PGID is required.
+        let deadline = Instant::now() + SHUTDOWN_KILL_WAIT;
+        state.signal_deadline = Some(deadline.into_std());
+        if state.processes.contains_key(&hook.process()) {
+            let pin = GroupPin {
+                armed: false,
+                reused: false,
+            };
+            let _ = kill_live_group(
+                hook.process(),
+                hook.group(),
+                pin,
+                None,
+                &mut state.retiring,
+                state.signal_deadline,
+            );
+        } else {
+            state.retiring.retire(hook.group());
+        }
+        if !reap_without_events(deadline, child_signal, state, workloads_reaped).await? {
             return Ok(false);
         }
     }
+    // Closure completes the generation and retires its group, so the final
+    // drain waits for a member which closed the descriptor but is still exiting.
     let lifetime_closed = wait_for_cleanup_lifetime(
         generation,
         Instant::now() + lifetime_timeout,
-        generations,
-        processes,
         lifetime_events,
+        state,
     )
     .await?;
     Ok(hook_finished && lifetime_closed)
 }
 
+/// Whether every owned workload process, including a stop hook, was reaped.
+fn workloads_reaped(state: &BrokerRuntimeState) -> bool {
+    !has_workload_processes(&state.processes)
+}
+
+/// Whether, in addition, every killed or released group has drained.
+fn groups_drained(state: &BrokerRuntimeState) -> bool {
+    workloads_reaped(state) && state.retiring.is_empty()
+}
+
+/// Reap and discard events until `settled` holds or `deadline` passes.
 async fn reap_without_events(
     deadline: Instant,
     child_signal: &mut ChildSignal,
-    generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
-    logging: &mut BrokerLogging,
-    subreaper_active: bool,
+    state: &mut BrokerRuntimeState,
+    settled: fn(&BrokerRuntimeState) -> bool,
 ) -> Result<bool, ProcessBrokerError> {
-    let _ = collect_child_events(generations, processes, logging, subreaper_active)?;
-    while has_workload_processes(processes) {
-        match timeout_at(deadline, child_signal.recv()).await {
-            Ok(Some(())) => {
-                let _ = collect_child_events(generations, processes, logging, subreaper_active)?;
-            }
-            Ok(None) => {
-                return Err(ProcessBrokerError(
-                    ProcessBrokerErrorKind::SignalStreamClosed,
-                ));
-            }
-            Err(_) => return Ok(false),
+    state.signal_deadline = Some(deadline.into_std());
+    let mut poll = POLL_START;
+    loop {
+        let _ = collect_child_events(state)?;
+        if settled(state) {
+            return Ok(true);
         }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        wait_for_change(deadline, child_signal, &mut poll).await?;
     }
-    Ok(true)
 }
 
 async fn wait_for_cleanup_lifetime(
     generation: Generation,
     deadline: Instant,
-    generations: &mut BTreeMap<Generation, BrokerGeneration>,
-    processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
     lifetime_events: &mut mpsc::Receiver<LifetimeObservation>,
+    state: &mut BrokerRuntimeState,
 ) -> Result<bool, ProcessBrokerError> {
-    if !generations.contains_key(&generation) {
+    state.signal_deadline = Some(deadline.into_std());
+    if !state.generations.contains_key(&generation) {
         return Ok(true);
     }
     loop {
@@ -225,9 +288,14 @@ async fn wait_for_cleanup_lifetime(
         };
         let observed_generation = observation.generation;
         let closed = observation.result.is_ok();
-        let _ = record_lifetime_observation(&observation, generations, processes)?;
+        let _ = record_lifetime_observation(
+            &observation,
+            &mut state.generations,
+            &mut state.processes,
+            &mut state.retiring,
+        )?;
         if observed_generation == generation {
-            return Ok(closed && !generations.contains_key(&generation));
+            return Ok(closed && !state.generations.contains_key(&generation));
         }
     }
 }

@@ -790,7 +790,7 @@ mod tests {
     impl TestDirectory {
         fn new() -> Result<Self, Box<dyn Error>> {
             let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-            let path = Path::new("/tmp").join(format!(
+            let path = Path::new("/var/tmp").join(format!(
                 "immortal-runtime-{}-{sequence}",
                 std::process::id()
             ));

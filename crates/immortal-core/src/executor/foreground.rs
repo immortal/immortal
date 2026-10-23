@@ -24,6 +24,7 @@ use super::{
 ///
 /// Returns configuration-capability, process, broker, or state-transition failures.
 pub fn run_foreground(config: &ServiceConfig) -> Result<SupervisionOutcome, ExecutorError> {
+    crate::process::prepare_child_policy()?;
     let commands = prepare_execution(config, false)?;
     run_prepared(config, None, commands, &mut StartupReporter::Foreground)
 }
@@ -43,6 +44,7 @@ pub fn run_foreground_controlled(
     config: &ServiceConfig,
     directory: &Path,
 ) -> Result<SupervisionOutcome, ExecutorError> {
+    crate::process::prepare_child_policy()?;
     let owner = RuntimeOwner::acquire(directory)?;
     let service_name = owner
         .directory()
