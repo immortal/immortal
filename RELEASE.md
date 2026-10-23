@@ -23,10 +23,11 @@ locked in `Cargo.lock` with its registry source and checksum
 Git or local patch override. It adds the process-group probe, the anchor-pinned
 guard group with helper-mediated delivery, and the waitable-children policy
 APIs that COR-008 and COR-009 rely on; its own native Linux, macOS, and FreeBSD
-matrix is recorded in [VALIDATION.md](VALIDATION.md). The gate completes when
-the Immortal checkpoint locked to it passes its native matrices, which
-VALIDATION.md records under COR-008 and COR-009. Release eligibility remains
-blocked by the external real-host, campaign, and drill gates above.
+matrix is recorded in [VALIDATION.md](VALIDATION.md). The process-library gate
+is complete: the Immortal checkpoint locked to it passes its native Linux,
+macOS, and FreeBSD matrices, recorded under COR-008 and COR-009 in
+VALIDATION.md. Release eligibility remains blocked by the external real-host,
+campaign, and drill gates above.
 
 ## Candidate validation
 
