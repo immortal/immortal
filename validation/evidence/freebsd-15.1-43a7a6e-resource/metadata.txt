@@ -1,0 +1,16 @@
+commit	43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
+duration_seconds	86400
+broker_duration_seconds	43200
+binary_duration_seconds	43200
+platform	FreeBSD
+kernel	15.1-RELEASE-p5
+cpu	amd64
+toolchain	rustc 1.97.0 (2d8144b78 2026-07-07)
+scenario	broker-restart-soak
+command	cargo test -p immortal-core --test resource_soak_contract --locked
+configuration	one forked process broker sampled at rest between restart cycles
+scenario	supervisor-restart-soak
+command	cargo test -p immortal --test resource_binary_soak_contract --locked
+configuration	one immortal --foreground supervisor sampled under a self-driven restart storm
+FreeBSD immortal-freebsd.127.network 15.1-RELEASE-p5 FreeBSD 15.1-RELEASE-p5 releng/15.1-n283639-893c7c99b60d GENERIC amd64
+cargo 1.97.0 (c980f4866 2026-06-30)

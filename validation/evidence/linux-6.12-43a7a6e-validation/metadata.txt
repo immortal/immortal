@@ -1,0 +1,11 @@
+commit	43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
+duration_seconds	86400
+platform	Linux
+kernel	6.12.113+deb13-amd64
+cpu	x86_64
+toolchain	rustc 1.97.0 (2d8144b78 2026-07-07)
+command	cargo test --workspace --locked
+configuration	repository workspace at the recorded commit
+Linux immortal-linux.127.network 6.12.113+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.113-1 (2026-10-15) x86_64 GNU/Linux
+cargo 1.97.0 (c980f4866 2026-06-30)
+completed_samples	703

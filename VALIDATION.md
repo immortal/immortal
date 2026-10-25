@@ -121,9 +121,19 @@ produces a clean exit with no leftover control socket. Both fail on growth past 
 generous absolute tolerance, a retained child, or an unclean teardown, and record
 schema-checked resource trends when an `IMMORTAL_SOAK_*` or `IMMORTAL_BINSOAK_*`
 override scales them into a long run. Both pass natively on Linux, macOS, and
-FreeBSD. RES-005 remains Pending until the retained resource campaign confirms
-bounded descriptor, process, memory, scheduling, and cleanup behavior under
-sustained load on real hosts.
+FreeBSD.
+
+At Immortal commit `43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9` the 24-hour
+resource campaign, 12 hours per boundary, passed on the dedicated Linux and
+FreeBSD hosts described under the current candidate evidence. Every record
+passed with clean cleanup: 65 at-rest broker samples per host, and 167,753
+(Linux) and 170,475 (FreeBSD) samples of the supervisor under its restart storm.
+The broker never retained a child and held a constant 10 (Linux) or 13 (FreeBSD)
+descriptors, while its resident memory stayed between 2,820 and 2,836 KiB and
+between 5,216 and 5,220 KiB. The supervisor held exactly its one service child
+and a constant 12 or 15 descriptors, while its resident memory stayed between
+11,676 and 11,740 KiB and between 11,440 and 11,464 KiB. RES-005 remains Pending
+until the same campaign passes on a real macOS host.
 
 ### Current candidate evidence
 
@@ -183,9 +193,26 @@ exact revisions:
   directory, or temporary definition behind. Rows whose evidence is the
   repository suite are therefore Proven at this commit; every real-host,
   duration, and comparative gate below stays Pending.
+- Immortal commit `43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9`, locked to `fork`
+  0.11.0 as recorded under COR-008, completed the 24-hour campaign on two
+  dedicated 2-vCPU virtual machines, each building with rustc 1.97.0: Debian 13
+  with Linux 6.12.113 on x86_64, and FreeBSD 15.1-RELEASE-p5 on amd64. The
+  contract-soak component ran the complete workspace suite back to back for 24
+  hours, with 703 clean passing samples on Linux and 742 on FreeBSD, and the
+  resource campaign recorded under RES-005 followed on each host. The
+  schema-validated records, metadata, and SHA-256 manifests are retained in
+  [`linux-6.12-43a7a6e-validation`](validation/evidence/linux-6.12-43a7a6e-validation),
+  [`linux-6.12-43a7a6e-resource`](validation/evidence/linux-6.12-43a7a6e-resource),
+  [`freebsd-15.1-43a7a6e-validation`](validation/evidence/freebsd-15.1-43a7a6e-validation),
+  and
+  [`freebsd-15.1-43a7a6e-resource`](validation/evidence/freebsd-15.1-43a7a6e-resource).
+  The supervisor-boundary records, about 100 MB each, are retained
+  xz-compressed; decompressing `binary-results.tsv.xz` restores the exact file
+  that its manifest covers.
 
-This evidence proves the repository contracts above. It does not replace the
-24-hour campaigns, seven-day canary, comparative runs, or release drills.
+Apart from the Linux and FreeBSD 24-hour campaigns recorded above, this evidence
+proves the repository contracts. It does not replace the macOS 24-hour campaign,
+seven-day canary, comparative runs, or release drills.
 
 The complete public CLI, strict configuration, control, status, and private
 broker field inventory is mapped to its success and failure coverage in
