@@ -3,7 +3,12 @@
 //! The contract also replaces the manager between two authoritative scans to
 //! prove that persisted deletion confirmation resumes safely after restart.
 //! That phase runs in a separate process so the operational parent creates all
-//! process brokers before its first Tokio runtime and signal driver.
+//! process brokers before its first Tokio runtime and signal driver. Its
+//! deletion-confirmation poll reads beside the writing manager and so retries
+//! the snapshot reader's fail-closed replacement errors.
+
+#[path = "operational_contract/deletion_confirmation.rs"]
+mod deletion_confirmation;
 
 use std::{
     error::Error,
@@ -21,8 +26,7 @@ use immortal_core::{
     executor::{DaemonRunOutcome, run_daemon},
     process::{ProcessId, ProcessSignal, SignalTarget, signal, start_process_broker},
     reconcile::{
-        DefinitionSnapshots, LaunchConcurrency, LauncherError, ReconcileAction, ScanResult,
-        SupervisorLaunch, SupervisorLauncher,
+        DefinitionSnapshots, LaunchConcurrency, LauncherError, SupervisorLaunch, SupervisorLauncher,
     },
     runtime::{RuntimeOwner, discover, supervisor_is_active},
     shutdown::TerminationSignals,
@@ -32,6 +36,10 @@ use tokio::{
     runtime::Builder,
     sync::mpsc::{self, error::TrySendError},
     time::{sleep, timeout},
+};
+
+use self::deletion_confirmation::{
+    prove_confirmation_poll_tolerates_replacement, wait_for_first_deletion_confirmation,
 };
 
 const DEADLINE: Duration = Duration::from_secs(15);
@@ -46,6 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     if arguments.get(1).map(String::as_str) == Some("--restart-contract") {
         let root = TestRoot::new()?;
+        prove_confirmation_poll_tolerates_replacement(root.path())?;
         return prove_cross_restart_deletion(root.path());
     }
     if arguments.get(1).map(String::as_str) == Some("--dependency-contract") {
@@ -263,24 +272,6 @@ fn prove_cross_restart_deletion(root: &Path) -> Result<(), Box<dyn Error>> {
     match (result, cleanup) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), _) | (Ok(()), Err(error)) => Err(error),
-    }
-}
-
-async fn wait_for_first_deletion_confirmation(
-    runtime: &Path,
-    name: &str,
-) -> Result<(), Box<dyn Error>> {
-    let deadline = tokio::time::Instant::now() + DEADLINE;
-    loop {
-        let snapshots = DefinitionSnapshots::open(runtime)?;
-        let mut persisted = snapshots.load_tracker()?;
-        if persisted.apply(&ScanResult::default()).get(name) == Some(&ReconcileAction::Stop) {
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err("first deletion confirmation was not persisted".into());
-        }
-        sleep(Duration::from_millis(20)).await;
     }
 }
 

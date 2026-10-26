@@ -208,7 +208,13 @@ exact revisions:
   [`freebsd-15.1-43a7a6e-resource`](validation/evidence/freebsd-15.1-43a7a6e-resource).
   The supervisor-boundary records, about 100 MB each, are retained
   xz-compressed; decompressing `binary-results.tsv.xz` restores the exact file
-  that its manifest covers.
+  that its manifest covers. The seven-day FreeBSD canary that followed failed
+  at contract-soak sample 262: the `operational_contract` cross-restart poll
+  read the deletion tracker while the manager atomically replaced it, and the
+  snapshot reader correctly rejected the mid-read replacement. No production
+  reader runs beside that writer. The next candidate retries that test-only
+  race and adds a regression which fails without the retry, and every
+  real-host gate restarts at it.
 
 Apart from the Linux and FreeBSD 24-hour campaigns recorded above, this evidence
 proves the repository contracts. It does not replace the macOS 24-hour campaign,
