@@ -20,14 +20,17 @@ artifacts in the container's `CARGO_TARGET_DIR` volume instead, so it does not
 produce them on the host.
 
 Install all four executables from the same commit. `immortal`, `immortaldir`,
-and usually `immortallog` belong in the system administrator path;
-`immortalctl` may also be installed in a normal user path.
+and `immortallog` belong together in the system administrator path;
+`immortalctl` may also be installed in a normal user path. A supervisor runs
+its default file adapter from its own directory, so `immortallog` must sit
+beside `immortal` unless every definition names a `log_adapter`; otherwise a
+service with a local `log` file never starts while its logger retries.
 
 ```sh
 install -m 0755 target/release/immortal /usr/local/sbin/immortal
 install -m 0755 target/release/immortaldir /usr/local/sbin/immortaldir
+install -m 0755 target/release/immortallog /usr/local/sbin/immortallog
 install -m 0755 target/release/immortalctl /usr/local/bin/immortalctl
-install -m 0755 target/release/immortallog /usr/local/bin/immortallog
 ```
 
 Confirm that every long version reports the same package version and source
@@ -37,12 +40,24 @@ revision before starting services.
 
 The Rust implementation accepts only strict `version: 2` definitions. It does
 not read the unversioned Go format. Keep the old installation stopped but
-available for rollback, convert definitions into a separate directory, and
-validate that directory without mutating runtime state:
+available for rollback, convert definitions into a separate directory, then
+validate every converted file and preview the directory plan without mutating
+runtime state:
 
 ```sh
+for definition in /usr/local/etc/immortal/*.yml; do
+  immortal --config "$definition" --check-config > /dev/null ||
+    echo "invalid: $definition"
+done
 immortaldir --once --dry-run /usr/local/etc/immortal
 ```
+
+Run the check on the target host: validation confirms host state such as an
+existing `working_directory`, and `--check-config` exits `78` for an invalid
+definition. The dry-run only previews the plan. It reports an invalid
+definition on standard error but still exits `0`, and it does not apply
+dependency gating, so a service whose requirement is invalid is listed as
+`START` although a real pass skips it.
 
 The format change is not a field-renaming exercise. The Rust supervisor uses
 owned children, process groups, monotonic generations, bounded hooks, and exact
