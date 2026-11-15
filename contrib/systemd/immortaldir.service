@@ -1,6 +1,10 @@
 [Unit]
 Description=Immortal service-definition reconciler
 After=local-fs.target
+# Optional companion that halts every service in order at system shutdown.
+# It stops after this unit, and a restart of this unit leaves it alone.
+Wants=immortal-halt.service
+After=immortal-halt.service
 
 [Service]
 Type=simple

@@ -1,0 +1,21 @@
+[Unit]
+Description=Halt Immortal services in order at system shutdown
+# Units stop in the reverse of their start order. Starting before the manager
+# makes this unit stop after it: the manager must be gone before services are
+# halted, or it would start them again. Starting after the network and the
+# file systems makes it stop while services can still reach them.
+Before=immortaldir.service
+After=network.target remote-fs.target local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/bin/immortalctl --runtime-dir /run/immortal halt --all
+# Halting with no service present reports "not found"; that is not a failure.
+SuccessExitStatus=66
+# Must exceed the longest graceful stop of all services together.
+TimeoutStopSec=120s
+
+[Install]
+WantedBy=multi-user.target

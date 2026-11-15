@@ -293,6 +293,22 @@ directory manager must not kill service supervisors in the same cgroup. The
 unit creates `/run/immortal` before startup but does not remove it on manager
 shutdown.
 
+Because systemd stops only the manager, a system shutdown would leave the
+supervisors and their services running until its final step, which signals
+every remaining process after the network and other units are already down,
+and allows only a short fixed time. Install
+[the companion unit](contrib/systemd/immortal-halt.service) as well and enable
+it with `systemctl enable --now immortal-halt`. It does nothing at start. At
+shutdown it stops after the manager and before the network, and runs
+`immortalctl halt --all`, so every service gets its ordered, graceful stop
+while the system is still up. Restarting or stopping `immortaldir` alone
+leaves it, and the running services, untouched; stopping `immortal-halt` by
+hand halts every service. Raise its `TimeoutStopSec` if the services together
+need longer than two minutes to stop. With the companion installed the
+manager starts after `network.target` instead of right after the local file
+systems; that target does not wait for an address, so a service that needs
+connectivity still has to handle its absence at boot.
+
 ## macOS launchd
 
 Create `/var/db/immortal/run` and `/usr/local/etc/immortal` as root-owned,
