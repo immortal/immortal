@@ -18,7 +18,7 @@ use immortal_core::{
         MAX_RUNTIME_SERVICES, RuntimeRootError, RuntimeService, discover, discover_user,
         system_runtime_root, user_runtime_root,
     },
-    status::{ServiceState, StatusSnapshot, desired_state_name},
+    status::{LoggerLastResult, ServiceState, StatusSnapshot, desired_state_name},
     supervisor::Generation,
 };
 use serde::Serialize;
@@ -80,6 +80,7 @@ struct OutputRecord {
     last_result: Option<String>,
     backoff_seconds: Option<u64>,
     logger: Option<String>,
+    logger_last_result: Option<String>,
     command: Option<Vec<String>>,
     message: String,
 }
@@ -130,6 +131,7 @@ async fn run(action: &ControlAction, operation: Operation) -> Result<(), ActionE
                     last_result: None,
                     backoff_seconds: None,
                     logger: None,
+                    logger_last_result: None,
                     command: None,
                     message: error.to_string(),
                 });
@@ -493,16 +495,41 @@ fn record(service: &ScopedService, response: Response) -> OutputRecord {
         down_seconds: status.and_then(|value| value.down_seconds),
         starts: status.map(|value| value.starts),
         failures: status.map(|value| value.failures),
-        last_result: status.and_then(|value| {
-            value
-                .last_result
-                .map(immortal_core::status::LastResult::name)
-        }),
+        last_result: status.and_then(last_result_name),
         backoff_seconds: status.and_then(|value| value.backoff_seconds),
         logger: status.map(|value| value.logger.name().to_owned()),
+        logger_last_result: status
+            .and_then(|value| value.logger_last_result)
+            .map(LoggerLastResult::name),
         command: status.map(|value| value.command.clone()),
-        message: response.message,
+        message: explained_message(response.message, status),
     }
+}
+
+/// The last result, extended with the stage and cause of a failed start.
+fn last_result_name(status: &StatusSnapshot) -> Option<String> {
+    let result = status.last_result?.name();
+    Some(match status.last_spawn_failure {
+        Some(detail) => format!("{result}:{}", detail.name()),
+        None => result,
+    })
+}
+
+/// Append, in words, why the service or its logger could not start, so the
+/// table answers that without the operator decoding a status value.
+fn explained_message(mut message: String, status: Option<&StatusSnapshot>) -> String {
+    let Some(status) = status else {
+        return message;
+    };
+    if let Some(detail) = status.last_spawn_failure {
+        message.push_str("; start: ");
+        message.push_str(&detail.describe());
+    }
+    if let Some(result) = status.logger_last_result {
+        message.push_str("; logger: ");
+        message.push_str(&result.describe());
+    }
+    message
 }
 
 const fn response_exit_class(code: ResponseCode) -> ExitClass {
@@ -540,7 +567,7 @@ fn render_output(
             if !no_header {
                 writeln!(
                     output,
-                    "SCOPE\tSERVICE\tRESULT\tSUPERVISOR\tMAIN\tGENERATION\tDESIRED\tSTATE\tREADINESS\tUP\tDOWN\tSTARTS\tFAILURES\tLAST\tBACKOFF\tLOGGER\tCOMMAND\tMESSAGE"
+                    "SCOPE\tSERVICE\tRESULT\tSUPERVISOR\tMAIN\tGENERATION\tDESIRED\tSTATE\tREADINESS\tUP\tDOWN\tSTARTS\tFAILURES\tLAST\tBACKOFF\tLOGGER\tLOGGER_LAST\tCOMMAND\tMESSAGE"
                 )
                 .map_err(ActionError::Output)?;
             }
@@ -554,7 +581,7 @@ fn render_output(
                 });
                 writeln!(
                     output,
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     record.scope.name(),
                     record.service,
                     record.result,
@@ -571,6 +598,7 @@ fn render_output(
                     display_text(record.last_result.as_deref()),
                     display_option(record.backoff_seconds),
                     display_text(record.logger.as_deref()),
+                    display_text(record.logger_last_result.as_deref()),
                     sanitize(command.as_deref().unwrap_or("-")),
                     sanitize(&record.message),
                 )

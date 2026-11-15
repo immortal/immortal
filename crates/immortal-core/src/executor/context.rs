@@ -21,6 +21,7 @@ use super::{
     RestartTracker, ServiceConfig, StateMachine, StatusSnapshot, StopCompletion, SupervisorState,
     elapsed_seconds, logger_status,
 };
+use crate::status::{LoggerLastResult, SpawnDetail};
 
 pub(super) enum ExecutorEvent {
     Broker(ProcessBrokerEvent),
@@ -209,6 +210,9 @@ impl LoggerShutdownState {
 
 pub(super) struct LoggerExecution {
     pub(super) failure_streak: u32,
+    /// Most recent failure, kept until this logger runs again so status can
+    /// say why it is not healthy.
+    pub(super) last_failure: Option<LoggerLastResult>,
     pub(super) logger: BrokerLoggerId,
     pub(super) state: LoggerExecutionState,
 }
@@ -217,6 +221,7 @@ impl LoggerExecution {
     pub(super) const fn new(logger: BrokerLoggerId) -> Self {
         Self {
             failure_streak: 0,
+            last_failure: None,
             logger,
             state: LoggerExecutionState::Down,
         }
@@ -314,6 +319,9 @@ pub(super) struct RuntimeStatus {
     pub(super) last_result: Option<ChildResult>,
     pub(super) last_readiness_failed: bool,
     pub(super) last_start_failed: bool,
+    /// Stage and cause of the most recent failed start, published only while
+    /// `last_start_failed` holds.
+    pub(super) last_spawn_failure: Option<SpawnDetail>,
     pub(super) main_pid: Option<u32>,
     pub(super) main_pid_file: Option<OwnedPidFile>,
     pub(super) main_pid_path: Option<std::path::PathBuf>,
@@ -330,6 +338,7 @@ impl RuntimeStatus {
             last_result: None,
             last_readiness_failed: false,
             last_start_failed: false,
+            last_spawn_failure: None,
             main_pid: None,
             main_pid_file: None,
             main_pid_path: config.pid_files.main.clone(),
@@ -392,7 +401,13 @@ impl RuntimeStatus {
         } else {
             None
         };
+        snapshot.last_spawn_failure = if snapshot.last_result == Some(LastResult::SpawnFailed) {
+            self.last_spawn_failure
+        } else {
+            None
+        };
         snapshot.logger = logger_status(loggers);
+        snapshot.logger_last_result = loggers.iter().find_map(|logger| logger.last_failure);
         snapshot.command.clone_from(&self.command);
         snapshot
     }

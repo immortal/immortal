@@ -8,10 +8,11 @@
 //! truncation or trailing bytes without changing supervisor state.
 
 use crate::{
+    process::{SpawnFailure, SpawnStage},
     service_name::is_safe_service_name,
     status::{
-        LastResult, LoggerStatus, MAX_STATUS_ARGUMENTS, ReadinessStatus, ServiceState,
-        StatusSnapshot, desired_state_code, desired_state_from_code,
+        LastResult, LoggerLastResult, LoggerStatus, MAX_STATUS_ARGUMENTS, ReadinessStatus,
+        ServiceState, SpawnDetail, StatusSnapshot, desired_state_code, desired_state_from_code,
     },
     supervisor::Generation,
 };
@@ -20,9 +21,11 @@ use super::{
     GenerationMatch, MAX_FRAME_BYTES, MAX_SERVICE_NAME_BYTES, Operation, PROTOCOL_VERSION,
     ProtocolError, Signal, SignalScope,
     wire::{
-        Cursor, HEADER_BYTES, MAGIC, RESPONSE_PAYLOAD_NONE, RESPONSE_PAYLOAD_STATUS,
-        STATUS_BACKOFF, STATUS_DOWN_TIME, STATUS_KNOWN_FLAGS, STATUS_LAST_RESULT, STATUS_MAIN_PID,
-        STATUS_SUPERVISOR_PID, STATUS_UPTIME,
+        Cursor, HEADER_BYTES, LOGGER_RESULT_EXITED, LOGGER_RESULT_SIGNALED,
+        LOGGER_RESULT_SPAWN_FAILED, MAGIC, RESPONSE_PAYLOAD_NONE, RESPONSE_PAYLOAD_STATUS,
+        STATUS_BACKOFF, STATUS_DOWN_TIME, STATUS_KNOWN_FLAGS, STATUS_LAST_RESULT,
+        STATUS_LOGGER_LAST_RESULT, STATUS_MAIN_PID, STATUS_SPAWN_FAILURE, STATUS_SUPERVISOR_PID,
+        STATUS_UPTIME,
     },
 };
 
@@ -330,6 +333,17 @@ fn encode_status(status: &StatusSnapshot, frame: &mut Vec<u8>) -> Result<(), Pro
     flags |= status.down_seconds.map_or(0, |_| STATUS_DOWN_TIME);
     flags |= status.backoff_seconds.map_or(0, |_| STATUS_BACKOFF);
     flags |= status.last_result.map_or(0, |_| STATUS_LAST_RESULT);
+    if status.last_spawn_failure.is_some() && status.last_result != Some(LastResult::SpawnFailed) {
+        return Err(ProtocolError::MalformedStatus(
+            "spawn failure detail without a spawn-failed result",
+        ));
+    }
+    flags |= status
+        .last_spawn_failure
+        .map_or(0, |_| STATUS_SPAWN_FAILURE);
+    flags |= status
+        .logger_last_result
+        .map_or(0, |_| STATUS_LOGGER_LAST_RESULT);
     frame.extend_from_slice(&flags.to_be_bytes());
     frame.push(desired_state_code(status.desired));
     frame.push(status.state.code());
@@ -355,6 +369,22 @@ fn encode_status(status: &StatusSnapshot, frame: &mut Vec<u8>) -> Result<(), Pro
     if let Some(result) = status.last_result {
         let (kind, value) = result.code();
         frame.extend_from_slice(&[kind, value]);
+    }
+    if let Some(detail) = status.last_spawn_failure {
+        encode_spawn_detail(detail, frame)?;
+    }
+    match status.logger_last_result {
+        Some(LoggerLastResult::SpawnFailed(detail)) => {
+            frame.push(LOGGER_RESULT_SPAWN_FAILED);
+            encode_spawn_detail(detail, frame)?;
+        }
+        Some(LoggerLastResult::Exited(code)) => {
+            frame.extend_from_slice(&[LOGGER_RESULT_EXITED, code]);
+        }
+        Some(LoggerLastResult::Signaled(signal)) => {
+            frame.extend_from_slice(&[LOGGER_RESULT_SIGNALED, signal]);
+        }
+        None => {}
     }
     frame.extend_from_slice(&argument_count.to_be_bytes());
     for argument in &status.command {
@@ -394,6 +424,32 @@ fn decode_status(cursor: &mut Cursor<'_>) -> Result<StatusSnapshot, ProtocolErro
     } else {
         None
     };
+    let last_spawn_failure = if flags & STATUS_SPAWN_FAILURE != 0 {
+        if last_result != Some(LastResult::SpawnFailed) {
+            return Err(ProtocolError::MalformedStatus(
+                "spawn failure detail without a spawn-failed result",
+            ));
+        }
+        Some(decode_spawn_detail(cursor)?)
+    } else {
+        None
+    };
+    let logger_last_result = if flags & STATUS_LOGGER_LAST_RESULT != 0 {
+        Some(match cursor.byte()? {
+            LOGGER_RESULT_SPAWN_FAILED => {
+                LoggerLastResult::SpawnFailed(decode_spawn_detail(cursor)?)
+            }
+            LOGGER_RESULT_EXITED => LoggerLastResult::Exited(cursor.byte()?),
+            LOGGER_RESULT_SIGNALED => LoggerLastResult::Signaled(cursor.byte()?),
+            _ => {
+                return Err(ProtocolError::MalformedStatus(
+                    "unknown logger last-result code",
+                ));
+            }
+        })
+    } else {
+        None
+    };
     let argument_count = usize::from(u16::from_be_bytes(cursor.take::<2>()?));
     if argument_count > MAX_STATUS_ARGUMENTS {
         return Err(ProtocolError::TooManyStatusArguments);
@@ -418,9 +474,40 @@ fn decode_status(cursor: &mut Cursor<'_>) -> Result<StatusSnapshot, ProtocolErro
         starts,
         failures,
         last_result,
+        last_spawn_failure,
         backoff_seconds,
         logger,
+        logger_last_result,
         command,
+    })
+}
+
+/// Encode a spawn failure as stage, classification, and a signed errno in
+/// which zero means that the failure carried none.
+fn encode_spawn_detail(detail: SpawnDetail, frame: &mut Vec<u8>) -> Result<(), ProtocolError> {
+    if detail.os_error == Some(0) {
+        return Err(ProtocolError::MalformedStatus(
+            "spawn failure errno must be nonzero",
+        ));
+    }
+    frame.extend_from_slice(&[detail.stage.code(), detail.failure.code()]);
+    frame.extend_from_slice(&detail.os_error.unwrap_or(0).to_be_bytes());
+    Ok(())
+}
+
+fn decode_spawn_detail(cursor: &mut Cursor<'_>) -> Result<SpawnDetail, ProtocolError> {
+    let stage = SpawnStage::from_code(cursor.byte()?)
+        .ok_or(ProtocolError::MalformedStatus("unknown spawn stage"))?;
+    let failure = SpawnFailure::from_code(cursor.byte()?)
+        .ok_or(ProtocolError::MalformedStatus("unknown spawn failure"))?;
+    let os_error = match i32::from_be_bytes(cursor.take::<4>()?) {
+        0 => None,
+        error => Some(error),
+    };
+    Ok(SpawnDetail {
+        stage,
+        failure,
+        os_error,
     })
 }
 

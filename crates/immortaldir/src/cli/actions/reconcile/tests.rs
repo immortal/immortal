@@ -11,12 +11,15 @@ use std::{
 use immortal_core::{
     config::ServiceConfig,
     exit::ExitClass,
+    process::{SpawnFailure, SpawnStage},
     reconcile::{DesiredStateTracker, ReconcileAction, ScanLimits, scan_directory},
+    status::{LoggerLastResult, SpawnDetail, StatusSnapshot},
+    supervisor::StateMachine,
 };
 
 use super::{
-    ActionError, DesiredPlan, DirectoryAction, ServiceFailure, ServiceFailureKind, desired_plan,
-    execute_with_endpoint, write_plan,
+    ActionError, DesiredPlan, DirectoryAction, ServiceFailure, ServiceFailureKind, StartBlocker,
+    desired_plan, execute_with_endpoint, write_plan,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -79,6 +82,37 @@ async fn mutation_mode_requires_a_pre_runtime_broker() -> Result<(), Box<dyn Err
         Err(ActionError::MissingBroker)
     ));
     Ok(())
+}
+
+/// A start that times out behind a failed logger must say so, and prefer the
+/// logger over the service because the service is not attempted without it.
+#[test]
+fn lifecycle_timeout_names_what_blocks_the_start() {
+    let detail = SpawnDetail {
+        stage: SpawnStage::Execute,
+        failure: SpawnFailure::OperatingSystem,
+        os_error: Some(2),
+    };
+    let mut status = StatusSnapshot::from_machine(&StateMachine::default());
+    assert_eq!(StartBlocker::from_status(&status), None);
+    assert_eq!(
+        ServiceFailureKind::LifecycleTimeout(None).to_string(),
+        "lifecycle deadline exceeded"
+    );
+
+    status.last_spawn_failure = Some(detail);
+    assert_eq!(
+        StartBlocker::from_status(&status),
+        Some(StartBlocker::Service(detail))
+    );
+    status.logger_last_result = Some(LoggerLastResult::SpawnFailed(detail));
+    let blocker = StartBlocker::from_status(&status);
+    assert_eq!(
+        blocker,
+        Some(StartBlocker::Logger(LoggerLastResult::SpawnFailed(detail)))
+    );
+    let diagnostic = ServiceFailureKind::LifecycleTimeout(blocker).to_string();
+    assert!(diagnostic.starts_with("lifecycle deadline exceeded: logger execution failed: "));
 }
 
 #[test]

@@ -22,9 +22,12 @@ use immortal_core::{
         write_request,
     },
     exit::ExitClass,
-    process::{ProcessGroupId, ProcessId, ProcessSignal, SignalTarget, signal as deliver_signal},
+    process::{
+        ProcessGroupId, ProcessId, ProcessSignal, SignalTarget, SpawnFailure, SpawnStage,
+        signal as deliver_signal,
+    },
     runtime::{CONTROL_SOCKET_NAME, SUPERVISOR_LOCK_NAME},
-    status::ServiceState,
+    status::{LoggerLastResult, ServiceState, StatusSnapshot},
 };
 use tokio::{net::UnixStream, runtime::Builder};
 
@@ -524,11 +527,13 @@ fn prove_unsafe_user_runtime_root_is_rejected(binary: &Path) -> Result<(), Box<d
     )
 }
 
+/// Wait for a childless `expected` state, halt the supervisor, and return the
+/// status snapshot that showed the state.
 fn wait_for_childless_state_and_halt(
     socket: &Path,
     service: &str,
     expected: ServiceState,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<StatusSnapshot, Box<dyn Error>> {
     let deadline = Instant::now() + COMMAND_TIMEOUT;
     loop {
         if socket.exists() {
@@ -543,9 +548,9 @@ fn wait_for_childless_state_and_halt(
                 },
             )?;
             if status.code == ResponseCode::Ok
-                && status.status.as_ref().is_some_and(|snapshot| {
-                    snapshot.state == expected && snapshot.main_pid.is_none()
-                })
+                && let Some(snapshot) = status
+                    .status
+                    .filter(|snapshot| snapshot.state == expected && snapshot.main_pid.is_none())
             {
                 let halt = control_request(
                     socket,
@@ -558,7 +563,7 @@ fn wait_for_childless_state_and_halt(
                     },
                 )?;
                 if halt.code == ResponseCode::Ok {
-                    return Ok(());
+                    return Ok(snapshot);
                 }
                 return Err(format!("halt returned {}: {}", halt.code.name(), halt.message).into());
             }
@@ -603,12 +608,32 @@ fn prove_logger_exec_permission_denial(binary: &Path) -> Result<(), Box<dyn Erro
         .join(".immortal")
         .join(config.service_name()?)
         .join(CONTROL_SOCKET_NAME);
-    wait_for_childless_state_and_halt(&socket, config.service_name()?, ServiceState::Failed)?;
+    let status =
+        wait_for_childless_state_and_halt(&socket, config.service_name()?, ServiceState::Failed)?;
     assert_status(
         supervisor.wait(COMMAND_TIMEOUT)?,
         ExitClass::Success,
         "non-executable logger supervisor halt",
     )?;
+    // Status alone must say why the logger never ran: a daemonized supervisor
+    // has nowhere else to report it.
+    let Some(LoggerLastResult::SpawnFailed(detail)) = status.logger_last_result else {
+        return Err(format!(
+            "status does not name the logger spawn failure: {:?}",
+            status.logger_last_result
+        )
+        .into());
+    };
+    if detail.stage != SpawnStage::Execute
+        || detail.failure != SpawnFailure::OperatingSystem
+        || detail
+            .os_error
+            .map(std::io::Error::from_raw_os_error)
+            .map(|error| error.kind())
+            != Some(std::io::ErrorKind::PermissionDenied)
+    {
+        return Err(format!("unexpected logger spawn failure detail: {detail:?}").into());
+    }
     if service.0.exists() {
         return Err("service started after logger execute permission denial".into());
     }

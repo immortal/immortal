@@ -15,7 +15,10 @@ use immortal_core::control::{
     write_response,
 };
 use immortal_core::exit::ExitClass;
-use immortal_core::status::{ServiceState, StatusSnapshot};
+use immortal_core::process::{SpawnFailure, SpawnStage};
+use immortal_core::status::{
+    LastResult, LoggerLastResult, ServiceState, SpawnDetail, StatusSnapshot,
+};
 use immortal_core::supervisor::{Generation, StateMachine};
 
 use super::WaitOutcome;
@@ -210,6 +213,7 @@ async fn contact_sends_typed_request_and_receives_status() -> Result<(), Box<dyn
             last_result: None,
             backoff_seconds: None,
             logger: Some("n/a".to_owned()),
+            logger_last_result: None,
             command: Some(Vec::new()),
             message: "state=down".to_owned(),
         }
@@ -488,6 +492,73 @@ async fn respond_once(
     let request = read_request(connection.stream_mut()).await?;
     assert_eq!(request.operation, Operation::Status);
     write_response(connection.stream_mut(), &response).await?;
+    Ok(())
+}
+
+/// The table must say, in its own columns and in words, why a service or its
+/// logger could not start; a status without a failure adds nothing.
+#[test]
+fn record_explains_spawn_and_logger_failures() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let service = custom_service("api", directory.path(), directory.path().join("s"), 0);
+    let detail = SpawnDetail {
+        stage: SpawnStage::Execute,
+        failure: SpawnFailure::OperatingSystem,
+        os_error: Some(2),
+    };
+    let mut status = snapshot(ServiceState::Backoff);
+    status.last_result = Some(LastResult::SpawnFailed);
+    status.last_spawn_failure = Some(detail);
+    status.logger_last_result = Some(LoggerLastResult::SpawnFailed(detail));
+    let explained = record(
+        &service,
+        Response {
+            code: ResponseCode::Ok,
+            generation: None,
+            message: "state=backoff".to_owned(),
+            status: Some(status),
+        },
+    );
+    assert_eq!(
+        explained.last_result.as_deref(),
+        Some("spawn-failed:execute:os-error:2")
+    );
+    assert_eq!(
+        explained.logger_last_result.as_deref(),
+        Some("spawn-failed:execute:os-error:2")
+    );
+    assert!(
+        explained
+            .message
+            .starts_with("state=backoff; start: execution failed: ")
+    );
+    assert!(explained.message.contains("; logger: execution failed: "));
+
+    let mut output = Vec::new();
+    render_output(&mut output, &[explained], OutputFormat::Table, false)?;
+    let table = String::from_utf8(output)?;
+    let mut lines = table.lines();
+    let header: Vec<&str> = lines.next().ok_or("missing header")?.split('\t').collect();
+    let row: Vec<&str> = lines.next().ok_or("missing row")?.split('\t').collect();
+    assert_eq!(header.len(), row.len());
+    let column = header
+        .iter()
+        .position(|name| *name == "LOGGER_LAST")
+        .ok_or("LOGGER_LAST column missing")?;
+    assert_eq!(header.get(column - 1), Some(&"LOGGER"));
+    assert_eq!(row.get(column), Some(&"spawn-failed:execute:os-error:2"));
+
+    let plain = record(
+        &service,
+        Response {
+            code: ResponseCode::Ok,
+            generation: None,
+            message: "state=down".to_owned(),
+            status: Some(snapshot(ServiceState::Down)),
+        },
+    );
+    assert_eq!(plain.logger_last_result, None);
+    assert_eq!(plain.message, "state=down");
     Ok(())
 }
 

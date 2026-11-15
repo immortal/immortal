@@ -24,6 +24,7 @@ use super::{
     handle_auxiliary_event, handle_lifetime_event, handle_service_child_event, logger_tier_is_down,
     publish_readiness, request_group_stop, schedule_logger_restart,
 };
+use crate::status::{LoggerLastResult, SpawnDetail};
 
 pub(super) async fn handle_broker_event(
     client: &mut ProcessBrokerClient,
@@ -261,14 +262,33 @@ pub(super) fn respond_lifecycle(
 /// # Errors
 ///
 /// Returns an error when completing the generation fails.
+/// The stage and cause a failed service spawn reported, for status.
+const fn service_spawn_detail(event: &ProcessBrokerEvent) -> Option<SpawnDetail> {
+    match *event {
+        ProcessBrokerEvent::SpawnFailed {
+            stage,
+            failure,
+            os_error,
+            ..
+        } => Some(SpawnDetail {
+            stage,
+            failure,
+            os_error,
+        }),
+        _ => None,
+    }
+}
+
 async fn handle_service_spawn_failure(
     client: &mut ProcessBrokerClient,
     generation: Generation,
+    detail: Option<SpawnDetail>,
     commands: &PreparedExecution,
     config: &ServiceConfig,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
     execution.descriptor = None;
+    execution.status.last_spawn_failure = detail;
     complete_generation(
         client,
         config,
@@ -288,6 +308,7 @@ pub(super) async fn handle_service_broker_event(
     config: &ServiceConfig,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
+    let detail = service_spawn_detail(&event);
     match event {
         ProcessBrokerEvent::Started {
             generation,
@@ -297,7 +318,8 @@ pub(super) async fn handle_service_broker_event(
         ProcessBrokerEvent::SpawnFailed { generation, .. }
             if execution.machine.state().live_generation() == Some(generation) =>
         {
-            handle_service_spawn_failure(client, generation, commands, config, execution).await
+            handle_service_spawn_failure(client, generation, detail, commands, config, execution)
+                .await
         }
         ProcessBrokerEvent::Child { generation, event }
             if execution.machine.state().live_generation() == Some(generation) =>
@@ -555,6 +577,7 @@ pub(super) fn handle_logger_event(
                 task,
                 started_at: Instant::now(),
             };
+            logger.last_failure = None;
             Ok(())
         }
         ProcessBrokerEvent::TaskStarted { .. }
@@ -563,8 +586,17 @@ pub(super) fn handle_logger_event(
             Ok(())
         }
         ProcessBrokerEvent::TaskSpawnFailed {
-            cleanup_pending, ..
+            stage,
+            failure,
+            os_error,
+            cleanup_pending,
+            ..
         } if matches!(logger.state, LoggerExecutionState::Starting { .. }) => {
+            logger.last_failure = Some(LoggerLastResult::SpawnFailed(SpawnDetail {
+                stage,
+                failure,
+                os_error,
+            }));
             if cleanup_pending.is_some() {
                 logger.state = LoggerExecutionState::Killing {
                     task,
@@ -579,6 +611,19 @@ pub(super) fn handle_logger_event(
         }
         ProcessBrokerEvent::TaskChild { event, .. } if event.is_terminal() => {
             if execution.logger_shutdown.permits_restart() {
+                // A spawn that failed after forking is reaped here; its
+                // cause is the spawn failure already recorded, not this exit.
+                if !matches!(logger.last_failure, Some(LoggerLastResult::SpawnFailed(_))) {
+                    logger.last_failure = match event {
+                        ChildEvent::Exited { code, .. } => Some(LoggerLastResult::Exited(code)),
+                        ChildEvent::Signaled { signal, .. } => {
+                            Some(LoggerLastResult::Signaled(signal))
+                        }
+                        ChildEvent::Stopped { .. } | ChildEvent::Continued { .. } => {
+                            logger.last_failure
+                        }
+                    };
+                }
                 schedule_logger_restart(logger, client.process(), restart);
             } else {
                 logger.state = LoggerExecutionState::Down;

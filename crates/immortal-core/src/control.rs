@@ -51,4 +51,6 @@ pub(in crate::control) use self::server::{
 pub(in crate::control) use self::wire::HEADER_BYTES;
 
 #[cfg(test)]
+mod status_tests;
+#[cfg(test)]
 mod tests;

@@ -737,10 +737,23 @@ generation; unguarded mutations and generation races are rejected.
 Status responses use a typed bounded binary payload rather than an
 interpolated string or privileged JSON parser. The payload carries supervisor
 and main PID, desired and observed state, readiness, uptime/down time, start and
-failure counters, last result, backoff, logger health, and exact argv. Command
+failure counters, last result, backoff, logger health, and exact argv. When a
+start fails before the program runs, the payload also carries the stage of
+process creation that failed, how it failed, and the operating-system error;
+while a logger stage is not healthy it carries that logger's most recent
+failure in the same form, or its exit status or terminating signal. Both are
+fixed-size typed values, never free text. Command
 argument count, individual argument length, and total frame size are bounded.
 `immortalctl` alone converts this payload to stable JSON or a
-control-character-safe table. The foreground controlled executor populates the
+control-character-safe table. A failed start is shown as
+`spawn-failed:STAGE:CLASS[:ERRNO]` in `LAST` (`last_result` in JSON), for
+example `spawn-failed:execute:os-error:2`; a logger failure is shown in
+`LOGGER_LAST` (`logger_last_result`) as the same value, `exit:CODE`, or
+`signal:NUMBER`; and `MESSAGE` repeats either in words, such as
+`logger: execution failed: No such file or directory (os error 2)`. This is
+where a daemonized supervisor reports why a service or its logger is not
+running. `immortaldir` appends the same cause to `lifecycle deadline
+exceeded` when a start it waits for is blocked by one. The foreground controlled executor populates the
 payload from live broker and lifecycle observations, including supervisor/main
 PID, argv, starts, failures, timing, backoff, and the last terminal result.
 After the authenticated socket is bound, status reports `Initializing` while

@@ -48,7 +48,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-use self::errors::{MutationError, ServiceFailureKind};
+use self::errors::{MutationError, ServiceFailureKind, StartBlocker};
 use super::{ActionError, ReconcileAction as DirectoryAction};
 
 pub use self::errors::ServiceFailure;
@@ -691,23 +691,25 @@ async fn wait_for_state(
     name: &str,
     expected: ServiceState,
 ) -> Result<(), MutationError> {
-    timeout(LIFECYCLE_TIMEOUT, async {
+    // The last status seen names why the service is not there yet, so a
+    // timeout can report that instead of only the elapsed deadline.
+    let mut blocker = None;
+    let waited = timeout(LIFECYCLE_TIMEOUT, async {
         loop {
             let discovery = discover(root).map_err(MutationError::RuntimeLost)?;
             if let Some(service) = discovery.services.get(name)
-                && status(service)
-                    .await?
-                    .status
-                    .as_ref()
-                    .is_some_and(|status| status.state == expected)
+                && let Some(current) = status(service).await?.status
             {
-                return Ok::<(), MutationError>(());
+                if current.state == expected {
+                    return Ok::<(), MutationError>(());
+                }
+                blocker = StartBlocker::from_status(&current);
             }
             sleep(LIFECYCLE_POLL_INTERVAL).await;
         }
     })
-    .await
-    .map_err(|_| MutationError::Isolated(ServiceFailureKind::LifecycleTimeout))?
+    .await;
+    waited.map_err(|_| MutationError::Isolated(ServiceFailureKind::LifecycleTimeout(blocker)))?
 }
 
 async fn wait_for_absence(root: &Path, name: &str) -> Result<(), MutationError> {
@@ -725,7 +727,7 @@ async fn wait_for_absence(root: &Path, name: &str) -> Result<(), MutationError> 
         }
     })
     .await
-    .map_err(|_| MutationError::Isolated(ServiceFailureKind::LifecycleTimeout))?
+    .map_err(|_| MutationError::Isolated(ServiceFailureKind::LifecycleTimeout(None)))?
 }
 
 fn scan_and_print(

@@ -99,6 +99,14 @@ dispatch and actions with contract tests.
 - `supervisor`: desired state, retries, transitions, and shutdown coordination.
 - `logging`: stdout/stderr routing, files, rotation, and external sinks.
 - `control`: local protocol types plus client and server responsibilities.
+  A status payload answers why a service or its logger is not running: the
+  failing stage of process creation, its classification and errno, or a
+  logger's exit, as optional fixed-size fields announced by flag bits. A
+  supervisor with nothing to explain emits the frame it always did, so any
+  client reads it; a client that predates a flag rejects only a status that
+  carries it. Before the first release no deployed client exists to break.
+  After it, a new status field needs version negotiation rather than another
+  flag, because an old client must keep reading every status.
 - `status`: bounded transport-independent supervisor observations.
 - `readiness`: the `IMMORTAL_READY_FD` token and deadline contract.
 - `runtime`: safe runtime-root and supervisor discovery policy.

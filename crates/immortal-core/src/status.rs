@@ -1,6 +1,11 @@
 //! Typed, transport-independent supervisor status.
 
-use crate::supervisor::{DesiredState, FailureReason, StateMachine, SupervisorState};
+use std::io;
+
+use crate::{
+    process::{SpawnFailure, SpawnStage},
+    supervisor::{DesiredState, FailureReason, StateMachine, SupervisorState},
+};
 
 /// Maximum command arguments accepted in one bounded status frame.
 pub const MAX_STATUS_ARGUMENTS: usize = 1024;
@@ -240,6 +245,88 @@ impl LastResult {
     }
 }
 
+/// Why a process could not be created: the stage that failed and its cause.
+///
+/// Status alone must answer why a service or logger is not running, because a
+/// daemonized supervisor has nowhere else to report it. The value is three
+/// fixed fields, so it needs no truncation or escaping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SpawnDetail {
+    /// Stage of process creation that failed.
+    pub stage: SpawnStage,
+    /// Classification of the failure.
+    pub failure: SpawnFailure,
+    /// Operating-system error number, when the failure carried one.
+    pub os_error: Option<i32>,
+}
+
+impl SpawnDetail {
+    /// Stable machine-readable value, such as `execute:os-error:2`.
+    #[must_use]
+    pub fn name(self) -> String {
+        match self.os_error {
+            Some(error) => format!("{}:{}:{error}", self.stage.name(), self.failure.name()),
+            None => format!("{}:{}", self.stage.name(), self.failure.name()),
+        }
+    }
+
+    /// Human-readable sentence fragment, such as
+    /// `execution failed: No such file or directory (os error 2)`.
+    #[must_use]
+    pub fn describe(self) -> String {
+        match (self.failure, self.os_error) {
+            (SpawnFailure::OperatingSystem, Some(error)) => {
+                format!(
+                    "{} failed: {}",
+                    self.stage,
+                    io::Error::from_raw_os_error(error)
+                )
+            }
+            (SpawnFailure::OperatingSystem, None) => format!("{} failed", self.stage),
+            (SpawnFailure::TimedOut, _) => format!("{} timed out", self.stage),
+            (SpawnFailure::InvalidHandshake, _) => {
+                format!("{} returned an invalid record", self.stage)
+            }
+            (SpawnFailure::InvalidForkContract, _) => {
+                format!("{} violated the fork contract", self.stage)
+            }
+        }
+    }
+}
+
+/// Most recent failure of a logger stage, retained until loggers are healthy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LoggerLastResult {
+    /// The logger process could not be created.
+    SpawnFailed(SpawnDetail),
+    /// The logger exited with a status code.
+    Exited(u8),
+    /// The logger was terminated by a signal.
+    Signaled(u8),
+}
+
+impl LoggerLastResult {
+    /// Stable machine-readable value.
+    #[must_use]
+    pub fn name(self) -> String {
+        match self {
+            Self::SpawnFailed(detail) => format!("spawn-failed:{}", detail.name()),
+            Self::Exited(code) => format!("exit:{code}"),
+            Self::Signaled(signal) => format!("signal:{signal}"),
+        }
+    }
+
+    /// Human-readable sentence fragment naming the logger's failure.
+    #[must_use]
+    pub fn describe(self) -> String {
+        match self {
+            Self::SpawnFailed(detail) => detail.describe(),
+            Self::Exited(code) => format!("exited with status {code}"),
+            Self::Signaled(signal) => format!("terminated by signal {signal}"),
+        }
+    }
+}
+
 /// Complete bounded status published by one supervisor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatusSnapshot {
@@ -263,10 +350,14 @@ pub struct StatusSnapshot {
     pub failures: u64,
     /// Most recent terminal result.
     pub last_result: Option<LastResult>,
+    /// Stage and cause when `last_result` is [`LastResult::SpawnFailed`].
+    pub last_spawn_failure: Option<SpawnDetail>,
     /// Remaining restart delay in seconds.
     pub backoff_seconds: Option<u64>,
     /// Aggregate logging pipeline health.
     pub logger: LoggerStatus,
+    /// Most recent logger failure while a logger is not healthy.
+    pub logger_last_result: Option<LoggerLastResult>,
     /// Exact configured service argv.
     pub command: Vec<String>,
 }
@@ -314,8 +405,10 @@ impl StatusSnapshot {
             starts: 0,
             failures: 0,
             last_result: None,
+            last_spawn_failure: None,
             backoff_seconds,
             logger: LoggerStatus::NotConfigured,
+            logger_last_result: None,
             command: Vec::new(),
         }
     }
@@ -356,7 +449,71 @@ pub(crate) const fn desired_state_from_code(code: u8) -> Option<DesiredState> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LastResult, ServiceState};
+    use super::{LastResult, LoggerLastResult, ServiceState, SpawnDetail};
+    use crate::process::{SpawnFailure, SpawnStage};
+
+    /// The machine value is stable and the sentence names stage and cause.
+    #[test]
+    fn spawn_detail_names_the_stage_and_cause() {
+        let missing = SpawnDetail {
+            stage: SpawnStage::Execute,
+            failure: SpawnFailure::OperatingSystem,
+            os_error: Some(2),
+        };
+        assert_eq!(missing.name(), "execute:os-error:2");
+        assert!(missing.describe().starts_with("execution failed: "));
+        assert!(missing.describe().contains("os error 2"));
+
+        let slow = SpawnDetail {
+            stage: SpawnStage::StartupHandshake,
+            failure: SpawnFailure::TimedOut,
+            os_error: None,
+        };
+        assert_eq!(slow.name(), "handshake:timed-out");
+        assert_eq!(slow.describe(), "startup handshake timed out");
+
+        assert_eq!(
+            LoggerLastResult::SpawnFailed(missing).name(),
+            "spawn-failed:execute:os-error:2"
+        );
+        assert_eq!(LoggerLastResult::Exited(3).name(), "exit:3");
+        assert_eq!(LoggerLastResult::Signaled(9).name(), "signal:9");
+        assert_eq!(
+            LoggerLastResult::Exited(3).describe(),
+            "exited with status 3"
+        );
+    }
+
+    /// Stage and classification codes are shared with the broker protocol, so
+    /// each must survive a round trip and reject unknown values.
+    #[test]
+    fn spawn_codes_round_trip_and_reject_unknown_values() {
+        for stage in [
+            SpawnStage::Specification,
+            SpawnStage::Fork,
+            SpawnStage::ProcessGroup,
+            SpawnStage::CurrentDirectory,
+            SpawnStage::DescriptorMapping,
+            SpawnStage::Execute,
+            SpawnStage::StartupHandshake,
+            SpawnStage::Identity,
+            SpawnStage::SignalState,
+        ] {
+            assert_eq!(SpawnStage::from_code(stage.code()), Some(stage));
+        }
+        for failure in [
+            SpawnFailure::OperatingSystem,
+            SpawnFailure::TimedOut,
+            SpawnFailure::InvalidHandshake,
+            SpawnFailure::InvalidForkContract,
+        ] {
+            assert_eq!(SpawnFailure::from_code(failure.code()), Some(failure));
+        }
+        assert_eq!(SpawnStage::from_code(0), None);
+        assert_eq!(SpawnStage::from_code(10), None);
+        assert_eq!(SpawnFailure::from_code(0), None);
+        assert_eq!(SpawnFailure::from_code(5), None);
+    }
 
     #[test]
     fn service_state_codes_are_unique_and_round_trip() {

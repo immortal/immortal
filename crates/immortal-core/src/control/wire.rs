@@ -19,12 +19,19 @@ pub(super) const STATUS_UPTIME: u16 = 1 << 2;
 pub(super) const STATUS_DOWN_TIME: u16 = 1 << 3;
 pub(super) const STATUS_BACKOFF: u16 = 1 << 4;
 pub(super) const STATUS_LAST_RESULT: u16 = 1 << 5;
+pub(super) const STATUS_SPAWN_FAILURE: u16 = 1 << 6;
+pub(super) const STATUS_LOGGER_LAST_RESULT: u16 = 1 << 7;
 pub(super) const STATUS_KNOWN_FLAGS: u16 = STATUS_SUPERVISOR_PID
     | STATUS_MAIN_PID
     | STATUS_UPTIME
     | STATUS_DOWN_TIME
     | STATUS_BACKOFF
-    | STATUS_LAST_RESULT;
+    | STATUS_LAST_RESULT
+    | STATUS_SPAWN_FAILURE
+    | STATUS_LOGGER_LAST_RESULT;
+pub(super) const LOGGER_RESULT_SPAWN_FAILED: u8 = 1;
+pub(super) const LOGGER_RESULT_EXITED: u8 = 2;
+pub(super) const LOGGER_RESULT_SIGNALED: u8 = 3;
 
 pub(super) struct Cursor<'a> {
     remaining: &'a [u8],

@@ -177,6 +177,54 @@ impl Display for SpawnStage {
     }
 }
 
+impl SpawnStage {
+    /// Stable lowercase name used in status output.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Specification => "specification",
+            Self::Fork => "fork",
+            Self::ProcessGroup => "process-group",
+            Self::CurrentDirectory => "working-directory",
+            Self::DescriptorMapping => "descriptors",
+            Self::Execute => "execute",
+            Self::StartupHandshake => "handshake",
+            Self::Identity => "identity",
+            Self::SignalState => "signals",
+        }
+    }
+
+    /// Stable wire code shared by the broker and control protocols.
+    pub(crate) const fn code(self) -> u8 {
+        match self {
+            Self::Specification => 1,
+            Self::Fork => 2,
+            Self::ProcessGroup => 3,
+            Self::CurrentDirectory => 4,
+            Self::DescriptorMapping => 5,
+            Self::Execute => 6,
+            Self::StartupHandshake => 7,
+            Self::Identity => 8,
+            Self::SignalState => 9,
+        }
+    }
+
+    pub(crate) const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Specification),
+            2 => Some(Self::Fork),
+            3 => Some(Self::ProcessGroup),
+            4 => Some(Self::CurrentDirectory),
+            5 => Some(Self::DescriptorMapping),
+            6 => Some(Self::Execute),
+            7 => Some(Self::StartupHandshake),
+            8 => Some(Self::Identity),
+            9 => Some(Self::SignalState),
+            _ => None,
+        }
+    }
+}
+
 /// Stable classification for a failed process creation attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpawnFailure {
@@ -184,6 +232,39 @@ pub enum SpawnFailure {
     TimedOut,
     InvalidHandshake,
     InvalidForkContract,
+}
+
+impl SpawnFailure {
+    /// Stable lowercase name used in status output.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::OperatingSystem => "os-error",
+            Self::TimedOut => "timed-out",
+            Self::InvalidHandshake => "invalid-handshake",
+            Self::InvalidForkContract => "invalid-fork-contract",
+        }
+    }
+
+    /// Stable wire code shared by the broker and control protocols.
+    pub(crate) const fn code(self) -> u8 {
+        match self {
+            Self::OperatingSystem => 1,
+            Self::TimedOut => 2,
+            Self::InvalidHandshake => 3,
+            Self::InvalidForkContract => 4,
+        }
+    }
+
+    pub(crate) const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::OperatingSystem),
+            2 => Some(Self::TimedOut),
+            3 => Some(Self::InvalidHandshake),
+            4 => Some(Self::InvalidForkContract),
+            _ => None,
+        }
+    }
 }
 
 /// Failure to prepare, fork, or execute one process generation.

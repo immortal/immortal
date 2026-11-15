@@ -340,49 +340,17 @@ pub(super) fn decode_child_event(
 }
 
 pub(super) const fn spawn_stage_code(stage: SpawnStage) -> u8 {
-    match stage {
-        SpawnStage::Specification => 1,
-        SpawnStage::Fork => 2,
-        SpawnStage::ProcessGroup => 3,
-        SpawnStage::CurrentDirectory => 4,
-        SpawnStage::DescriptorMapping => 5,
-        SpawnStage::Execute => 6,
-        SpawnStage::StartupHandshake => 7,
-        SpawnStage::Identity => 8,
-        SpawnStage::SignalState => 9,
-    }
+    stage.code()
 }
 
 pub(super) fn spawn_stage_from_code(code: u8) -> Result<SpawnStage, BrokerProtocolError> {
-    match code {
-        1 => Ok(SpawnStage::Specification),
-        2 => Ok(SpawnStage::Fork),
-        3 => Ok(SpawnStage::ProcessGroup),
-        4 => Ok(SpawnStage::CurrentDirectory),
-        5 => Ok(SpawnStage::DescriptorMapping),
-        6 => Ok(SpawnStage::Execute),
-        7 => Ok(SpawnStage::StartupHandshake),
-        8 => Ok(SpawnStage::Identity),
-        9 => Ok(SpawnStage::SignalState),
-        _ => Err(BrokerProtocolError::InvalidSpawnStage),
-    }
+    SpawnStage::from_code(code).ok_or(BrokerProtocolError::InvalidSpawnStage)
 }
 
 pub(super) const fn spawn_failure_code(failure: SpawnFailure) -> u8 {
-    match failure {
-        SpawnFailure::OperatingSystem => 1,
-        SpawnFailure::TimedOut => 2,
-        SpawnFailure::InvalidHandshake => 3,
-        SpawnFailure::InvalidForkContract => 4,
-    }
+    failure.code()
 }
 
 pub(super) fn spawn_failure_from_code(code: u8) -> Result<SpawnFailure, BrokerProtocolError> {
-    match code {
-        1 => Ok(SpawnFailure::OperatingSystem),
-        2 => Ok(SpawnFailure::TimedOut),
-        3 => Ok(SpawnFailure::InvalidHandshake),
-        4 => Ok(SpawnFailure::InvalidForkContract),
-        _ => Err(BrokerProtocolError::InvalidSpawnFailure),
-    }
+    SpawnFailure::from_code(code).ok_or(BrokerProtocolError::InvalidSpawnFailure)
 }

@@ -382,8 +382,10 @@ fn typed_status_payload_round_trips_every_field() -> Result<(), Box<dyn Error>> 
         starts: 9,
         failures: 4,
         last_result: Some(LastResult::Signaled(9)),
+        last_spawn_failure: None,
         backoff_seconds: Some(8),
         logger: LoggerStatus::Failed,
+        logger_last_result: None,
         command: vec!["/usr/bin/api".to_owned(), "argument with spaces".to_owned()],
     };
     let response = Response {
