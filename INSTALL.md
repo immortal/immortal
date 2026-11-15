@@ -54,10 +54,11 @@ immortaldir --once --dry-run /usr/local/etc/immortal
 
 Run the check on the target host: validation confirms host state such as an
 existing `working_directory`, and `--check-config` exits `78` for an invalid
-definition. The dry-run only previews the plan. It reports an invalid
-definition on standard error but still exits `0`, and it does not apply
-dependency gating, so a service whose requirement is invalid is listed as
-`START` although a real pass skips it.
+definition. The dry-run previews the plan a real pass would apply, without
+touching runtime state: it withholds the start of a service whose requirement
+is missing or invalid, exits `79` when a service could not be scheduled, and
+otherwise exits `78` when it skipped an invalid definition, with the reason on
+standard error. Exit `0` means every definition was accepted and scheduled.
 
 The format change is not a field-renaming exercise. The Rust supervisor uses
 owned children, process groups, monotonic generations, bounded hooks, and exact

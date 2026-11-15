@@ -65,6 +65,8 @@ pub enum ActionError {
     Launcher(LauncherError),
     /// One or more services failed without preventing independent work.
     Partial(Vec<reconcile::ServiceFailure>),
+    /// A one-shot pass finished, but this many definitions were invalid.
+    InvalidDefinitions(usize),
     /// Operational execution did not receive its pre-Tokio broker.
     MissingBroker,
 }
@@ -100,6 +102,10 @@ impl Display for ActionError {
                 }
                 Ok(())
             }
+            Self::InvalidDefinitions(count) => write!(
+                formatter,
+                "{count} definition(s) are invalid and were skipped; see the diagnostics above"
+            ),
             Self::MissingBroker => formatter.write_str("operational reconciliation has no broker"),
         }
     }
@@ -115,7 +121,7 @@ impl Error for ActionError {
             Self::Watch(error) => Some(error),
             Self::Runtime(error) => Some(error),
             Self::Launcher(error) => Some(error),
-            Self::Partial(_) | Self::MissingBroker => None,
+            Self::Partial(_) | Self::InvalidDefinitions(_) | Self::MissingBroker => None,
         }
     }
 }
@@ -157,7 +163,9 @@ impl ActionError {
         match self {
             Self::RuntimeInitialization(_) => ExitClass::Software,
             Self::Broker(_) | Self::Launcher(_) => ExitClass::OsError,
-            Self::Scan(_) | Self::Runtime(_) => ExitClass::Configuration,
+            Self::Scan(_) | Self::Runtime(_) | Self::InvalidDefinitions(_) => {
+                ExitClass::Configuration
+            }
             Self::Io(_) => ExitClass::IoError,
             Self::Partial(_) => ExitClass::PartialFailure,
             Self::Watch(_) | Self::MissingBroker => ExitClass::Unavailable,

@@ -114,11 +114,100 @@ fn plan_output_is_deterministic_and_keeps_diagnostics_separate() -> Result<(), B
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut tracker = DesiredStateTracker::default();
-    write_plan(&mut tracker, scan, &mut stdout, &mut stderr)?;
+    let summary = write_plan(&mut tracker, scan, &mut stdout, &mut stderr)?;
 
     assert_eq!(String::from_utf8(stdout)?, "START\tapi\n");
     let diagnostics = String::from_utf8(stderr)?;
     assert!(diagnostics.contains("broken.yml"));
+    assert_eq!(summary.invalid_definitions, 1);
+    assert!(summary.unresolvable.is_empty());
+    Ok(())
+}
+
+/// The preview must withhold the start a real pass withholds: a service whose
+/// requirement is invalid, and every service behind it, is not listed.
+#[test]
+fn plan_withholds_starts_behind_an_invalid_requirement() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    fs::write(
+        directory.path().join("api.yml"),
+        "version: 2\ncommand: []\n",
+    )?;
+    fs::write(
+        directory.path().join("worker.yml"),
+        "version: 2\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    fs::write(
+        directory.path().join("report.yml"),
+        "version: 2\ncommand: [/bin/true]\nrequires: [worker]\n",
+    )?;
+    fs::write(
+        directory.path().join("web.yml"),
+        "version: 2\ncommand: [/bin/true]\n",
+    )?;
+    let scan = scan_directory(directory.path(), ScanLimits::default())?;
+    let mut stdout = Vec::new();
+    let mut tracker = DesiredStateTracker::default();
+    let summary = write_plan(&mut tracker, scan, &mut stdout, &mut Vec::new())?;
+
+    assert_eq!(String::from_utf8(stdout)?, "START\tweb\n");
+    assert_eq!(summary.invalid_definitions, 1);
+    let blocked: Vec<String> = summary
+        .unresolvable
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(blocked.len(), 2);
+    assert!(blocked.iter().any(|failure| failure.contains("`report`")));
+    assert!(
+        blocked
+            .iter()
+            .any(|failure| failure.contains("`worker`") && failure.contains("`api`"))
+    );
+    Ok(())
+}
+
+/// A one-shot dry run gates a migration, so an invalid definition must fail
+/// it with the configuration status even though the valid plan was printed.
+#[tokio::test(flavor = "current_thread")]
+async fn one_shot_dry_run_fails_on_an_invalid_definition() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    fs::write(
+        directory.path().join("api.yml"),
+        "version: 2\ncommand: [/bin/true]\n",
+    )?;
+    fs::write(
+        directory.path().join("broken.yml"),
+        "version: 2\ncommand: [\n",
+    )?;
+    let result = execute_with_endpoint(&action(directory.path(), true), None).await;
+    let Err(error) = result else {
+        return Err("an invalid definition did not fail the dry run".into());
+    };
+    assert!(matches!(error, ActionError::InvalidDefinitions(1)));
+    assert_eq!(error.exit_class(), ExitClass::Configuration);
+    Ok(())
+}
+
+/// A service that can never start fails the one-shot dry run exactly as it
+/// fails the real pass, and takes precedence over the invalid definition.
+#[tokio::test(flavor = "current_thread")]
+async fn one_shot_dry_run_fails_on_an_unresolvable_requirement() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    fs::write(
+        directory.path().join("api.yml"),
+        "version: 2\ncommand: []\n",
+    )?;
+    fs::write(
+        directory.path().join("worker.yml"),
+        "version: 2\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    let result = execute_with_endpoint(&action(directory.path(), true), None).await;
+    let Err(error) = result else {
+        return Err("an unresolvable requirement did not fail the dry run".into());
+    };
+    assert!(matches!(&error, ActionError::Partial(failures) if failures.len() == 1));
+    assert_eq!(error.exit_class(), ExitClass::PartialFailure);
     Ok(())
 }
 

@@ -829,14 +829,16 @@ the supervisor advisory lock. A held lock without a usable control socket is
 reported and retried rather than treated as absence; an unlocked stale runtime
 is reclaimed only by the normal checked supervisor acquisition path. Applied
 snapshots preserve semantic comparison and enabled/Down intent when
-`immortaldir` restarts. `--dry-run` performs the same bounded scan and change
-comparison without opening a broker or touching runtime state. It does not
-apply dependency gating, so a service whose requirement is invalid is listed as
-`START` although a real pass skips it. Invalid definitions are reported on
-standard error without changing the exit status of a dry run or of a one-shot
-pass that has no other failure; validate each definition with
-`immortal --config FILE --check-config`, which exits `78`, before relying on
-either.
+`immortaldir` restarts. `--dry-run` performs the same bounded scan, change
+comparison, and dependency planning without opening a broker or touching
+runtime state, so it withholds the start of a service whose requirement is
+missing, disabled, or invalid exactly as a real pass does. A `--once` pass,
+real or dry, still completes its independent work and then exits `79` when a
+service could not be scheduled or applied, and otherwise `78` when it skipped
+an invalid definition; each is reported on standard error. The continuous
+manager only reports them and keeps running.
+`immortal --config FILE --check-config` validates one definition and exits
+`78` when it is invalid.
 
 The continuous reconciler retains last-known-good definitions, treats invalid
 replacements as present, and requires two complete scans to confirm deletion.

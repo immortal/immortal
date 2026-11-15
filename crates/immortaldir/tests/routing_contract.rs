@@ -52,6 +52,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
 
+    // The named binary must carry a skipped invalid definition through to its
+    // exit status while still printing the valid plan.
+    fs::write(definitions.join("broken.yml"), "version: 2\ncommand: [\n")?;
+    let skipped = run(
+        binary,
+        &[
+            OsStr::new("--runtime-dir"),
+            runtime.as_os_str(),
+            OsStr::new("--once"),
+            OsStr::new("--dry-run"),
+            definitions.as_os_str(),
+        ],
+    )?;
+    require_status(
+        skipped.status,
+        ExitClass::Configuration,
+        "dry run with an invalid definition",
+    )?;
+    if skipped.stdout != b"START\tapi\n" {
+        return Err(format!(
+            "unexpected plan beside an invalid definition: {:?}",
+            String::from_utf8_lossy(&skipped.stdout)
+        )
+        .into());
+    }
+
     let invalid = run(binary, &[])?;
     require_status(invalid.status, ExitClass::Usage, "missing directory")
 }

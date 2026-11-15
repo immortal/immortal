@@ -11,6 +11,10 @@
 //! mutable lifecycle state is needed.
 //! Service-local failures remain typed and pending while unrelated work
 //! continues; loss of the runtime root or broker still fails the loop closed.
+//! A one-shot pass, real or dry, completes its independent work and then
+//! fails when a definition was invalid or a service could not be scheduled, so
+//! its exit status can gate a migration; the continuous loop only reports
+//! them. A dry run withholds the same starts the real pass would.
 //! TERM or INT is observed while idle or during reconciliation. An in-flight
 //! mutation still reaches its safe boundary before the launcher broker is shut
 //! down and reaped.
@@ -78,7 +82,10 @@ pub fn execute(action: &DirectoryAction) -> Result<(), ActionError> {
 /// Returns an error when definitions/runtime state is unsafe, dependency
 /// planning fails, a checked launch or generation-bound mutation fails, a
 /// lifecycle deadline expires, watcher/output I/O fails, or operational mode
-/// lacks its pre-Tokio broker.
+/// lacks its pre-Tokio broker. A one-shot pass, real or dry, also returns
+/// [`ActionError::Partial`] for a service that cannot be scheduled and
+/// otherwise [`ActionError::InvalidDefinitions`] when the scan skipped an
+/// invalid definition; both are reported after the independent work is done.
 pub async fn execute_with_endpoint(
     action: &DirectoryAction,
     endpoint: Option<ProcessBrokerEndpoint>,
@@ -87,7 +94,8 @@ pub async fn execute_with_endpoint(
     if action.dry_run {
         let mut tracker = DesiredStateTracker::default();
         if action.once {
-            return scan_and_print(&directory, &mut tracker);
+            let summary = scan_and_print(&directory, &mut tracker)?;
+            return one_shot_outcome(summary.invalid_definitions, summary.unresolvable);
         }
         return watch_dry_run(action, &directory, &mut tracker).await;
     }
@@ -106,7 +114,8 @@ pub async fn execute_with_endpoint(
             &mut operational,
             &mut launcher,
         )
-        .await;
+        .await
+        .and_then(|invalid_definitions| one_shot_outcome(invalid_definitions, Vec::new()));
         return finish_launcher(launcher, result).await;
     }
 
@@ -144,7 +153,7 @@ pub async fn execute_with_endpoint(
             }
         };
         match reconciliation {
-            Ok(()) => {}
+            Ok(_invalid_definitions) => {}
             Err(error @ (ActionError::Launcher(_) | ActionError::Runtime(_))) => {
                 return finish_launcher(launcher, Err(error)).await;
             }
@@ -189,8 +198,36 @@ async fn watch_dry_run(
         for error in trigger.watcher_errors {
             writeln!(io::stderr().lock(), "watcher: {error}")?;
         }
-        scan_and_print(directory, tracker)?;
+        let summary = scan_and_print(directory, tracker)?;
+        for failure in summary.unresolvable {
+            writeln!(io::stderr().lock(), "{failure}")?;
+        }
     }
+}
+
+/// What a complete scan found besides the work it planned.
+struct PlanSummary {
+    /// Definitions the scan rejected and skipped.
+    invalid_definitions: usize,
+    /// Enabled services whose requirements can never be met.
+    unresolvable: Vec<ServiceFailure>,
+}
+
+/// Turn a finished one-shot pass into its exit result.
+///
+/// A service failure takes precedence, as it always has; an otherwise clean
+/// pass still fails when it skipped an invalid definition.
+fn one_shot_outcome(
+    invalid_definitions: usize,
+    failures: Vec<ServiceFailure>,
+) -> Result<(), ActionError> {
+    if !failures.is_empty() {
+        return Err(ActionError::Partial(failures));
+    }
+    if invalid_definitions > 0 {
+        return Err(ActionError::InvalidDefinitions(invalid_definitions));
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -217,6 +254,8 @@ struct StopOutcome {
     deleted: Vec<String>,
 }
 
+/// Apply one complete scan and return how many definitions it skipped as
+/// invalid, or the isolated service failures as [`ActionError::Partial`].
 async fn scan_and_apply(
     action: &DirectoryAction,
     directory: &Path,
@@ -224,8 +263,9 @@ async fn scan_and_apply(
     tracker: &mut DesiredStateTracker,
     operational: &mut OperationalState,
     launcher: &mut SupervisorLauncher,
-) -> Result<(), ActionError> {
+) -> Result<usize, ActionError> {
     let scan = scan_directory(directory, ScanLimits::default())?;
+    let invalid_definitions = scan.problems.len();
     for problem in &scan.problems {
         writeln!(
             io::stderr().lock(),
@@ -311,7 +351,7 @@ async fn scan_and_apply(
         .await?,
     );
     if failures.is_empty() {
-        Ok(())
+        Ok(invalid_definitions)
     } else {
         Err(ActionError::Partial(failures))
     }
@@ -691,22 +731,31 @@ async fn wait_for_absence(root: &Path, name: &str) -> Result<(), MutationError> 
 fn scan_and_print(
     directory: &std::path::Path,
     tracker: &mut DesiredStateTracker,
-) -> Result<(), ActionError> {
+) -> Result<PlanSummary, ActionError> {
     let scan = scan_directory(directory, ScanLimits::default())?;
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
-    write_plan(tracker, scan, &mut stdout, &mut stderr)?;
-    Ok(())
+    Ok(write_plan(tracker, scan, &mut stdout, &mut stderr)?)
 }
 
+/// Print the plan a real pass would apply and report what it would skip.
+///
+/// A start or restart is withheld for a service whose requirements can never
+/// be met, exactly as the real pass withholds it; the service is returned in
+/// the summary instead. Scan problems go to `stderr`.
 fn write_plan(
     tracker: &mut DesiredStateTracker,
     scan: ScanResult,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
-) -> io::Result<()> {
+) -> io::Result<PlanSummary> {
     let actions = tracker.apply(&scan);
+    let unresolvable = dependency_plan(tracker.desired()).unresolvable;
     for (name, action) in actions {
+        let gated = matches!(action, ReconcileAction::Start | ReconcileAction::Restart);
+        if gated && unresolvable.iter().any(|blocked| blocked.service == name) {
+            continue;
+        }
         let verb = match action {
             ReconcileAction::Start => "START",
             ReconcileAction::Restart => "RESTART",
@@ -715,8 +764,15 @@ fn write_plan(
         };
         writeln!(stdout, "{verb}\t{name}")?;
     }
+    let invalid_definitions = scan.problems.len();
     for problem in scan.problems {
         writeln!(stderr, "{}: {:?}", problem.path.display(), problem.kind)?;
     }
-    Ok(())
+    Ok(PlanSummary {
+        invalid_definitions,
+        unresolvable: unresolvable
+            .into_iter()
+            .map(|blocked| ServiceFailure::new(&blocked.service, blocked.reason.into()))
+            .collect(),
+    })
 }
