@@ -1,0 +1,541 @@
+# step: 12-upgrade
+# host: immortal-linux.127.network Linux 6.12.113+deb13-amd64 x86_64
+# start: 2026-11-05T08:43:57Z
+# script: steps/12-upgrade.sh
++ set -e
++ . /home/devops/drill-3befcfc/lib.sh
++ PREV=43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ CAND=3befcfc4b01b3c66a18624229795d0e1301e89a6
++ PREV_BIN=/home/devops/immortal-43a7a6e/target/release
++ CAND_BIN=/home/devops/immortal-3befcfc/target/release
++ ROLLBACK=/usr/local/lib/immortal-rollback/43a7a6e
++ echo == before upgrade
+== before upgrade
++ snapshot
++ echo -- processes
+-- processes
++ ps -eo pid,ppid,pgid,sid,user,etimes,args
++ grep -v -e awk -e sh -x
++ awk NR == 1 || /immortal|heartbeat/
+    PID    PPID    PGID     SID USER     ELAPSED COMMAND
+ 234186       1  234186  234186 root         154 /usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
+ 234192  234186  234192  234186 root         154 /usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
+ 234201  234192  234200  234200 root         154 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 234202  234201  234202  234200 root         154 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 234831  234202  234202  234200 root          27 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 234832  234831  234832  234200 root          27 [immortal] <defunct>
+ 234833  234202  234832  234200 root          27 /usr/local/sbin/immortallog --max-age 86400 --keep 7 --max-bytes 1048576 /var/log/immortal-drill/api.log
+ 234848  234202  234202  234200 root          25 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 234849  234848  234849  234200 root          25 [immortal] <defunct>
+ 234850  234202  234849  234200 root          25 /bin/sh /usr/local/libexec/immortal-drill/heartbeat api
+ 234857  234192  234856  234856 root          25 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 234858  234857  234858  234856 root          25 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 234859  234858  234858  234856 root          25 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 234860  234859  234860  234856 root          25 [immortal] <defunct>
+ 234861  234858  234860  234856 root          25 /usr/local/sbin/immortallog /var/log/immortal-drill/worker.log
+ 234862  234858  234858  234856 root          25 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 234863  234862  234863  234856 root          25 [immortal] <defunct>
+ 234864  234858  234863  234856 root          25 /bin/sh /usr/local/libexec/immortal-drill/heartbeat worker
++ echo -- executables
+-- executables
++ supervisors
++ pgrep -x immortal
++ pgrep -x immortaldir
++ sudo test -e /proc/234201/exe
++ sudo readlink /proc/234201/exe
++ sudo sha256sum /proc/234201/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234201 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234201 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234202/exe
++ sudo readlink /proc/234202/exe
++ sudo sha256sum /proc/234202/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234202 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234202 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234831/exe
++ sudo readlink /proc/234831/exe
++ sudo sha256sum /proc/234831/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234831 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234831 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234832/exe
++ continue
++ sudo test -e /proc/234848/exe
++ sudo readlink /proc/234848/exe
++ sudo sha256sum /proc/234848/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234848 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234848 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234849/exe
++ continue
++ sudo test -e /proc/234857/exe
++ sudo readlink /proc/234857/exe
++ sudo sha256sum /proc/234857/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234857 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234857 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234858/exe
++ sudo readlink /proc/234858/exe
++ sudo sha256sum /proc/234858/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234858 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234858 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234859/exe
++ sudo readlink /proc/234859/exe
++ sudo sha256sum /proc/234859/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234859 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234859 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234860/exe
++ continue
++ sudo test -e /proc/234862/exe
++ sudo readlink /proc/234862/exe
++ sudo sha256sum /proc/234862/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234862 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234862 /usr/local/sbin/immortal 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234863/exe
++ continue
++ sudo test -e /proc/234186/exe
++ sudo readlink /proc/234186/exe
++ sudo sha256sum /proc/234186/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234186 /usr/local/sbin/immortaldir 366649542a9a6858230a75ad1306d75488dc2d7a8bff5846e084a4bc29347b84
+234186 /usr/local/sbin/immortaldir 366649542a9a6858230a75ad1306d75488dc2d7a8bff5846e084a4bc29347b84
++ sudo test -e /proc/234192/exe
++ sudo readlink /proc/234192/exe
++ sudo sha256sum /proc/234192/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234192 /usr/local/sbin/immortaldir 366649542a9a6858230a75ad1306d75488dc2d7a8bff5846e084a4bc29347b84
+234192 /usr/local/sbin/immortaldir 366649542a9a6858230a75ad1306d75488dc2d7a8bff5846e084a4bc29347b84
++ echo -- runtime root
+-- runtime root
++ sudo find /run/immortal -mindepth 1 -maxdepth 2
++ sort
+/run/immortal/api
+/run/immortal/api/immortal.sock
+/run/immortal/api/supervisor.lock
+/run/immortal/.definitions
+/run/immortal/.definitions/api.applied.yml
+/run/immortal/.definitions/api.launch.yml
+/run/immortal/.definitions/tracker.state
+/run/immortal/.definitions/worker.applied.yml
+/run/immortal/.definitions/worker.launch.yml
+/run/immortal/worker
+/run/immortal/worker/immortal.sock
+/run/immortal/worker/supervisor.lock
++ echo -- status
+-- status
++ ctl status
++ sudo /usr/local/bin/immortalctl status
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	api	ok	234201	234850	1	up	ready	ready	25	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "api"	desired=up state=ready
+system	worker	ok	234857	234864	1	up	ready	ready	25	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "worker"	desired=up state=ready
++ echo -- last heartbeats
+-- last heartbeats
++ sudo tail -n 1 /var/log/immortal-drill/api.log
+api 2026-11-05T08:43:55Z pid=234850 env=drill
++ sudo tail -n 1 /var/log/immortal-drill/worker.log
+worker 2026-11-05T08:43:55Z pid=234864 env=unset
++ ctl status --no-header
++ sudo /usr/local/bin/immortalctl status --no-header
++ awk { print $2, $4, $5 }
++ before=api 234201 234850
+worker 234857 234864
++ install_release /home/devops/immortal-3befcfc/target/release
++ sudo install -m 0755 /home/devops/immortal-3befcfc/target/release/immortal /usr/local/sbin/immortal
++ sudo install -m 0755 /home/devops/immortal-3befcfc/target/release/immortaldir /usr/local/sbin/immortaldir
++ sudo install -m 0755 /home/devops/immortal-3befcfc/target/release/immortalctl /usr/local/bin/immortalctl
++ sudo install -m 0755 /home/devops/immortal-3befcfc/target/release/immortallog /usr/local/sbin/immortallog
++ /usr/local/sbin/immortal --version
+immortal 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ /usr/local/sbin/immortaldir --version
+immortaldir 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ /usr/local/bin/immortalctl --version
+immortalctl 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ /usr/local/sbin/immortallog --version
+immortallog 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ installed_revision
++ sort -u
++ /usr/local/sbin/immortal --version
++ sed s/.* - //
++ /usr/local/sbin/immortaldir --version
++ sed s/.* - //
++ /usr/local/bin/immortalctl --version
++ sed s/.* - //
++ /usr/local/sbin/immortallog --version
++ sed s/.* - //
++ revs=3befcfc4b01b3c66a18624229795d0e1301e89a6
++ printf %s\n 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ wc -l
++ [ 1 -eq 1 ]
++ printf %s\n 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ test 3befcfc4b01b3c66a18624229795d0e1301e89a6 = 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ sudo systemctl restart immortaldir
++ sleep 3
++ systemctl is-active immortaldir
+active
++ ctl status --no-header
++ sudo /usr/local/bin/immortalctl status --no-header
++ awk { print $2, $4, $5 }
++ after=api 234201 234850
+worker 234857 234864
++ echo service supervisor main before: api 234201 234850
+worker 234857 234864
+service supervisor main before: api 234201 234850
+worker 234857 234864
++ echo service supervisor main after:  api 234201 234850
+worker 234857 234864
+service supervisor main after:  api 234201 234850
+worker 234857 234864
++ test api 234201 234850
+worker 234857 234864 = api 234201 234850
+worker 234857 234864
++ echo manager restart kept every supervisor and main process
+manager restart kept every supervisor and main process
++ echo == old supervisors under the new manager and client
+== old supervisors under the new manager and client
++ snapshot
++ echo -- processes
+-- processes
++ ps -eo pid,ppid,pgid,sid,user,etimes,args
++ awk NR == 1 || /immortal|heartbeat/
++ grep -v -e awk -e sh -x
+    PID    PPID    PGID     SID USER     ELAPSED COMMAND
+ 234201       1  234200  234200 root         158 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 234202  234201  234202  234200 root         158 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 234831  234202  234202  234200 root          31 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 234832  234831  234832  234200 root          31 [immortal] <defunct>
+ 234833  234202  234832  234200 root          31 /usr/local/sbin/immortallog --max-age 86400 --keep 7 --max-bytes 1048576 /var/log/immortal-drill/api.log
+ 234848  234202  234202  234200 root          29 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 234849  234848  234849  234200 root          29 [immortal] <defunct>
+ 234850  234202  234849  234200 root          29 /bin/sh /usr/local/libexec/immortal-drill/heartbeat api
+ 234857       1  234856  234856 root          29 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 234858  234857  234858  234856 root          29 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 234859  234858  234858  234856 root          29 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 234860  234859  234860  234856 root          29 [immortal] <defunct>
+ 234861  234858  234860  234856 root          29 /usr/local/sbin/immortallog /var/log/immortal-drill/worker.log
+ 234862  234858  234858  234856 root          29 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 234863  234862  234863  234856 root          29 [immortal] <defunct>
+ 234864  234858  234863  234856 root          29 /bin/sh /usr/local/libexec/immortal-drill/heartbeat worker
+ 235259       1  235259  235259 root           3 /usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
+ 235261  235259  235261  235259 root           3 /usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
++ echo -- executables
+-- executables
++ supervisors
++ pgrep -x immortal
++ pgrep -x immortaldir
++ sudo test -e /proc/234201/exe
++ sudo readlink /proc/234201/exe
++ sudo sha256sum /proc/234201/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234201 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234201 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234202/exe
++ sudo readlink /proc/234202/exe
++ sudo sha256sum /proc/234202/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234202 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234202 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234831/exe
++ sudo readlink /proc/234831/exe
++ sudo sha256sum /proc/234831/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234831 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234831 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234832/exe
++ continue
++ sudo test -e /proc/234848/exe
++ sudo readlink /proc/234848/exe
++ sudo sha256sum /proc/234848/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234848 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234848 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234849/exe
++ continue
++ sudo test -e /proc/234857/exe
++ sudo readlink /proc/234857/exe
++ sudo sha256sum /proc/234857/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234857 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234857 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234858/exe
++ sudo readlink /proc/234858/exe
++ sudo sha256sum /proc/234858/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234858 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234858 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234859/exe
++ sudo readlink /proc/234859/exe
++ sudo sha256sum /proc/234859/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234859 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234859 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234860/exe
++ continue
++ sudo test -e /proc/234862/exe
++ sudo readlink /proc/234862/exe
++ sudo sha256sum /proc/234862/exe
++ cut -d   -f 1
++ printf %s %s %s\n 234862 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
+234862 /usr/local/sbin/immortal (deleted) 70a1f6b242fbd54664a96faab08abcfa954a636fe2c11d6844f428f43130d2a9
++ sudo test -e /proc/234863/exe
++ continue
++ sudo test -e /proc/235259/exe
++ sudo readlink /proc/235259/exe
++ sudo sha256sum /proc/235259/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235259 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
+235259 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
++ sudo test -e /proc/235261/exe
++ sudo readlink /proc/235261/exe
++ sudo sha256sum /proc/235261/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235261 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
+235261 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
++ echo -- runtime root
+-- runtime root
++ sudo find /run/immortal -mindepth 1 -maxdepth 2
++ sort
+/run/immortal/api
+/run/immortal/api/immortal.sock
+/run/immortal/api/supervisor.lock
+/run/immortal/.definitions
+/run/immortal/.definitions/api.applied.yml
+/run/immortal/.definitions/api.launch.yml
+/run/immortal/.definitions/tracker.state
+/run/immortal/.definitions/worker.applied.yml
+/run/immortal/.definitions/worker.launch.yml
+/run/immortal/worker
+/run/immortal/worker/immortal.sock
+/run/immortal/worker/supervisor.lock
++ echo -- status
+-- status
++ ctl status
++ sudo /usr/local/bin/immortalctl status
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	api	ok	234201	234850	1	up	ready	ready	29	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "api"	desired=up state=ready
+system	worker	ok	234857	234864	1	up	ready	ready	29	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "worker"	desired=up state=ready
++ echo -- last heartbeats
+-- last heartbeats
++ sudo tail -n 1 /var/log/immortal-drill/api.log
+api 2026-11-05T08:43:59Z pid=234850 env=drill
++ sudo tail -n 1 /var/log/immortal-drill/worker.log
+worker 2026-11-05T08:43:59Z pid=234864 env=unset
++ ctl restart worker
++ sudo /usr/local/bin/immortalctl restart worker
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	worker	ok	234857	235419	2	up	ready	ready	0	-	2	0	signal:15	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "worker"	desired=up state=ready
++ wait_state worker ready 30
++ waited=0
++ state_of worker
++ ctl status --no-header
++ awk -v s=worker $2 == s { print $8 }
++ [ ready != ready ]
++ echo worker is ready after 0s
+worker is ready after 0s
++ ctl status worker
++ sudo /usr/local/bin/immortalctl status worker
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	worker	ok	234857	235419	2	up	ready	ready	0	-	2	0	signal:15	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "worker"	desired=up state=ready
++ echo == full cutover
+== full cutover
++ sudo systemctl stop immortaldir
++ ctl halt --all
++ sudo /usr/local/bin/immortalctl halt --all
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	api	ok	-	-	1	-	-	-	-	-	-	-	-	-	-	-	accepted; awaiting lifecycle completion
+system	worker	ok	-	-	2	-	-	-	-	-	-	-	-	-	-	-	accepted; awaiting lifecycle completion
++ sleep 1
++ pgrep -fl heartbeat|immortal --config
++ echo no supervisor or service process after halt --all
+no supervisor or service process after halt --all
++ sudo find /run/immortal -mindepth 1
++ sort
+/run/immortal/api
+/run/immortal/api/supervisor.lock
+/run/immortal/.definitions
+/run/immortal/.definitions/api.applied.yml
+/run/immortal/.definitions/api.launch.yml
+/run/immortal/.definitions/tracker.state
+/run/immortal/.definitions/worker.applied.yml
+/run/immortal/.definitions/worker.launch.yml
+/run/immortal/worker
+/run/immortal/worker/supervisor.lock
++ sudo systemctl start immortaldir
++ wait_state api ready 60
++ waited=0
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [  != ready ]
++ waited=1
++ [ 1 -gt 60 ]
++ sleep 1
++ state_of api
++ + awk -v s=api $2 == s { print $8 }
+ctl status --no-header
++ [ waiting-condition != ready ]
++ waited=2
++ [ 2 -gt 60 ]
++ sleep 1
++ state_of api
++ awk -v s=api $2 == s { print $8 }
++ ctl status --no-header
++ [ ready != ready ]
++ echo api is ready after 2s
+api is ready after 2s
++ wait_state worker ready 60
++ waited=0
++ state_of worker
++ ctl status --no-header
++ awk -v s=worker $2 == s { print $8 }
++ [ ready != ready ]
++ echo worker is ready after 0s
+worker is ready after 0s
++ sleep 5
++ echo == after cutover
+== after cutover
++ snapshot
++ echo -- processes
+-- processes
++ ps -eo pid,ppid,pgid,sid,user,etimes,args
++ awk NR == 1 || /immortal|heartbeat/
++ grep -v -e awk -e sh -x
+    PID    PPID    PGID     SID USER     ELAPSED COMMAND
+ 235449       1  235449  235449 root           7 /usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
+ 235455  235449  235455  235449 root           7 /usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
+ 235463  235455  235462  235462 root           7 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 235464  235463  235464  235462 root           7 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 235465  235464  235464  235462 root           7 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 235466  235465  235466  235462 root           7 [immortal] <defunct>
+ 235467  235464  235466  235462 root           7 /usr/local/sbin/immortallog --max-age 86400 --keep 7 --max-bytes 1048576 /var/log/immortal-drill/api.log
+ 235475  235464  235464  235462 root           5 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+ 235476  235475  235476  235462 root           5 [immortal] <defunct>
+ 235477  235464  235476  235462 root           5 /bin/sh /usr/local/libexec/immortal-drill/heartbeat api
+ 235484  235455  235483  235483 root           5 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 235485  235484  235485  235483 root           5 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 235486  235485  235485  235483 root           5 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 235487  235486  235487  235483 root           5 [immortal] <defunct>
+ 235488  235485  235487  235483 root           5 /usr/local/sbin/immortallog /var/log/immortal-drill/worker.log
+ 235493  235485  235485  235483 root           5 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+ 235495  235493  235495  235483 root           5 [immortal] <defunct>
+ 235496  235485  235495  235483 root           5 /bin/sh /usr/local/libexec/immortal-drill/heartbeat worker
++ echo -- executables
+-- executables
++ supervisors
++ pgrep -x immortal
++ pgrep -x immortaldir
++ sudo test -e /proc/235463/exe
++ sudo readlink /proc/235463/exe
++ sudo sha256sum /proc/235463/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235463 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+235463 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/235464/exe
++ sudo readlink /proc/235464/exe
++ sudo sha256sum /proc/235464/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235464 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+235464 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/235465/exe
++ sudo readlink /proc/235465/exe
++ sudo sha256sum /proc/235465/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235465 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+235465 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/235466/exe
++ continue
++ sudo test -e /proc/235475/exe
++ sudo readlink /proc/235475/exe
++ sudo sha256sum /proc/235475/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235475 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+235475 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/235476/exe
++ continue
++ sudo test -e /proc/235484/exe
++ sudo readlink /proc/235484/exe
++ sudo sha256sum /proc/235484/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235484 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+235484 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/235485/exe
++ sudo readlink /proc/235485/exe
++ sudo sha256sum /proc/235485/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235485 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+235485 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/235486/exe
++ sudo readlink /proc/235486/exe
++ sudo sha256sum /proc/235486/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235486 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+235486 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/235487/exe
++ continue
++ sudo test -e /proc/235493/exe
++ sudo readlink /proc/235493/exe
++ sudo sha256sum /proc/235493/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235493 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+235493 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/235495/exe
++ continue
++ sudo test -e /proc/235449/exe
++ sudo readlink /proc/235449/exe
++ sudo sha256sum /proc/235449/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235449 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
+235449 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
++ sudo test -e /proc/235455/exe
++ sudo readlink /proc/235455/exe
++ sudo sha256sum /proc/235455/exe
++ cut -d   -f 1
++ printf %s %s %s\n 235455 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
+235455 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
++ echo -- runtime root
+-- runtime root
++ sudo find /run/immortal -mindepth 1 -maxdepth 2
++ sort
+/run/immortal/api
+/run/immortal/api/immortal.sock
+/run/immortal/api/supervisor.lock
+/run/immortal/.definitions
+/run/immortal/.definitions/api.applied.yml
+/run/immortal/.definitions/api.launch.yml
+/run/immortal/.definitions/tracker.state
+/run/immortal/.definitions/worker.applied.yml
+/run/immortal/.definitions/worker.launch.yml
+/run/immortal/worker
+/run/immortal/worker/immortal.sock
+/run/immortal/worker/supervisor.lock
++ echo -- status
+-- status
++ ctl status
++ sudo /usr/local/bin/immortalctl status
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	api	ok	235463	235477	1	up	ready	ready	5	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "api"	desired=up state=ready
+system	worker	ok	235484	235496	1	up	ready	ready	5	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "worker"	desired=up state=ready
++ echo -- last heartbeats
+-- last heartbeats
++ sudo tail -n 1 /var/log/immortal-drill/api.log
+api 2026-11-05T08:44:08Z pid=235477 env=drill
++ sudo tail -n 1 /var/log/immortal-drill/worker.log
+worker 2026-11-05T08:44:08Z pid=235496 env=unset
++ sha256sum /usr/local/sbin/immortal
++ cut -d   -f 1
++ cand_hash=af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ ctl status --no-header
++ sudo /usr/local/bin/immortalctl status --no-header
++ awk { print $4 }
++ sudo sha256sum /proc/235463/exe
++ cut -d   -f 1
++ test af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218 = af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo sha256sum /proc/235484/exe
++ cut -d   -f 1
++ test af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218 = af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ echo every supervisor runs the candidate binary af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+every supervisor runs the candidate binary af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+# exit: 0 2026-11-05T08:44:09Z

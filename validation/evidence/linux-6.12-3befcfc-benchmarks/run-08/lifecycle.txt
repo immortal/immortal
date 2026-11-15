@@ -1,0 +1,2 @@
+fork-spawn-wait	573221 ns/op	median of 7 samples
+fork-spawn-signal-wait	461199 ns/op	median of 7 samples

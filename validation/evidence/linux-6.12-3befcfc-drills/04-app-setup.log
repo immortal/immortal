@@ -1,0 +1,14 @@
+# step: 04-app-setup
+# host: immortal-linux.127.network Linux 6.12.113+deb13-amd64 x86_64
+# start: 2026-11-05T08:36:57Z
+# script: steps/04-app-setup.sh
++ set -e
++ sudo install -d -m 0755 /usr/local/libexec/immortal-drill /var/lib/immortal-drill/api /var/log/immortal-drill
++ sudo install -m 0755 /home/devops/drill-3befcfc/defs/heartbeat /usr/local/libexec/immortal-drill/heartbeat
++ ls -ld /usr/local/libexec/immortal-drill /var/lib/immortal-drill/api /var/log/immortal-drill
+drwxr-xr-x 2 root root 23 Nov  5 08:36 /usr/local/libexec/immortal-drill
+drwxr-xr-x 2 root root  6 Nov  5 08:36 /var/lib/immortal-drill/api
+drwxr-xr-x 2 root root  6 Nov  5 08:36 /var/log/immortal-drill
++ ls -l /usr/local/libexec/immortal-drill/heartbeat
+-rwxr-xr-x 1 root root 280 Nov  5 08:36 /usr/local/libexec/immortal-drill/heartbeat
+# exit: 0 2026-11-05T08:36:57Z

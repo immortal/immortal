@@ -1,0 +1,3 @@
+platform	metric	runs	median_ns	max_ns	p95_ns	suggested_ceiling_ns
+linux	fork-spawn-wait	12	577284	613087	613087	766359
+linux	fork-spawn-signal-wait	12	481232	513530	513530	641913

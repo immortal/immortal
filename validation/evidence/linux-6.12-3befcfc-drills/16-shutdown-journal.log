@@ -1,0 +1,71 @@
+# step: 16-shutdown-journal
+# host: immortal-linux.127.network Linux 6.12.113+deb13-amd64 x86_64
+# start: 2026-11-05T08:46:14Z
+# script: steps/16-shutdown-journal.sh
++ set -e
++ echo -- immortaldir unit, previous boot, from the reboot request on
+-- immortaldir unit, previous boot, from the reboot request on
++ J -u immortaldir --since 2026-11-05 08:45:20
++ sudo journalctl -b -1 --no-pager -o short-iso -u immortaldir --since 2026-11-05 08:45:20
++ sed s/ immortal-linux\.127\.network / /
+2026-11-05T08:45:26+00:00 systemd[1]: Stopping immortaldir.service - Immortal service-definition reconciler...
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Deactivated successfully.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236211 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236212 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236213 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236215 (immortallog) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236224 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236226 (heartbeat) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236246 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236247 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236248 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236250 (immortallog) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236251 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236253 (heartbeat) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236635 (sleep) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236637 (sleep) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: Stopped immortaldir.service - Immortal service-definition reconciler.
++ echo -- remaining processes, signals, and timeouts during shutdown
+-- remaining processes, signals, and timeouts during shutdown
++ J --since 2026-11-05 08:45:20
++ grep -i -E immortal|heartbeat|remain|Sending SIG|timed out|Killing process|still around|Final kill
++ sed s/ immortal-linux\.127\.network / /
++ sudo journalctl -b -1 --no-pager -o short-iso --since 2026-11-05 08:45:20
+2026-11-05T08:45:20+00:00 sudo[236471]:   devops : PWD=/home/devops/drill-3befcfc ; USER=root ; COMMAND=/usr/bin/tee /var/lib/immortal-drill/boot_id.before
+2026-11-05T08:45:21+00:00 sudo[236603]:   devops : PWD=/home/devops/drill-3befcfc ; USER=root ; COMMAND=/usr/bin/find /run/immortal -mindepth 1 -maxdepth 2
+2026-11-05T08:45:21+00:00 sudo[236607]:   devops : PWD=/home/devops/drill-3befcfc ; USER=root ; COMMAND=/usr/local/bin/immortalctl status
+2026-11-05T08:45:21+00:00 sudo[236610]:   devops : PWD=/home/devops/drill-3befcfc ; USER=root ; COMMAND=/usr/bin/tail -n 1 /var/log/immortal-drill/api.log
+2026-11-05T08:45:21+00:00 sudo[236613]:   devops : PWD=/home/devops/drill-3befcfc ; USER=root ; COMMAND=/usr/bin/tail -n 1 /var/log/immortal-drill/worker.log
+2026-11-05T08:45:21+00:00 sudo[236617]:   devops : PWD=/home/devops/drill-3befcfc ; USER=root ; COMMAND=/usr/bin/tee /var/lib/immortal-drill/reboot.requested
+2026-11-05T08:45:26+00:00 systemd[1]: Stopping immortaldir.service - Immortal service-definition reconciler...
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Deactivated successfully.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236211 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236212 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236213 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236215 (immortallog) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236224 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236226 (heartbeat) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236246 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236247 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236248 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236250 (immortallog) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236251 (immortal) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236253 (heartbeat) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236635 (sleep) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: immortaldir.service: Unit process 236637 (sleep) remains running after unit stopped.
+2026-11-05T08:45:26+00:00 systemd[1]: Stopped immortaldir.service - Immortal service-definition reconciler.
+2026-11-05T08:45:26+00:00 ifdown[236697]: sending signal ALRM to pid 653
+2026-11-05T08:45:26+00:00 dhcpcd[236697]: sending signal ALRM to pid 653
++ echo -- shutdown milestones
+-- shutdown milestones
++ J --since 2026-11-05 08:45:20
++ grep -E Stopping immortaldir|Reached target (shutdown|final|reboot)|Journal stopped
++ + sed s/ immortal-linux\.127\.network / /
+sudo journalctl -b -1 --no-pager -o short-iso --since 2026-11-05 08:45:20
+2026-11-05T08:45:26+00:00 systemd[1]: Stopping immortaldir.service - Immortal service-definition reconciler...
+2026-11-05T08:45:26+00:00 systemd[229846]: Reached target shutdown.target - Shutdown.
+2026-11-05T08:45:26+00:00 systemd[1]: Reached target shutdown.target - System Shutdown.
+2026-11-05T08:45:26+00:00 systemd[1]: Reached target final.target - Late Shutdown Services.
+2026-11-05T08:45:26+00:00 systemd[1]: Reached target reboot.target - System Reboot.
+2026-11-05T08:45:26+00:00 systemd-journald[305]: Journal stopped
+# exit: 0 2026-11-05T08:46:14Z

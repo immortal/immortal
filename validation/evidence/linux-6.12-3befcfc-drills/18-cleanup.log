@@ -1,0 +1,83 @@
+# step: 18-cleanup
+# host: immortal-linux.127.network Linux 6.12.113+deb13-amd64 x86_64
+# start: 2026-11-05T08:47:09Z
+# script: steps/18-cleanup.sh
++ set -e
++ . /home/devops/drill-3befcfc/lib.sh
++ PREV=43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ CAND=3befcfc4b01b3c66a18624229795d0e1301e89a6
++ PREV_BIN=/home/devops/immortal-43a7a6e/target/release
++ CAND_BIN=/home/devops/immortal-3befcfc/target/release
++ ROLLBACK=/usr/local/lib/immortal-rollback/43a7a6e
++ E=/home/devops/immortal-evidence/drills-3befcfc-linux
++ mkdir -p /home/devops/immortal-evidence/drills-3befcfc-linux/service-logs
++ sudo cp /var/log/immortal-drill/api.log /var/log/immortal-drill/worker.log /home/devops/immortal-evidence/drills-3befcfc-linux/service-logs/
++ id -u
++ id -g
++ sudo chown 1000:1000 /home/devops/immortal-evidence/drills-3befcfc-linux/service-logs/api.log /home/devops/immortal-evidence/drills-3befcfc-linux/service-logs/worker.log
++ wc -l /home/devops/immortal-evidence/drills-3befcfc-linux/service-logs/api.log /home/devops/immortal-evidence/drills-3befcfc-linux/service-logs/worker.log
+  99 /home/devops/immortal-evidence/drills-3befcfc-linux/service-logs/api.log
+ 100 /home/devops/immortal-evidence/drills-3befcfc-linux/service-logs/worker.log
+ 199 total
++ sudo systemctl disable --now immortaldir
+Removed '/etc/systemd/system/multi-user.target.wants/immortaldir.service'.
++ ctl halt --all
++ sudo /usr/local/bin/immortalctl halt --all
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	api	ok	-	-	1	-	-	-	-	-	-	-	-	-	-	-	accepted; awaiting lifecycle completion
+system	worker	ok	-	-	1	-	-	-	-	-	-	-	-	-	-	-	accepted; awaiting lifecycle completion
++ sleep 1
++ pgrep -fl heartbeat|immortal
++ sudo rm /etc/systemd/system/immortaldir.service
++ sudo systemctl daemon-reload
++ sudo systemctl reset-failed immortaldir
++ true
++ sudo flock -n /run/immortal/api/supervisor.lock true
++ sudo rm /run/immortal/api/supervisor.lock
++ sudo rmdir /run/immortal/api
++ sudo flock -n /run/immortal/worker/supervisor.lock true
++ sudo rm /run/immortal/worker/supervisor.lock
++ sudo rmdir /run/immortal/worker
++ sudo rm /run/immortal/.definitions/api.applied.yml
++ sudo rm /run/immortal/.definitions/api.launch.yml
++ sudo rm /run/immortal/.definitions/worker.applied.yml
++ sudo rm /run/immortal/.definitions/worker.launch.yml
++ sudo rm /run/immortal/.definitions/tracker.state
++ sudo rmdir /run/immortal/.definitions /run/immortal
++ sudo rm /etc/immortal/api.yml /etc/immortal/worker.yml
++ sudo rmdir /etc/immortal
++ sudo rm /usr/local/sbin/immortal /usr/local/sbin/immortaldir /usr/local/sbin/immortallog /usr/local/bin/immortalctl
++ sudo rm /usr/local/lib/immortal-rollback/43a7a6e/immortal
++ sudo rm /usr/local/lib/immortal-rollback/43a7a6e/immortaldir
++ sudo rm /usr/local/lib/immortal-rollback/43a7a6e/immortalctl
++ sudo rm /usr/local/lib/immortal-rollback/43a7a6e/immortallog
++ sudo rmdir /usr/local/lib/immortal-rollback/43a7a6e /usr/local/lib/immortal-rollback
++ sudo rm /usr/local/libexec/immortal-drill/heartbeat
++ sudo rmdir /usr/local/libexec/immortal-drill
++ sudo rm /var/lib/immortal-drill/boot_id.before /var/lib/immortal-drill/reboot.requested
++ sudo rmdir /var/lib/immortal-drill/api /var/lib/immortal-drill
++ sudo rm /var/log/immortal-drill/api.log /var/log/immortal-drill/worker.log
++ sudo rmdir /var/log/immortal-drill
++ echo -- verification
+-- verification
++ ls -A /usr/local/sbin /usr/local/bin /usr/local/lib /usr/local/libexec
+/usr/local/bin:
+
+/usr/local/lib:
+python3.13
+
+/usr/local/libexec:
+
+/usr/local/sbin:
++ sudo test -e /etc/immortal
++ sudo test -e /run/immortal
++ sudo test -e /etc/systemd/system/immortaldir.service
++ sudo test -e /var/lib/immortal-drill
++ sudo test -e /var/log/immortal-drill
++ sudo test -e /usr/local/lib/immortal-rollback
++ systemctl list-unit-files immortaldir.service --no-legend
++ true
++ pgrep -fl immortal
++ echo VM restored: no Immortal process, unit, binary, definition, runtime, or drill file
+VM restored: no Immortal process, unit, binary, definition, runtime, or drill file
+# exit: 0 2026-11-05T08:47:11Z

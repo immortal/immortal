@@ -1,0 +1,29 @@
+# step: 06-invalid-only
+# host: immortal-linux.127.network Linux 6.12.113+deb13-amd64 x86_64
+# start: 2026-11-05T08:37:20Z
+# script: steps/06-invalid-only.sh
++ set -u
++ bin=/home/devops/immortal-3befcfc/target/release
++ mktemp -d /home/devops/drill-3befcfc/inv.XXXXXX
++ work=/home/devops/drill-3befcfc/inv.I8iOkf
++ mkdir -m 0755 /home/devops/drill-3befcfc/inv.I8iOkf/defs
++ mkdir -m 0700 /home/devops/drill-3befcfc/inv.I8iOkf/run
++ sed s#/var/lib/immortal-drill/api#/var/lib/immortal-drill/missing# /home/devops/drill-3befcfc/defs/v2/api.yml
++ chmod 0644 /home/devops/drill-3befcfc/inv.I8iOkf/defs/api.yml
++ /home/devops/immortal-3befcfc/target/release/immortaldir --once --dry-run /home/devops/drill-3befcfc/inv.I8iOkf/defs
+/home/devops/drill-3befcfc/inv.I8iOkf/defs/api.yml: Config(Validation(["working_directory `/var/lib/immortal-drill/missing` is unavailable: No such file or directory (os error 2)"]))
++ echo dry-run exit=0
+dry-run exit=0
++ /home/devops/immortal-3befcfc/target/release/immortaldir --once --runtime-dir /home/devops/drill-3befcfc/inv.I8iOkf/run --supervisor-binary /home/devops/immortal-3befcfc/target/release/immortal /home/devops/drill-3befcfc/inv.I8iOkf/defs
+/home/devops/drill-3befcfc/inv.I8iOkf/defs/api.yml: Config(Validation(["working_directory `/var/lib/immortal-drill/missing` is unavailable: No such file or directory (os error 2)"]))
++ echo once exit=0
+once exit=0
++ find /home/devops/drill-3befcfc/inv.I8iOkf/run -name immortal.sock
++ wc -l
+0
++ printf version: 2\ncommand: [\n
++ /home/devops/immortal-3befcfc/target/release/immortaldir --once --dry-run /home/devops/drill-3befcfc/inv.I8iOkf/defs
+/home/devops/drill-3befcfc/inv.I8iOkf/defs/api.yml: Config(Parse("error: line 2 column 10: unclosed bracket '['\n --> <input>:2:10\n  |\n1 | version: 2\n2 | command: [\n  |          ^ unclosed bracket '['"))
++ echo dry-run malformed exit=0
+dry-run malformed exit=0
+# exit: 0 2026-11-05T08:37:20Z

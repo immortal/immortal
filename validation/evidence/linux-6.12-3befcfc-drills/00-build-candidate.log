@@ -1,0 +1,66 @@
+# step: 00-build-candidate
+# host: immortal-linux.127.network Linux 6.12.113+deb13-amd64 x86_64
+# start: 2026-11-05T08:33:23Z
+# script: steps/00-build-candidate.sh
++ export PATH=/home/devops/.cargo/bin:/home/devops/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/games
++ export RUSTUP_AUTO_INSTALL=0
++ cd /home/devops/immortal-3befcfc
++ git rev-parse HEAD
+3befcfc4b01b3c66a18624229795d0e1301e89a6
++ git status --porcelain
++ test -z 
++ rustc --version
+rustc 1.97.0 (2d8144b78 2026-07-07)
++ cargo --version
+cargo 1.97.0 (c980f4866 2026-06-30)
++ cargo build --workspace --release --locked
+   Compiling anstyle v1.0.14
+   Compiling log v0.4.34
+   Compiling tracing-core v0.1.36
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling mio v1.2.4
+   Compiling anstyle-query v1.1.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling annotate-snippets v0.12.16
+   Compiling anstream v1.0.0
+   Compiling tracing v0.1.44
+   Compiling clap_lex v1.1.1
+   Compiling strsim v0.11.1
+   Compiling tokio v1.53.3
+   Compiling clap_builder v4.6.7
+   Compiling serde-saphyr v2.0.0
+   Compiling notify v8.2.0
+   Compiling regex-syntax v0.8.11
+   Compiling regex-automata v0.4.18
+   Compiling immortal-core v0.1.0 (/home/devops/immortal-3befcfc/crates/immortal-core)
+   Compiling clap v4.6.7
+   Compiling lazy_static v1.5.1
+   Compiling sharded-slab v0.1.7
+   Compiling matchers v0.2.0
+   Compiling tracing-log v0.2.0
+   Compiling thread_local v1.1.10
+   Compiling nu-ansi-term v0.50.3
+   Compiling tracing-subscriber v0.3.23
+   Compiling serde_json v1.0.154
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling jiff-core v0.1.1
+   Compiling jiff v0.2.38
+   Compiling immortallog v0.1.0 (/home/devops/immortal-3befcfc/crates/immortallog)
+   Compiling immortalctl v0.1.0 (/home/devops/immortal-3befcfc/crates/immortalctl)
+   Compiling immortal v0.1.0 (/home/devops/immortal-3befcfc/crates/immortal)
+   Compiling immortaldir v0.1.0 (/home/devops/immortal-3befcfc/crates/immortaldir)
+    Finished `release` profile [optimized] target(s) in 1m 10s
++ ls -l target/release/immortal target/release/immortaldir target/release/immortalctl target/release/immortallog
+-rwxrwxr-x 2 devops devops 4131248 Nov  5 08:34 target/release/immortal
+-rwxrwxr-x 2 devops devops 1613080 Nov  5 08:34 target/release/immortalctl
+-rwxrwxr-x 2 devops devops 4307320 Nov  5 08:34 target/release/immortaldir
+-rwxrwxr-x 2 devops devops  832168 Nov  5 08:34 target/release/immortallog
++ sha256sum target/release/immortal target/release/immortaldir target/release/immortalctl target/release/immortallog
+af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218  target/release/immortal
+dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81  target/release/immortaldir
+76b5c5b575020bb835bf6942fd7d9d807c8d61afe3890ab78ac2abf4f710b08b  target/release/immortalctl
+797477938c61140a70e9b18b4b9b1fd89740b9c293071d96965001bb1e5ed9b7  target/release/immortallog
+# exit: 0 2026-11-05T08:34:33Z

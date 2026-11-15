@@ -132,8 +132,21 @@ The broker never retained a child and held a constant 10 (Linux) or 13 (FreeBSD)
 descriptors, while its resident memory stayed between 2,820 and 2,836 KiB and
 between 5,216 and 5,220 KiB. The supervisor held exactly its one service child
 and a constant 12 or 15 descriptors, while its resident memory stayed between
-11,676 and 11,740 KiB and between 11,440 and 11,464 KiB. RES-005 remains Pending
-until the same campaign passes on a real macOS host.
+11,676 and 11,740 KiB and between 11,440 and 11,464 KiB.
+
+At Immortal commit `3befcfc4b01b3c66a18624229795d0e1301e89a6` the same 24-hour
+resource campaign passed again on both hosts, and a seven-day run, 84 hours per
+boundary, followed on each: the resource week of the FreeBSD canary, and an
+additional Linux run that no gate requires. Every record passed with clean
+cleanup. On Linux the 24-hour run took 65 at-rest broker samples and 167,782
+supervisor samples, and the seven-day run 65 and 1,174,796. The broker never
+retained a child and held a constant 10 descriptors, with resident memory
+between 2,884 and 2,900 KiB over 24 hours and between 3,076 and 3,096 KiB over
+seven days. The supervisor held exactly its one service child and a constant 12
+descriptors, with resident memory between 11,700 and 11,764 KiB and between
+11,352 and 11,360 KiB. The FreeBSD numbers are recorded with its records,
+which are retained once its benchmarks and drills complete. RES-005 remains
+Pending until the same campaign passes on a real macOS host.
 
 ### Current candidate evidence
 
@@ -215,10 +228,49 @@ exact revisions:
   reader runs beside that writer. The next candidate retries that test-only
   race and adds a regression which fails without the retry, and every
   real-host gate restarts at it.
+- Immortal commit `3befcfc4b01b3c66a18624229795d0e1301e89a6`, that next
+  candidate, still locked to `fork` 0.11.0, completed the campaigns and the
+  canary on the same two dedicated virtual machines and toolchain. The
+  24-hour contract soak passed with 675 clean samples on Linux and 711 on
+  FreeBSD, followed by the 24-hour resource campaign recorded under RES-005.
+  The seven-day FreeBSD canary then passed: 4,980 clean contract-soak samples
+  in its first week and the resource week recorded under RES-005 in its second.
+  A maintenance reboot of both hosts on 2026-11-06 interrupted the resource
+  week and the additional Linux seven-day run after about 13 hours; each was
+  restarted from the beginning and ran its full duration, and the interrupted
+  attempts produced no records. The records, metadata, and SHA-256 manifests
+  are retained in
+  [`linux-6.12-3befcfc-validation`](validation/evidence/linux-6.12-3befcfc-validation),
+  [`linux-6.12-3befcfc-resource`](validation/evidence/linux-6.12-3befcfc-resource),
+  [`linux-6.12-3befcfc-extended-resource`](validation/evidence/linux-6.12-3befcfc-extended-resource),
+  with the supervisor-boundary records xz-compressed as before; the seven-day
+  ones are about 700 MB each before compression. The FreeBSD records stay
+  on its host until its benchmarks and drills complete and are retained then.
+- At the same commit the lifecycle benchmarks ran twelve times, six hours
+  apart, across four days on Linux and establish the Linux regression
+  ceilings recorded under Performance evidence; the FreeBSD runs are still in
+  progress. The release drills, install, boot, shutdown, strict-v2
+  migration, upgrade from `43a7a6e`, and rollback to it, passed on Linux under
+  the shipped systemd unit; the FreeBSD drills follow its benchmarks. Each
+  step is a traced script retained with its output in
+  [`linux-6.12-3befcfc-drills`](validation/evidence/linux-6.12-3befcfc-drills),
+  whose summary lists the findings. The Linux drills found that `INSTALL.md`
+  installed `immortallog` where a supervisor does not look for it, and that it
+  overstated what `immortaldir --once --dry-run` validates; commit `1c7fbf2`
+  corrects both documents and changes no code.
+- Commit `5f0e6de` then updated the build-only `libz-sys` to 1.1.33 for
+  RUSTSEC-2026-0418, which had turned the security workflow red. `libz-sys`
+  reaches the workspace only through `immortal-core`'s build dependency on
+  `built`, so no libz code is linked. Rebuilding the release binaries on the
+  Linux host at both lock files showed every compiler invocation unchanged
+  apart from crate-ID hashes, except the two that compile `libz-sys` itself,
+  and the same set of linked crates, so the evidence above still describes
+  that code.
 
-Apart from the Linux and FreeBSD 24-hour campaigns recorded above, this evidence
-proves the repository contracts. It does not replace the macOS 24-hour campaign,
-seven-day canary, comparative runs, or release drills.
+Apart from the Linux and FreeBSD campaigns, the FreeBSD canary, and the Linux
+benchmarks and drills recorded above, this evidence proves the repository
+contracts. It does not replace the macOS 24-hour campaign, the FreeBSD and
+macOS benchmarks and drills, or the comparative runs.
 
 The complete public CLI, strict configuration, control, status, and private
 broker field inventory is mapped to its success and failure coverage in
@@ -268,6 +320,15 @@ benchmark runs spread across at least three separate days at one commit. An
 accepted ceiling is no lower than 125% of the maximum observed across those
 runs, and a ceiling accepted on one platform never carries to another. Fewer
 runs, a single day, or a mixed set of commits does not establish a ceiling.
+
+At commit `3befcfc4b01b3c66a18624229795d0e1301e89a6` twelve retained runs on
+the dedicated Linux host, spread over four days, measured `fork-spawn-wait` at
+a median of 577,284 ns and a maximum of 613,087 ns, and
+`fork-spawn-signal-wait` at 481,232 ns and 513,530 ns. The accepted Linux
+ceilings are 766,359 ns and 641,913 ns, 125% of each maximum. The runs and
+their summary are retained in
+[`linux-6.12-3befcfc-benchmarks`](validation/evidence/linux-6.12-3befcfc-benchmarks).
+No FreeBSD or macOS ceiling is accepted yet.
 
 Machine-readable result records are UTF-8 tab-separated rows with this header:
 

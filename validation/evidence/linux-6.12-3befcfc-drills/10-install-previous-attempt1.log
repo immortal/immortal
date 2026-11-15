@@ -1,0 +1,507 @@
+# step: 10-install-previous
+# host: immortal-linux.127.network Linux 6.12.113+deb13-amd64 x86_64
+# start: 2026-11-05T08:41:22Z
+# script: steps/10-install-previous.sh
++ set -e
++ . /home/devops/drill-3befcfc/lib.sh
++ PREV=43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ CAND=3befcfc4b01b3c66a18624229795d0e1301e89a6
++ PREV_BIN=/home/devops/immortal-43a7a6e/target/release
++ CAND_BIN=/home/devops/immortal-3befcfc/target/release
++ ROLLBACK=/usr/local/lib/immortal-rollback/43a7a6e
++ install_release /home/devops/immortal-43a7a6e/target/release
++ sudo install -m 0755 /home/devops/immortal-43a7a6e/target/release/immortal /usr/local/sbin/immortal
++ sudo install -m 0755 /home/devops/immortal-43a7a6e/target/release/immortaldir /usr/local/sbin/immortaldir
++ sudo install -m 0755 /home/devops/immortal-43a7a6e/target/release/immortalctl /usr/local/bin/immortalctl
++ sudo install -m 0755 /home/devops/immortal-43a7a6e/target/release/immortallog /usr/local/bin/immortallog
++ /usr/local/sbin/immortal --version
+immortal 0.1.0 - 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ /usr/local/sbin/immortaldir --version
+immortaldir 0.1.0 - 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ /usr/local/bin/immortalctl --version
+immortalctl 0.1.0 - 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ /usr/local/bin/immortallog --version
+immortallog 0.1.0 - 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ installed_revision
++ sort -u
++ /usr/local/sbin/immortal --version
++ sed s/.* - //
++ /usr/local/sbin/immortaldir --version
++ sed s/.* - //
++ /usr/local/bin/immortalctl --version
++ sed s/.* - //
++ /usr/local/bin/immortallog --version
++ sed s/.* - //
++ revs=43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ printf %s\n 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ wc -l
++ [ 1 -eq 1 ]
++ printf %s\n 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ test 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9 = 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ sudo install -d -m 0755 /usr/local/lib/immortal-rollback/43a7a6e
++ sudo install -m 0755 /home/devops/immortal-43a7a6e/target/release/immortal /home/devops/immortal-43a7a6e/target/release/immortaldir /home/devops/immortal-43a7a6e/target/release/immortalctl /home/devops/immortal-43a7a6e/target/release/immortallog /usr/local/lib/immortal-rollback/43a7a6e/
++ sudo install -d -m 0755 /etc/immortal
++ sudo install -m 0644 /home/devops/drill-3befcfc/defs/v2/api.yml /home/devops/drill-3befcfc/defs/v2/worker.yml /etc/immortal/
++ ls -la /etc/immortal
+total 20
+drwxr-xr-x  2 root root   39 Nov  5 08:41 .
+drwxr-xr-x 93 root root 8192 Nov  5 08:41 ..
+-rw-r--r--  1 root root  334 Nov  5 08:41 api.yml
+-rw-r--r--  1 root root  142 Nov  5 08:41 worker.yml
++ sudo install -m 0644 /home/devops/immortal-43a7a6e/contrib/systemd/immortaldir.service /etc/systemd/system/immortaldir.service
++ cat /etc/systemd/system/immortaldir.service
+[Unit]
+Description=Immortal service-definition reconciler
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/install -d -m 0755 /run/immortal
+ExecStart=/usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
+Restart=on-failure
+RestartSec=1s
+TimeoutStopSec=30s
+# Supervisors intentionally outlive a manager restart; do not kill their cgroup.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
++ sudo systemctl daemon-reload
++ sudo systemctl enable --now immortaldir
+Created symlink '/etc/systemd/system/multi-user.target.wants/immortaldir.service' → '/etc/systemd/system/immortaldir.service'.
++ wait_state api ready 60
++ waited=0
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [  != ready ]
++ waited=1
++ [ 1 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=2
++ [ 2 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=3
++ [ 3 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=4
++ [ 4 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=5
++ [ 5 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=6
++ [ 6 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=7
++ [ 7 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=8
++ [ 8 -gt 60 ]
++ sleep 1
++ state_of api
++ + ctl status --no-header
+awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=9
++ [ 9 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=10
++ [ 10 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=11
++ [ 11 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=12
++ [ 12 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=13
++ [ 13 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=14
++ [ 14 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=15
++ [ 15 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=16
++ [ 16 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=17
++ [ 17 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=18
++ [ 18 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=19
++ [ 19 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=20
++ [ 20 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status+  --no-header
+awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=21
++ [ 21 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=22
++ [ 22 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=23
++ [ 23 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=24
++ [ 24 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=25
++ [ 25 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=26
++ [ 26 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=27
++ [ 27 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=28
++ [ 28 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=29
++ [ 29 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=30
++ [ 30 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=31
++ [ 31 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=32
++ [ 32 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=33
++ [ 33 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=34
++ [ 34 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=35
++ [ 35 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=36
++ [ 36 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=37
++ [ 37 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=38
++ [ 38 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=39
++ [ 39 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=40
++ [ 40 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=41
++ [ 41 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=42
++ [ 42 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=43
++ [ 43 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=44
++ [ 44 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=45
++ [ 45 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status+  --no-header
+awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=46
++ [ 46 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=47
++ [ 47 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=48
++ [ 48 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=49
++ [ 49 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=50
++ [ 50 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=51
++ [ 51 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=52
++ [ 52 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=53
++ [ 53 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=54
++ [ 54 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=55
++ [ 55 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=56
++ [ 56 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=57
++ [ 57 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=58
++ [ 58 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=59
++ [ 59 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=60
++ [ 60 -gt 60 ]
++ sleep 1
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ initializing != ready ]
++ waited=61
++ [ 61 -gt 60 ]
++ echo TIMEOUT: api not ready after 60s
+TIMEOUT: api not ready after 60s
++ ctl status
++ sudo /usr/local/bin/immortalctl status
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	api	ok	234201	-	-	up	initializing	n/a	-	-	0	0	-	-	backoff	"/usr/local/libexec/immortal-drill/heartbeat" "api"	desired=up state=initializing
++ return 1
+# exit: 1 2026-11-05T08:42:22Z

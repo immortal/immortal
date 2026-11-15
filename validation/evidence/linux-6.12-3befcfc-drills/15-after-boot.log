@@ -1,0 +1,256 @@
+# step: 15-after-boot
+# host: immortal-linux.127.network Linux 6.12.113+deb13-amd64 x86_64
+# start: 2026-11-05T08:45:49Z
+# script: steps/15-after-boot.sh
++ set -e
++ . /home/devops/drill-3befcfc/lib.sh
++ PREV=43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ CAND=3befcfc4b01b3c66a18624229795d0e1301e89a6
++ PREV_BIN=/home/devops/immortal-43a7a6e/target/release
++ CAND_BIN=/home/devops/immortal-3befcfc/target/release
++ ROLLBACK=/usr/local/lib/immortal-rollback/43a7a6e
++ sudo cat /var/lib/immortal-drill/boot_id.before
++ before=fc3235e0-fffe-4294-866a-966126b480bf
++ cat /proc/sys/kernel/random/boot_id
++ now=85dba189-1bc1-4262-946f-1d137f2da5a4
++ echo boot id before fc3235e0-fffe-4294-866a-966126b480bf, now 85dba189-1bc1-4262-946f-1d137f2da5a4
+boot id before fc3235e0-fffe-4294-866a-966126b480bf, now 85dba189-1bc1-4262-946f-1d137f2da5a4
++ test fc3235e0-fffe-4294-866a-966126b480bf != 85dba189-1bc1-4262-946f-1d137f2da5a4
++ uptime
+ 08:45:49 up 0 min,  1 user,  load average: 0.00, 0.00, 0.00
++ sudo cat /var/lib/immortal-drill/reboot.requested
++ echo reboot requested at 2026-11-05T08:45:21Z
+reboot requested at 2026-11-05T08:45:21Z
++ systemctl is-enabled immortaldir
+enabled
++ systemctl is-active immortaldir
+active
++ ls -ld /run/immortal
+drwxr-xr-x 5 root root 100 Nov  5 08:45 /run/immortal
++ wait_state api ready 120
++ waited=0
++ state_of api
++ ctl status --no-header
++ awk -v s=api $2 == s { print $8 }
++ [ ready != ready ]
++ echo api is ready after 0s
+api is ready after 0s
++ wait_state worker ready 120
++ waited=0
++ state_of worker
++ ctl status --no-header
++ awk -v s=worker $2 == s { print $8 }
++ [ ready != ready ]
++ echo worker is ready after 0s
+worker is ready after 0s
++ sleep 3
++ snapshot
++ echo -- processes
+-- processes
++ ps -eo pid,ppid,pgid,sid,user,etimes,args
++ awk NR == 1 || /immortal|heartbeat/
++ grep -v -e awk -e sh -x
+    PID    PPID    PGID     SID USER     ELAPSED COMMAND
+    661       1     661     661 root          18 /usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
+    696     661     696     661 root          18 /usr/local/sbin/immortaldir --runtime-dir /run/immortal --supervisor-binary /usr/local/sbin/immortal /etc/immortal
+    749     696     748     748 root          18 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+    750     749     750     748 root          18 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+    751     750     750     748 root          18 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+    752     751     752     748 root          18 [immortal] <defunct>
+    753     750     752     748 root          18 /usr/local/sbin/immortallog --max-age 86400 --keep 7 --max-bytes 1048576 /var/log/immortal-drill/api.log
+   1027     750     750     748 root          16 /usr/local/sbin/immortal --config /run/immortal/.definitions/api.launch.yml --control-dir /run/immortal/api
+   1028    1027    1028     748 root          16 [immortal] <defunct>
+   1029     750    1028     748 root          16 /bin/sh /usr/local/libexec/immortal-drill/heartbeat api
+   1036     696    1035    1035 root          15 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+   1037    1036    1037    1035 root          15 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+   1038    1037    1037    1035 root          15 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+   1039    1038    1039    1035 root          15 [immortal] <defunct>
+   1040    1037    1039    1035 root          15 /usr/local/sbin/immortallog /var/log/immortal-drill/worker.log
+   1041    1037    1037    1035 root          15 /usr/local/sbin/immortal --config /run/immortal/.definitions/worker.launch.yml --control-dir /run/immortal/worker
+   1042    1041    1042    1035 root          15 [immortal] <defunct>
+   1043    1037    1042    1035 root          15 /bin/sh /usr/local/libexec/immortal-drill/heartbeat worker
+   1157    1142    1157    1157 devops         3 zsh -c cd ~/drill-3befcfc && timeout 300 sh step.sh 15-after-boot 15-after-boot.sh | grep -v "^+ " | grep -v "<defunct>" | grep -v -E "^ *[0-9]+ +[0-9]+ +[0-9]+ +[0-9]+ root .*/usr/local/sbin/immortal --config|^/run/immortal/\.definitions/"
+   1161    1157    1157    1157 devops         3 grep -v -E ^ *[0-9]+ +[0-9]+ +[0-9]+ +[0-9]+ root .*/usr/local/sbin/immortal --config|^/run/immortal/\.definitions/
++ echo -- executables
+-- executables
++ supervisors
++ pgrep -x immortal
++ pgrep -x immortaldir
++ sudo test -e /proc/749/exe
++ sudo readlink /proc/749/exe
++ sudo sha256sum /proc/749/exe
++ cut -d   -f 1
++ printf %s %s %s\n 749 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+749 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/750/exe
++ sudo readlink /proc/750/exe
++ sudo sha256sum /proc/750/exe
++ cut -d   -f 1
++ printf %s %s %s\n 750 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+750 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/751/exe
++ sudo readlink /proc/751/exe
++ sudo sha256sum /proc/751/exe
++ cut -d   -f 1
++ printf %s %s %s\n 751 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+751 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/752/exe
++ continue
++ sudo test -e /proc/1027/exe
++ sudo readlink /proc/1027/exe
++ sudo sha256sum /proc/1027/exe
++ cut -d   -f 1
++ printf %s %s %s\n 1027 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+1027 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/1028/exe
++ continue
++ sudo test -e /proc/1036/exe
++ sudo readlink /proc/1036/exe
++ sudo sha256sum /proc/1036/exe
++ cut -d   -f 1
++ printf %s %s %s\n 1036 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+1036 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/1037/exe
++ sudo readlink /proc/1037/exe
++ sudo sha256sum /proc/1037/exe
++ cut -d   -f 1
++ printf %s %s %s\n 1037 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+1037 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/1038/exe
++ sudo readlink /proc/1038/exe
++ sudo sha256sum /proc/1038/exe
++ cut -d   -f 1
++ printf %s %s %s\n 1038 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+1038 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/1039/exe
++ continue
++ sudo test -e /proc/1041/exe
++ sudo readlink /proc/1041/exe
++ sudo sha256sum /proc/1041/exe
++ cut -d   -f 1
++ printf %s %s %s\n 1041 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
+1041 /usr/local/sbin/immortal af57fbfd624bd6f4191f7f0e2413f09aaa99fe26b0f9419a21dc1f11c89e8218
++ sudo test -e /proc/1042/exe
++ continue
++ sudo test -e /proc/661/exe
++ sudo readlink /proc/661/exe
++ sudo sha256sum /proc/661/exe
++ cut -d   -f 1
++ printf %s %s %s\n 661 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
+661 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
++ sudo test -e /proc/696/exe
++ sudo readlink /proc/696/exe
++ sudo sha256sum /proc/696/exe
++ cut -d   -f 1
++ printf %s %s %s\n 696 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
+696 /usr/local/sbin/immortaldir dbebe8136d4aee0061ae095a3fef61edc8f7093fb2eea85f6acce57c87255a81
++ echo -- runtime root
+-- runtime root
++ sudo find /run/immortal -mindepth 1 -maxdepth 2
++ sort
+/run/immortal/api
+/run/immortal/api/immortal.sock
+/run/immortal/api/supervisor.lock
+/run/immortal/.definitions
+/run/immortal/.definitions/api.applied.yml
+/run/immortal/.definitions/api.launch.yml
+/run/immortal/.definitions/tracker.state
+/run/immortal/.definitions/worker.applied.yml
+/run/immortal/.definitions/worker.launch.yml
+/run/immortal/worker
+/run/immortal/worker/immortal.sock
+/run/immortal/worker/supervisor.lock
++ echo -- status
+-- status
++ ctl status
++ sudo /usr/local/bin/immortalctl status
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	api	ok	749	1029	1	up	ready	ready	16	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "api"	desired=up state=ready
+system	worker	ok	1036	1043	1	up	ready	ready	16	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "worker"	desired=up state=ready
++ echo -- last heartbeats
+-- last heartbeats
++ sudo tail -n 1 /var/log/immortal-drill/api.log
+api 2026-11-05T08:45:52Z pid=1029 env=drill
++ sudo tail -n 1 /var/log/immortal-drill/worker.log
+worker 2026-11-05T08:45:52Z pid=1043 env=unset
++ echo -- this boot: immortaldir unit
+-- this boot: immortaldir unit
++ sudo journalctl -b 0 -u immortaldir --no-pager -o short-iso
+2026-11-05T08:45:34+00:00 immortal-linux.127.network systemd[1]: Starting immortaldir.service - Immortal service-definition reconciler...
+2026-11-05T08:45:34+00:00 immortal-linux.127.network systemd[1]: Started immortaldir.service - Immortal service-definition reconciler.
+2026-11-05T08:45:36+00:00 immortal-linux.127.network immortaldir[661]: APPLIED        api
+2026-11-05T08:45:36+00:00 immortal-linux.127.network immortaldir[661]: APPLIED        worker
++ echo -- previous boot: shutdown of the manager and its leftover supervisors
+-- previous boot: shutdown of the manager and its leftover supervisors
++ sudo journalctl -b -1 --no-pager -o short-iso
++ grep -i -E immortal|heartbeat|remain|SIGTERM|SIGKILL|timed out|Killing|systemd-shutdown|Reached target .*(Shutdown|Final|Reboot)|Journal stopped
++ tail -40
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Stopped target swap.target - Swaps.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivating swap dev-disk-by\x2ddiskseq-1\x2dpart5.swap - /dev/disk/by-diskseq/1-part5...
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: systemd-remount-fs.service: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Stopped systemd-remount-fs.service - Remount Root and Kernel File Systems.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: systemd-tmpfiles-setup-dev.service: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Stopped systemd-tmpfiles-setup-dev.service - Create Static Device Nodes in /dev.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: systemd-tmpfiles-setup-dev-early.service: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Stopped systemd-tmpfiles-setup-dev-early.service - Create Static Device Nodes in /dev gracefully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Reached target shutdown.target - System Shutdown.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: dev-disk-by\x2ddiskseq-1\x2dpart5.swap: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivated swap dev-disk-by\x2ddiskseq-1\x2dpart5.swap - /dev/disk/by-diskseq/1-part5.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: dev-disk-by\x2did-scsi\x2d0QEMU_QEMU_HARDDISK_drive\x2dscsi0\x2dpart5.swap: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivated swap dev-disk-by\x2did-scsi\x2d0QEMU_QEMU_HARDDISK_drive\x2dscsi0\x2dpart5.swap - /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi0-part5.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: dev-disk-by\x2dpath-pci\x2d0000:09:01.0\x2dscsi\x2d0:0:0:0\x2dpart-by\x2dpartuuid-39e9a5e0\x2d05.swap: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivated swap dev-disk-by\x2dpath-pci\x2d0000:09:01.0\x2dscsi\x2d0:0:0:0\x2dpart-by\x2dpartuuid-39e9a5e0\x2d05.swap - /dev/disk/by-path/pci-0000:09:01.0-scsi-0:0:0:0-part/by-partuuid/39e9a5e0-05.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: dev-disk-by\x2dpath-pci\x2d0000:09:01.0\x2dscsi\x2d0:0:0:0\x2dpart5.swap: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivated swap dev-disk-by\x2dpath-pci\x2d0000:09:01.0\x2dscsi\x2d0:0:0:0\x2dpart5.swap - /dev/disk/by-path/pci-0000:09:01.0-scsi-0:0:0:0-part5.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: dev-disk-by\x2dpath-pci\x2d0000:09:01.0\x2dscsi\x2d0:0:0:0\x2dpart-by\x2dpartnum-5.swap: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivated swap dev-disk-by\x2dpath-pci\x2d0000:09:01.0\x2dscsi\x2d0:0:0:0\x2dpart-by\x2dpartnum-5.swap - /dev/disk/by-path/pci-0000:09:01.0-scsi-0:0:0:0-part/by-partnum/5.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: dev-disk-by\x2dpartuuid-39e9a5e0\x2d05.swap: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivated swap dev-disk-by\x2dpartuuid-39e9a5e0\x2d05.swap - /dev/disk/by-partuuid/39e9a5e0-05.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: dev-disk-by\x2dpath-pci\x2d0000:09:01.0\x2dscsi\x2d0:0:0:0\x2dpart-by\x2duuid-05d98061\x2d690a\x2d46a8\x2d85a9\x2d25e3163237d6.swap: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivated swap dev-disk-by\x2dpath-pci\x2d0000:09:01.0\x2dscsi\x2d0:0:0:0\x2dpart-by\x2duuid-05d98061\x2d690a\x2d46a8\x2d85a9\x2d25e3163237d6.swap - /dev/disk/by-path/pci-0000:09:01.0-scsi-0:0:0:0-part/by-uuid/05d98061-690a-46a8-85a9-25e3163237d6.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: dev-sda5.swap: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivated swap dev-sda5.swap - /dev/sda5.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: dev-disk-by\x2duuid-05d98061\x2d690a\x2d46a8\x2d85a9\x2d25e3163237d6.swap: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Deactivated swap dev-disk-by\x2duuid-05d98061\x2d690a\x2d46a8\x2d85a9\x2d25e3163237d6.swap - /dev/disk/by-uuid/05d98061-690a-46a8-85a9-25e3163237d6.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Reached target umount.target - Unmount All Filesystems.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Reached target final.target - Late Shutdown Services.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: systemd-reboot.service: Deactivated successfully.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Finished systemd-reboot.service - System Reboot.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Reached target reboot.target - System Reboot.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Shutting down.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Using hardware watchdog 'iTCO_wdt', version 2, device /dev/watchdog0
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd[1]: Watchdog running with a hardware timeout of 10min.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network kernel: watchdog: watchdog0: watchdog did not stop!
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd-shutdown[1]: Using hardware watchdog 'iTCO_wdt', version 2, device /dev/watchdog0
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd-shutdown[1]: Watchdog running with a hardware timeout of 10min.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd-shutdown[1]: Syncing filesystems and block devices.
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd-journald[305]: Journal stopped
++ echo -- previous boot: last journal line
+-- previous boot: last journal line
++ sudo journalctl -b -1 --no-pager -o short-iso -n 1
+2026-11-05T08:45:26+00:00 immortal-linux.127.network systemd-journald[305]: Journal stopped
++ echo -- heartbeats around the reboot
+-- heartbeats around the reboot
++ echo api:
+api:
++ head -6
++ sudo cat /var/lib/immortal-drill/reboot.requested
++ sudo awk -v t=2026-11-05T08:45:21Z $2 >= substr(t, 1, 19) || NR == 0 /var/log/immortal-drill/api.log
+api 2026-11-05T08:45:21Z pid=236226 env=drill
+api 2026-11-05T08:45:23Z pid=236226 env=drill
+api 2026-11-05T08:45:25Z pid=236226 env=drill
+api 2026-11-05T08:45:36Z pid=1029 env=drill
+api 2026-11-05T08:45:38Z pid=1029 env=drill
+api 2026-11-05T08:45:40Z pid=1029 env=drill
++ echo worker:
+worker:
++ head -6
++ sudo cat /var/lib/immortal-drill/reboot.requested
++ sudo awk -v t=2026-11-05T08:45:21Z $2 >= substr(t, 1, 19) || NR == 0 /var/log/immortal-drill/worker.log
+worker 2026-11-05T08:45:21Z pid=236253 env=unset
+worker 2026-11-05T08:45:23Z pid=236253 env=unset
+worker 2026-11-05T08:45:25Z pid=236253 env=unset
+worker 2026-11-05T08:45:36Z pid=1043 env=unset
+worker 2026-11-05T08:45:38Z pid=1043 env=unset
+worker 2026-11-05T08:45:40Z pid=1043 env=unset
+# exit: 0 2026-11-05T08:45:53Z
