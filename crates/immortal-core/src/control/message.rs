@@ -341,6 +341,9 @@ fn encode_status(status: &StatusSnapshot, frame: &mut Vec<u8>) -> Result<(), Pro
     flags |= status
         .last_spawn_failure
         .map_or(0, |_| STATUS_SPAWN_FAILURE);
+    if status.logger_last_result.is_some() && !logger_explains_failure(status.logger) {
+        return Err(ProtocolError::MalformedStatus(LOGGER_RESULT_WHILE_HEALTHY));
+    }
     flags |= status
         .logger_last_result
         .map_or(0, |_| STATUS_LOGGER_LAST_RESULT);
@@ -435,6 +438,9 @@ fn decode_status(cursor: &mut Cursor<'_>) -> Result<StatusSnapshot, ProtocolErro
         None
     };
     let logger_last_result = if flags & STATUS_LOGGER_LAST_RESULT != 0 {
+        if !logger_explains_failure(logger) {
+            return Err(ProtocolError::MalformedStatus(LOGGER_RESULT_WHILE_HEALTHY));
+        }
         Some(match cursor.byte()? {
             LOGGER_RESULT_SPAWN_FAILED => {
                 LoggerLastResult::SpawnFailed(decode_spawn_detail(cursor)?)
@@ -480,6 +486,18 @@ fn decode_status(cursor: &mut Cursor<'_>) -> Result<StatusSnapshot, ProtocolErro
         logger_last_result,
         command,
     })
+}
+
+const LOGGER_RESULT_WHILE_HEALTHY: &str = "logger failure without an unhealthy logger";
+
+/// Whether a logger failure can accompany this aggregate logger health: the
+/// failure explains why a stage is not running, so it has no meaning when
+/// every stage runs or none is configured.
+const fn logger_explains_failure(logger: LoggerStatus) -> bool {
+    match logger {
+        LoggerStatus::Starting | LoggerStatus::Backoff | LoggerStatus::Failed => true,
+        LoggerStatus::NotConfigured | LoggerStatus::Ready => false,
+    }
 }
 
 /// Encode a spawn failure as stage, classification, and a signed errno in

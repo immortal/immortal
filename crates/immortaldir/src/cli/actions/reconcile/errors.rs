@@ -15,7 +15,7 @@ use immortal_core::{
     control::{ResponseCode, TransportError},
     reconcile::{DependencyError, LauncherError},
     runtime::RuntimeRootError,
-    status::{LoggerLastResult, SpawnDetail, StatusSnapshot},
+    status::{LoggerLastResult, ServiceState, SpawnDetail, StatusSnapshot},
 };
 
 /// One isolated service mutation failure retained after a complete scan.
@@ -55,28 +55,59 @@ pub(super) enum ServiceFailureKind {
     Transport(TransportError),
     Remote(ResponseCode),
     /// The service did not reach its goal state in time; the blocker is what
-    /// its last status named as the reason, when it named one.
+    /// its status showed as the current reason while a start was awaited.
     LifecycleTimeout(Option<StartBlocker>),
     ActiveWithoutControl,
 }
 
-/// What a supervisor's status names as keeping its service from starting.
+/// What currently keeps a service from becoming ready, as its status shows.
+///
+/// Status retains the last terminal result as history after a later
+/// generation starts, so a retained failure is a blocker only while the
+/// lifecycle state says nothing has replaced it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StartBlocker {
     /// The service process could not be created.
     Service(SpawnDetail),
     /// A logger stage failed, and a service waits for its loggers.
     Logger(LoggerLastResult),
+    /// The service executed and has not declared readiness.
+    Readiness,
 }
 
 impl StartBlocker {
-    /// Read the blocker from one status snapshot; a logger failure is named
-    /// first because the service is not attempted while its loggers are down.
-    pub(super) fn from_status(status: &StatusSnapshot) -> Option<Self> {
-        status
-            .logger_last_result
-            .map(Self::Logger)
-            .or_else(|| status.last_spawn_failure.map(Self::Service))
+    /// Fold one poll of a service into the blocker known so far.
+    ///
+    /// `status` is `None` when the supervisor or its status is absent, which
+    /// forgets any earlier cause: nothing observed still supports it.
+    ///
+    /// - Without a service process, a failed logger is named first because
+    ///   the service is not attempted while its loggers are down, then the
+    ///   failed start, which status publishes only while it is the most
+    ///   recent terminal result.
+    /// - While a new generation is being created the outcome is not known
+    ///   yet, so the `previous` blocker stands.
+    /// - Once the service executed, an earlier failed start is history and a
+    ///   logger failure no longer holds it back; only readiness is pending.
+    pub(super) fn observe(previous: Option<Self>, status: Option<&StatusSnapshot>) -> Option<Self> {
+        let status = status?;
+        match status.state {
+            ServiceState::Initializing
+            | ServiceState::Down
+            | ServiceState::WaitingCondition
+            | ServiceState::Backoff
+            | ServiceState::Failed => status
+                .logger_last_result
+                .map(Self::Logger)
+                .or_else(|| status.last_spawn_failure.map(Self::Service)),
+            ServiceState::Starting => previous,
+            ServiceState::Running => Some(Self::Readiness),
+            ServiceState::Ready
+            | ServiceState::Paused
+            | ServiceState::Stopping
+            | ServiceState::Completed
+            | ServiceState::Exited => None,
+        }
     }
 }
 
@@ -85,6 +116,7 @@ impl Display for StartBlocker {
         match self {
             Self::Service(detail) => write!(formatter, "service {}", detail.describe()),
             Self::Logger(result) => write!(formatter, "logger {}", result.describe()),
+            Self::Readiness => formatter.write_str("service has not declared readiness"),
         }
     }
 }

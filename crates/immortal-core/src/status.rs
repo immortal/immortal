@@ -356,7 +356,9 @@ pub struct StatusSnapshot {
     pub backoff_seconds: Option<u64>,
     /// Aggregate logging pipeline health.
     pub logger: LoggerStatus,
-    /// Most recent logger failure while a logger is not healthy.
+    /// Most recent logger failure, present only while `logger` is
+    /// [`LoggerStatus::Starting`], [`LoggerStatus::Backoff`], or
+    /// [`LoggerStatus::Failed`].
     pub logger_last_result: Option<LoggerLastResult>,
     /// Exact configured service argv.
     pub command: Vec<String>,

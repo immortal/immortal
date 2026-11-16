@@ -18,6 +18,13 @@ use super::{
     ProcessBrokerClient, ProcessId, ProcessSignal, SupervisorState, allocate_task,
     cancel_auxiliary, jittered_backoff_seed,
 };
+use crate::{
+    process::{SpawnFailure, SpawnStage},
+    status::{LoggerLastResult, SpawnDetail},
+};
+
+#[cfg(test)]
+mod tests;
 
 pub(super) async fn fail_childless_start_on_logger_exhaustion(
     client: &mut ProcessBrokerClient,
@@ -248,6 +255,17 @@ pub(super) async fn handle_due_logger_timers(
                 client
                     .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
                     .await?;
+                // The broker never reported this start, so the elapsed
+                // deadline is the cause; the kill's reap only completes it.
+                logger.record_failure(
+                    &mut execution.logger_failures,
+                    LoggerLastResult::SpawnFailed(SpawnDetail {
+                        stage: SpawnStage::StartupHandshake,
+                        failure: SpawnFailure::TimedOut,
+                        os_error: None,
+                    }),
+                    Some(task),
+                );
                 logger.state = LoggerExecutionState::Killing {
                     task,
                     deadline: now + BROKER_EVENT_TIMEOUT,

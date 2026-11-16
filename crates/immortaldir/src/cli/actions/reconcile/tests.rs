@@ -12,14 +12,14 @@ use immortal_core::{
     config::ServiceConfig,
     exit::ExitClass,
     process::{SpawnFailure, SpawnStage},
-    reconcile::{DesiredStateTracker, ReconcileAction, ScanLimits, scan_directory},
-    status::{LoggerLastResult, SpawnDetail, StatusSnapshot},
+    reconcile::{ReconcileAction, ScanLimits, scan_directory},
+    status::{LastResult, LoggerLastResult, ServiceState, SpawnDetail, StatusSnapshot},
     supervisor::StateMachine,
 };
 
 use super::{
-    ActionError, DesiredPlan, DirectoryAction, ServiceFailure, ServiceFailureKind, StartBlocker,
-    desired_plan, execute_with_endpoint, write_plan,
+    ActionError, DesiredPlan, DirectoryAction, PlanPreview, ServiceFailure, ServiceFailureKind,
+    StartBlocker, desired_plan, execute_with_endpoint, write_plan,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -84,35 +84,104 @@ async fn mutation_mode_requires_a_pre_runtime_broker() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+const EXECUTE_FAILED: SpawnDetail = SpawnDetail {
+    stage: SpawnStage::Execute,
+    failure: SpawnFailure::OperatingSystem,
+    os_error: Some(2),
+};
+
+/// A status in `state` whose last start failed, as a supervisor publishes it.
+fn status_after_failed_start(state: ServiceState) -> StatusSnapshot {
+    let mut status = StatusSnapshot::from_machine(&StateMachine::default());
+    status.state = state;
+    status.last_result = Some(LastResult::SpawnFailed);
+    status.last_spawn_failure = Some(EXECUTE_FAILED);
+    status
+}
+
 /// A start that times out behind a failed logger must say so, and prefer the
 /// logger over the service because the service is not attempted without it.
 #[test]
 fn lifecycle_timeout_names_what_blocks_the_start() {
-    let detail = SpawnDetail {
-        stage: SpawnStage::Execute,
-        failure: SpawnFailure::OperatingSystem,
-        os_error: Some(2),
-    };
     let mut status = StatusSnapshot::from_machine(&StateMachine::default());
-    assert_eq!(StartBlocker::from_status(&status), None);
+    assert_eq!(StartBlocker::observe(None, Some(&status)), None);
     assert_eq!(
         ServiceFailureKind::LifecycleTimeout(None).to_string(),
         "lifecycle deadline exceeded"
     );
 
-    status.last_spawn_failure = Some(detail);
+    status = status_after_failed_start(ServiceState::Backoff);
     assert_eq!(
-        StartBlocker::from_status(&status),
-        Some(StartBlocker::Service(detail))
+        StartBlocker::observe(None, Some(&status)),
+        Some(StartBlocker::Service(EXECUTE_FAILED))
     );
-    status.logger_last_result = Some(LoggerLastResult::SpawnFailed(detail));
-    let blocker = StartBlocker::from_status(&status);
+    status.logger_last_result = Some(LoggerLastResult::SpawnFailed(EXECUTE_FAILED));
+    let blocker = StartBlocker::observe(None, Some(&status));
     assert_eq!(
         blocker,
-        Some(StartBlocker::Logger(LoggerLastResult::SpawnFailed(detail)))
+        Some(StartBlocker::Logger(LoggerLastResult::SpawnFailed(
+            EXECUTE_FAILED
+        )))
     );
     let diagnostic = ServiceFailureKind::LifecycleTimeout(blocker).to_string();
     assert!(diagnostic.starts_with("lifecycle deadline exceeded: logger execution failed: "));
+}
+
+/// Regression: a start that failed, was repaired, and then ran without
+/// declaring readiness timed out blaming the earlier failed start, which
+/// status keeps as history.
+#[test]
+fn lifecycle_timeout_does_not_blame_a_start_that_later_succeeded() {
+    let failed = status_after_failed_start(ServiceState::Backoff);
+    let retrying = status_after_failed_start(ServiceState::Starting);
+    let mut running = status_after_failed_start(ServiceState::Running);
+    // A logger which fails after the service runs does not hold it back.
+    running.logger_last_result = Some(LoggerLastResult::Exited(1));
+
+    let blocker = StartBlocker::observe(None, Some(&failed));
+    let blocker = StartBlocker::observe(blocker, Some(&retrying));
+    assert_eq!(
+        blocker,
+        Some(StartBlocker::Service(EXECUTE_FAILED)),
+        "a retry in progress has no outcome yet, so the known cause stands"
+    );
+
+    let blocker = StartBlocker::observe(blocker, Some(&running));
+    assert_eq!(blocker, Some(StartBlocker::Readiness));
+    assert_eq!(
+        ServiceFailureKind::LifecycleTimeout(blocker).to_string(),
+        "lifecycle deadline exceeded: service has not declared readiness"
+    );
+}
+
+/// Regression: the cause survived polls where the supervisor was gone.
+#[test]
+fn lifecycle_timeout_forgets_a_cause_when_the_supervisor_disappears() {
+    let failed = status_after_failed_start(ServiceState::Failed);
+    let blocker = StartBlocker::observe(None, Some(&failed));
+    assert_eq!(blocker, Some(StartBlocker::Service(EXECUTE_FAILED)));
+
+    assert_eq!(StartBlocker::observe(blocker, None), None);
+}
+
+#[test]
+fn lifecycle_timeout_names_no_blocker_for_a_service_past_starting() {
+    for state in [
+        ServiceState::Ready,
+        ServiceState::Paused,
+        ServiceState::Stopping,
+        ServiceState::Completed,
+        ServiceState::Exited,
+    ] {
+        let mut status = status_after_failed_start(state);
+        status.logger_last_result = Some(LoggerLastResult::Signaled(9));
+        assert_eq!(
+            StartBlocker::observe(Some(StartBlocker::Readiness), Some(&status)),
+            None,
+            "{}",
+            state.name()
+        );
+    }
 }
 
 #[test]
@@ -147,8 +216,8 @@ fn plan_output_is_deterministic_and_keeps_diagnostics_separate() -> Result<(), B
     let scan = scan_directory(directory.path(), ScanLimits::default())?;
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    let mut tracker = DesiredStateTracker::default();
-    let summary = write_plan(&mut tracker, scan, &mut stdout, &mut stderr)?;
+    let mut preview = PlanPreview::default();
+    let summary = write_plan(&mut preview, scan, &mut stdout, &mut stderr)?;
 
     assert_eq!(String::from_utf8(stdout)?, "START\tapi\n");
     let diagnostics = String::from_utf8(stderr)?;
@@ -181,8 +250,8 @@ fn plan_withholds_starts_behind_an_invalid_requirement() -> Result<(), Box<dyn E
     )?;
     let scan = scan_directory(directory.path(), ScanLimits::default())?;
     let mut stdout = Vec::new();
-    let mut tracker = DesiredStateTracker::default();
-    let summary = write_plan(&mut tracker, scan, &mut stdout, &mut Vec::new())?;
+    let mut preview = PlanPreview::default();
+    let summary = write_plan(&mut preview, scan, &mut stdout, &mut Vec::new())?;
 
     assert_eq!(String::from_utf8(stdout)?, "START\tweb\n");
     assert_eq!(summary.invalid_definitions, 1);
@@ -245,16 +314,136 @@ async fn one_shot_dry_run_fails_on_an_unresolvable_requirement() -> Result<(), B
     Ok(())
 }
 
+/// Print the plan for the directory's current contents.
+fn plan(directory: &TestDirectory, preview: &mut PlanPreview) -> Result<String, Box<dyn Error>> {
+    let mut stdout = Vec::new();
+    write_plan(
+        preview,
+        scan_directory(directory.path(), ScanLimits::default())?,
+        &mut stdout,
+        &mut Vec::new(),
+    )?;
+    Ok(String::from_utf8(stdout)?)
+}
+
+/// Regression: a continuous preview forgot a withheld start, so repairing the
+/// requirement listed only the requirement although a real pass starts both.
+#[test]
+fn successive_plans_release_a_withheld_start_once_its_requirement_is_valid()
+-> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let api = directory.path().join("api.yml");
+    fs::write(&api, "version: 2\ncommand: []\n")?;
+    fs::write(
+        directory.path().join("worker.yml"),
+        "version: 2\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    fs::write(
+        directory.path().join("report.yml"),
+        "version: 2\ncommand: [/bin/true]\nrequires: [worker]\n",
+    )?;
+    let mut preview = PlanPreview::default();
+
+    assert_eq!(plan(&directory, &mut preview)?, "");
+    assert_eq!(
+        plan(&directory, &mut preview)?,
+        "",
+        "an unchanged scan keeps withholding without reporting KEEP"
+    );
+
+    fs::write(&api, "version: 2\ncommand: [/bin/true]\n")?;
+    assert_eq!(
+        plan(&directory, &mut preview)?,
+        "START\tapi\nSTART\treport\nSTART\tworker\n"
+    );
+    assert_eq!(
+        plan(&directory, &mut preview)?,
+        "KEEP\tapi\nKEEP\treport\nKEEP\tworker\n"
+    );
+    Ok(())
+}
+
+/// A service whose first start is withheld has never run: changing it is
+/// still a start, and disabling it leaves nothing to stop.
+#[test]
+fn a_withheld_first_start_stays_a_start_when_changed_and_needs_no_stop()
+-> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let api = directory.path().join("api.yml");
+    let worker = directory.path().join("worker.yml");
+    fs::write(&api, "version: 2\ncommand: []\n")?;
+    fs::write(
+        &worker,
+        "version: 2\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    let mut preview = PlanPreview::default();
+    assert_eq!(plan(&directory, &mut preview)?, "");
+
+    fs::write(
+        &worker,
+        "version: 2\ncommand: [/bin/false]\nrequires: [api]\n",
+    )?;
+    assert_eq!(plan(&directory, &mut preview)?, "");
+    fs::write(&api, "version: 2\ncommand: [/bin/true]\n")?;
+    assert_eq!(
+        plan(&directory, &mut preview)?,
+        "START\tapi\nSTART\tworker\n"
+    );
+
+    let directory = TestDirectory::new()?;
+    let worker = directory.path().join("worker.yml");
+    fs::write(
+        &worker,
+        "version: 2\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    let mut preview = PlanPreview::default();
+    assert_eq!(plan(&directory, &mut preview)?, "");
+    fs::write(
+        &worker,
+        "version: 2\nenabled: false\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    assert_eq!(plan(&directory, &mut preview)?, "KEEP\tworker\n");
+    Ok(())
+}
+
+/// A running service whose restart is withheld is restarted once its new
+/// requirement can be met.
+#[test]
+fn a_withheld_restart_is_released_once_its_requirement_is_valid() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let worker = directory.path().join("worker.yml");
+    fs::write(&worker, "version: 2\ncommand: [/bin/true]\n")?;
+    let mut preview = PlanPreview::default();
+    assert_eq!(plan(&directory, &mut preview)?, "START\tworker\n");
+
+    fs::write(
+        &worker,
+        "version: 2\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    assert_eq!(plan(&directory, &mut preview)?, "");
+    assert_eq!(plan(&directory, &mut preview)?, "");
+
+    fs::write(
+        directory.path().join("api.yml"),
+        "version: 2\ncommand: [/bin/true]\n",
+    )?;
+    assert_eq!(
+        plan(&directory, &mut preview)?,
+        "START\tapi\nRESTART\tworker\n"
+    );
+    Ok(())
+}
+
 #[test]
 fn repeated_plans_confirm_deletion_without_duplicate_stop() -> Result<(), Box<dyn Error>> {
     let directory = TestDirectory::new()?;
     let path = directory.path().join("api.yml");
     fs::write(&path, "version: 2\ncommand: [/bin/true]\n")?;
-    let mut tracker = DesiredStateTracker::default();
+    let mut preview = PlanPreview::default();
 
     let mut stdout = Vec::new();
     write_plan(
-        &mut tracker,
+        &mut preview,
         scan_directory(directory.path(), ScanLimits::default())?,
         &mut stdout,
         &mut Vec::new(),
@@ -264,7 +453,7 @@ fn repeated_plans_confirm_deletion_without_duplicate_stop() -> Result<(), Box<dy
     fs::remove_file(path)?;
     let mut first_missing = Vec::new();
     write_plan(
-        &mut tracker,
+        &mut preview,
         scan_directory(directory.path(), ScanLimits::default())?,
         &mut first_missing,
         &mut Vec::new(),
@@ -273,7 +462,7 @@ fn repeated_plans_confirm_deletion_without_duplicate_stop() -> Result<(), Box<dy
 
     let mut confirmed = Vec::new();
     write_plan(
-        &mut tracker,
+        &mut preview,
         scan_directory(directory.path(), ScanLimits::default())?,
         &mut confirmed,
         &mut Vec::new(),
@@ -282,7 +471,7 @@ fn repeated_plans_confirm_deletion_without_duplicate_stop() -> Result<(), Box<dy
 
     let mut repeated = Vec::new();
     write_plan(
-        &mut tracker,
+        &mut preview,
         scan_directory(directory.path(), ScanLimits::default())?,
         &mut repeated,
         &mut Vec::new(),

@@ -592,11 +592,15 @@ pub(super) fn handle_logger_event(
             cleanup_pending,
             ..
         } if matches!(logger.state, LoggerExecutionState::Starting { .. }) => {
-            logger.last_failure = Some(LoggerLastResult::SpawnFailed(SpawnDetail {
-                stage,
-                failure,
-                os_error,
-            }));
+            logger.record_failure(
+                &mut execution.logger_failures,
+                LoggerLastResult::SpawnFailed(SpawnDetail {
+                    stage,
+                    failure,
+                    os_error,
+                }),
+                cleanup_pending.map(|_| task),
+            );
             if cleanup_pending.is_some() {
                 logger.state = LoggerExecutionState::Killing {
                     task,
@@ -611,18 +615,20 @@ pub(super) fn handle_logger_event(
         }
         ProcessBrokerEvent::TaskChild { event, .. } if event.is_terminal() => {
             if execution.logger_shutdown.permits_restart() {
-                // A spawn that failed after forking is reaped here; its
-                // cause is the spawn failure already recorded, not this exit.
-                if !matches!(logger.last_failure, Some(LoggerLastResult::SpawnFailed(_))) {
-                    logger.last_failure = match event {
+                // A start that failed and left this task to collect is
+                // reaped here; its cause is the failure already recorded, not
+                // this exit. Any other task's reap is a failure of its own.
+                if !logger.reap_completes_failure(task) {
+                    let result = match event {
                         ChildEvent::Exited { code, .. } => Some(LoggerLastResult::Exited(code)),
                         ChildEvent::Signaled { signal, .. } => {
                             Some(LoggerLastResult::Signaled(signal))
                         }
-                        ChildEvent::Stopped { .. } | ChildEvent::Continued { .. } => {
-                            logger.last_failure
-                        }
+                        ChildEvent::Stopped { .. } | ChildEvent::Continued { .. } => None,
                     };
+                    if let Some(result) = result {
+                        logger.record_failure(&mut execution.logger_failures, result, None);
+                    }
                 }
                 schedule_logger_restart(logger, client.process(), restart);
             } else {

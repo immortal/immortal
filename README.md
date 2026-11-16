@@ -753,7 +753,10 @@ example `spawn-failed:execute:os-error:2`; a logger failure is shown in
 `logger: execution failed: No such file or directory (os error 2)`. This is
 where a daemonized supervisor reports why a service or its logger is not
 running. `immortaldir` appends the same cause to `lifecycle deadline
-exceeded` when a start it waits for is blocked by one. The foreground controlled executor populates the
+exceeded` when a start it waits for is blocked by one at that moment: a
+failed start or logger while no service process exists, or
+`service has not declared readiness` once the program runs. A failure which
+a later start replaced is history and is not named. The foreground controlled executor populates the
 payload from live broker and lifecycle observations, including supervisor/main
 PID, argv, starts, failures, timing, backoff, and the last terminal result.
 After the authenticated socket is bound, status reports `Initializing` while
@@ -845,7 +848,9 @@ snapshots preserve semantic comparison and enabled/Down intent when
 `immortaldir` restarts. `--dry-run` performs the same bounded scan, change
 comparison, and dependency planning without opening a broker or touching
 runtime state, so it withholds the start of a service whose requirement is
-missing, disabled, or invalid exactly as a real pass does. A `--once` pass,
+missing, disabled, or invalid exactly as a real pass does, and a continuous
+dry run lists that start in the first later scan in which the requirement
+can be met. A `--once` pass,
 real or dry, still completes its independent work and then exits `79` when a
 service could not be scheduled or applied, and otherwise `78` when it skipped
 an invalid definition; each is reported on standard error. The continuous

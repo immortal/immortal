@@ -101,8 +101,12 @@ dispatch and actions with contract tests.
 - `control`: local protocol types plus client and server responsibilities.
   A status payload answers why a service or its logger is not running: the
   failing stage of process creation, its classification and errno, or a
-  logger's exit, as optional fixed-size fields announced by flag bits. A
-  supervisor with nothing to explain emits the frame it always did, so any
+  logger's exit, as optional fixed-size fields announced by flag bits. The
+  logger field is the most recent failure among stages which have not run
+  again, and both codecs accept it only beside an unhealthy logger state, as
+  they accept a spawn-failure detail only beside a spawn-failed result; exit
+  codes and signal numbers are carried as the raw eight-bit values the
+  operating system reported. A supervisor with nothing to explain emits the frame it always did, so any
   client reads it; a client that predates a flag rejects only a status that
   carries it. Before the first release no deployed client exists to break.
   After it, a new status field needs version negotiation rather than another

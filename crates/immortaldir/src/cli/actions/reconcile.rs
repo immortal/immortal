@@ -92,12 +92,12 @@ pub async fn execute_with_endpoint(
 ) -> Result<(), ActionError> {
     let directory = canonical_definitions_directory(&action.directory)?;
     if action.dry_run {
-        let mut tracker = DesiredStateTracker::default();
+        let mut preview = PlanPreview::default();
         if action.once {
-            let summary = scan_and_print(&directory, &mut tracker)?;
+            let summary = scan_and_print(&directory, &mut preview)?;
             return one_shot_outcome(summary.invalid_definitions, summary.unresolvable);
         }
-        return watch_dry_run(action, &directory, &mut tracker).await;
+        return watch_dry_run(action, &directory, &mut preview).await;
     }
 
     let endpoint = endpoint.ok_or(ActionError::MissingBroker)?;
@@ -179,7 +179,7 @@ async fn finish_launcher(
 async fn watch_dry_run(
     action: &DirectoryAction,
     directory: &Path,
-    tracker: &mut DesiredStateTracker,
+    preview: &mut PlanPreview,
 ) -> Result<(), ActionError> {
     let mut triggers = ReconcileTriggers::with_intervals(
         directory,
@@ -198,10 +198,41 @@ async fn watch_dry_run(
         for error in trigger.watcher_errors {
             writeln!(io::stderr().lock(), "watcher: {error}")?;
         }
-        let summary = scan_and_print(directory, tracker)?;
+        let summary = scan_and_print(directory, preview)?;
         for failure in summary.unresolvable {
             writeln!(io::stderr().lock(), "{failure}")?;
         }
+    }
+}
+
+/// What successive dry-run scans have seen and still owe.
+///
+/// The tracker assumes each action it returns is applied, so a start the
+/// preview withholds would be forgotten by the next scan. A real pass does not
+/// forget it: the service has no supervisor, so the start stays pending. The
+/// withheld actions are kept here until their requirements can be met.
+#[derive(Default)]
+struct PlanPreview {
+    tracker: DesiredStateTracker,
+    /// Starts and restarts withheld behind a requirement that cannot be met.
+    withheld: BTreeMap<String, ReconcileAction>,
+}
+
+/// Combine an action withheld by earlier scans with this scan's action.
+///
+/// A service whose first start was withheld has never run, so a later change
+/// is still a first start and disabling it leaves nothing to stop.
+const fn owed_action(
+    withheld: Option<ReconcileAction>,
+    planned: ReconcileAction,
+) -> ReconcileAction {
+    match (withheld, planned) {
+        (Some(ReconcileAction::Start), ReconcileAction::Restart | ReconcileAction::Keep) => {
+            ReconcileAction::Start
+        }
+        (Some(ReconcileAction::Start), ReconcileAction::Stop) => ReconcileAction::Keep,
+        (Some(ReconcileAction::Restart), ReconcileAction::Keep) => ReconcileAction::Restart,
+        (_, planned) => planned,
     }
 }
 
@@ -691,19 +722,26 @@ async fn wait_for_state(
     name: &str,
     expected: ServiceState,
 ) -> Result<(), MutationError> {
-    // The last status seen names why the service is not there yet, so a
-    // timeout can report that instead of only the elapsed deadline.
+    // Each poll says what currently keeps a start from becoming ready, so a
+    // timeout can report that instead of only the elapsed deadline. A wait
+    // for any other state has no start to explain.
+    let explains_start = expected == ServiceState::Ready;
     let mut blocker = None;
     let waited = timeout(LIFECYCLE_TIMEOUT, async {
         loop {
             let discovery = discover(root).map_err(MutationError::RuntimeLost)?;
-            if let Some(service) = discovery.services.get(name)
-                && let Some(current) = status(service).await?.status
+            let current = match discovery.services.get(name) {
+                Some(service) => status(service).await?.status,
+                None => None,
+            };
+            if current
+                .as_ref()
+                .is_some_and(|current| current.state == expected)
             {
-                if current.state == expected {
-                    return Ok::<(), MutationError>(());
-                }
-                blocker = StartBlocker::from_status(&current);
+                return Ok::<(), MutationError>(());
+            }
+            if explains_start {
+                blocker = StartBlocker::observe(blocker, current.as_ref());
             }
             sleep(LIFECYCLE_POLL_INTERVAL).await;
         }
@@ -732,30 +770,35 @@ async fn wait_for_absence(root: &Path, name: &str) -> Result<(), MutationError> 
 
 fn scan_and_print(
     directory: &std::path::Path,
-    tracker: &mut DesiredStateTracker,
+    preview: &mut PlanPreview,
 ) -> Result<PlanSummary, ActionError> {
     let scan = scan_directory(directory, ScanLimits::default())?;
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
-    Ok(write_plan(tracker, scan, &mut stdout, &mut stderr)?)
+    Ok(write_plan(preview, scan, &mut stdout, &mut stderr)?)
 }
 
 /// Print the plan a real pass would apply and report what it would skip.
 ///
 /// A start or restart is withheld for a service whose requirements can never
 /// be met, exactly as the real pass withholds it; the service is returned in
-/// the summary instead. Scan problems go to `stderr`.
+/// the summary instead, and the action is printed by the first later scan in
+/// which its requirements can be met. Scan problems go to `stderr`.
 fn write_plan(
-    tracker: &mut DesiredStateTracker,
+    preview: &mut PlanPreview,
     scan: ScanResult,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> io::Result<PlanSummary> {
-    let actions = tracker.apply(&scan);
-    let unresolvable = dependency_plan(tracker.desired()).unresolvable;
-    for (name, action) in actions {
+    let actions = preview.tracker.apply(&scan);
+    let unresolvable = dependency_plan(preview.tracker.desired()).unresolvable;
+    // Only names this scan still knows can stay withheld.
+    let withheld = std::mem::take(&mut preview.withheld);
+    for (name, planned) in actions {
+        let action = owed_action(withheld.get(&name).copied(), planned);
         let gated = matches!(action, ReconcileAction::Start | ReconcileAction::Restart);
         if gated && unresolvable.iter().any(|blocked| blocked.service == name) {
+            preview.withheld.insert(name, action);
             continue;
         }
         let verb = match action {

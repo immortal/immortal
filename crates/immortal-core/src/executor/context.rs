@@ -21,7 +21,7 @@ use super::{
     RestartTracker, ServiceConfig, StateMachine, StatusSnapshot, StopCompletion, SupervisorState,
     elapsed_seconds, logger_status,
 };
-use crate::status::{LoggerLastResult, SpawnDetail};
+use crate::status::{LoggerLastResult, LoggerStatus, SpawnDetail};
 
 pub(super) enum ExecutorEvent {
     Broker(ProcessBrokerEvent),
@@ -46,6 +46,9 @@ pub(super) struct ExecutionContext {
     pub(super) descriptor: Option<DescriptorExecution>,
     pub(super) epoch: Instant,
     pub(super) first_start: bool,
+    /// Number of logger failures recorded so far, which orders them across
+    /// loggers so status reports the most recent one.
+    pub(super) logger_failures: u64,
     pub(super) logger_shutdown: LoggerShutdownState,
     pub(super) lifecycle: Option<LifecycleExecution>,
     pub(super) loggers: Vec<LoggerExecution>,
@@ -75,6 +78,7 @@ impl ExecutionContext {
             descriptor: None,
             epoch: Instant::now(),
             first_start: true,
+            logger_failures: 0,
             logger_shutdown: LoggerShutdownState::Running,
             lifecycle: None,
             loggers: loggers.into_iter().map(LoggerExecution::new).collect(),
@@ -208,11 +212,24 @@ impl LoggerShutdownState {
     }
 }
 
+/// One logger's most recent failure and where it falls among all of them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct LoggerFailure {
+    pub(super) result: LoggerLastResult,
+    /// Position in the supervisor-wide order of logger failures; a later
+    /// failure has a larger value.
+    pub(super) order: u64,
+    /// Task still awaiting collection after this failure. Its reap is cleanup
+    /// of the failed start, so it must not replace the recorded cause; a reap
+    /// of any other task is a new failure.
+    pub(super) cleanup: Option<BrokerTaskId>,
+}
+
 pub(super) struct LoggerExecution {
     pub(super) failure_streak: u32,
     /// Most recent failure, kept until this logger runs again so status can
     /// say why it is not healthy.
-    pub(super) last_failure: Option<LoggerLastResult>,
+    pub(super) last_failure: Option<LoggerFailure>,
     pub(super) logger: BrokerLoggerId,
     pub(super) state: LoggerExecutionState,
 }
@@ -226,6 +243,39 @@ impl LoggerExecution {
             state: LoggerExecutionState::Down,
         }
     }
+
+    /// Record this logger's newest failure and advance the shared `failures`
+    /// count that orders it after every earlier one.
+    ///
+    /// `cleanup` names the task whose later reap belongs to this failure.
+    pub(super) const fn record_failure(
+        &mut self,
+        failures: &mut u64,
+        result: LoggerLastResult,
+        cleanup: Option<BrokerTaskId>,
+    ) {
+        *failures = failures.saturating_add(1);
+        self.last_failure = Some(LoggerFailure {
+            result,
+            order: *failures,
+            cleanup,
+        });
+    }
+
+    /// Whether reaping `task` only completes the failure already recorded.
+    pub(super) fn reap_completes_failure(&self, task: BrokerTaskId) -> bool {
+        self.last_failure
+            .is_some_and(|failure| failure.cleanup == Some(task))
+    }
+}
+
+/// The most recent failure among loggers which have not run again since.
+pub(super) fn latest_logger_failure(loggers: &[LoggerExecution]) -> Option<LoggerLastResult> {
+    loggers
+        .iter()
+        .filter_map(|logger| logger.last_failure)
+        .max_by_key(|failure| failure.order)
+        .map(|failure| failure.result)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -407,7 +457,13 @@ impl RuntimeStatus {
             None
         };
         snapshot.logger = logger_status(loggers);
-        snapshot.logger_last_result = loggers.iter().find_map(|logger| logger.last_failure);
+        // A failure is published only as the reason a stage is not running.
+        snapshot.logger_last_result = match snapshot.logger {
+            LoggerStatus::Starting | LoggerStatus::Backoff | LoggerStatus::Failed => {
+                latest_logger_failure(loggers)
+            }
+            LoggerStatus::NotConfigured | LoggerStatus::Ready => None,
+        };
         snapshot.command.clone_from(&self.command);
         snapshot
     }

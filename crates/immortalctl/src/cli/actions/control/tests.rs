@@ -17,7 +17,7 @@ use immortal_core::control::{
 use immortal_core::exit::ExitClass;
 use immortal_core::process::{SpawnFailure, SpawnStage};
 use immortal_core::status::{
-    LastResult, LoggerLastResult, ServiceState, SpawnDetail, StatusSnapshot,
+    LastResult, LoggerLastResult, LoggerStatus, ServiceState, SpawnDetail, StatusSnapshot,
 };
 use immortal_core::supervisor::{Generation, StateMachine};
 
@@ -509,6 +509,7 @@ fn record_explains_spawn_and_logger_failures() -> Result<(), Box<dyn Error>> {
     let mut status = snapshot(ServiceState::Backoff);
     status.last_result = Some(LastResult::SpawnFailed);
     status.last_spawn_failure = Some(detail);
+    status.logger = LoggerStatus::Backoff;
     status.logger_last_result = Some(LoggerLastResult::SpawnFailed(detail));
     let explained = record(
         &service,
@@ -533,6 +534,26 @@ fn record_explains_spawn_and_logger_failures() -> Result<(), Box<dyn Error>> {
             .starts_with("state=backoff; start: execution failed: ")
     );
     assert!(explained.message.contains("; logger: execution failed: "));
+
+    let mut json = Vec::new();
+    render_output(
+        &mut json,
+        std::slice::from_ref(&explained),
+        OutputFormat::Json,
+        false,
+    )?;
+    let value: serde_json::Value = serde_json::from_slice(&json)?;
+    let first = value
+        .as_array()
+        .and_then(|records| records.first())
+        .ok_or("status JSON record missing")?;
+    for field in ["last_result", "logger_last_result"] {
+        assert_eq!(
+            first.get(field),
+            Some(&serde_json::json!("spawn-failed:execute:os-error:2")),
+            "{field}"
+        );
+    }
 
     let mut output = Vec::new();
     render_output(&mut output, &[explained], OutputFormat::Table, false)?;
@@ -559,6 +580,17 @@ fn record_explains_spawn_and_logger_failures() -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(plain.logger_last_result, None);
     assert_eq!(plain.message, "state=down");
+    let mut json = Vec::new();
+    render_output(&mut json, &[plain], OutputFormat::Json, false)?;
+    let value: serde_json::Value = serde_json::from_slice(&json)?;
+    assert_eq!(
+        value
+            .as_array()
+            .and_then(|records| records.first())
+            .and_then(|record| record.get("logger_last_result")),
+        Some(&serde_json::Value::Null),
+        "an absent logger failure is an explicit null"
+    );
     Ok(())
 }
 
