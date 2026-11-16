@@ -236,7 +236,7 @@ fn arg_timeout() -> Arg {
 fn arg_no_wait() -> Arg {
     Arg::new("no-wait")
         .long("no-wait")
-        .help("Return after a lifecycle request is accepted")
+        .help("Do not wait for a lifecycle request to complete once the supervisor has answered it")
         .action(ArgAction::SetTrue)
         .global(true)
 }

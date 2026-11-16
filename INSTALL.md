@@ -304,10 +304,15 @@ gets its ordered, graceful stop. Restarting or stopping `immortaldir` alone
 leaves it, and the running services, untouched; `service immortal_halt stop`
 by hand halts every service. Set `immortal_halt_runtime_dir` if the manager
 uses a runtime root other than `/var/run/immortal`. Services are halted one
-after another: `immortal_halt_timeout`, 60 seconds by default, is how long
-each one may take, including a stop hook, and `rc.shutdown` ends the whole
-shutdown sequence after `rcshutdown_timeout` seconds, 90 by default. Raise
-both in `rc.conf` if the services need longer to stop.
+after another: `immortal_halt_timeout`, 30 seconds by default, is how long
+each one may take, including a stop hook, after a probe that can take up to
+five seconds more, so N services need at most N × (timeout + 5) seconds.
+`rc.shutdown` ends the whole shutdown sequence after `rcshutdown_timeout`
+seconds, 90 by default, which covers two services that each use their whole
+budget. Raise `rcshutdown_timeout` in `rc.conf`, or lower the timeout, to fit
+your service count. A host where `immortaldir` never ran has no runtime
+directory and the halt fails with `78`; `sysrc immortal_halt_enable=NO`
+opts out.
 
 ## Linux systemd
 
@@ -328,13 +333,19 @@ shutdown it stops after the manager and before the network, and runs
 while the system is still up. Restarting or stopping `immortaldir` alone
 leaves it, and the running services, untouched; stopping `immortal-halt` by
 hand halts every service. Services are halted one after another: `--timeout`
-in its `ExecStop` is how long each one may take, including a stop hook, and
-`TimeoutStopSec` bounds the whole command, after which systemd continues the
-shutdown regardless. Raise both if a service needs more than 100 seconds or
-the services together more than two minutes. With the companion installed the
-manager starts after `network.target` instead of right after the local file
-systems; that target does not wait for an address, so a service that needs
-connectivity still has to handle its absence at boot.
+in its `ExecStop` (30 seconds) is how long each one may take, including a stop
+hook, after a probe that can take up to five seconds more, so N services need
+at most N × (timeout + 5) seconds. `TimeoutStopSec` bounds the whole command,
+after which systemd continues the shutdown regardless; its 180 seconds cover
+five services that each use their whole budget. Raise it, or lower `--timeout`,
+to fit your service count, and raise both for a service whose stop hook is
+allowed longer. If `immortaldir` never ran on a host, the runtime directory
+does not exist and the halt exits `78`, shown as a failed unit while shutdown
+continues. `systemctl disable` does not stop `immortaldir.service` from
+pulling the companion in; `systemctl mask immortal-halt` opts out. With the
+companion installed the manager starts after `network.target` instead of right
+after the local file systems; that target does not wait for an address, so a
+service that needs connectivity still has to handle its absence at boot.
 
 ## macOS launchd
 

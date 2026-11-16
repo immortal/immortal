@@ -11,15 +11,18 @@ After=network.target remote-fs.target local-fs.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/true
-# Services are halted one after another, and --timeout is how long each may
-# take to stop, including its stop hook; the default of 30 seconds is too
-# short for a service whose hook and lifetime wait are allowed longer.
-ExecStop=/usr/local/bin/immortalctl --runtime-dir /run/immortal --timeout 100 halt --all
+# Services are halted one after another. --timeout is how long each may take
+# to stop, including its stop hook, and every service also costs up to five
+# seconds to probe first, so the services together need at most
+# N * (timeout + 5 s). Raise TimeoutStopSec to cover that for your N, or
+# lower --timeout; a service whose hook is allowed longer needs a larger one.
+ExecStop=/usr/local/bin/immortalctl --runtime-dir /run/immortal --timeout 30 halt --all
 # Halting with no service present reports "not found"; that is not a failure.
 SuccessExitStatus=66
-# Bounds the whole command, so it must exceed the graceful stops of all
-# services together; systemd releases the ordering when it expires.
-TimeoutStopSec=120s
+# Bounds the whole command; systemd releases the ordering and continues the
+# shutdown when it expires. 180 s covers five services that each use their
+# whole budget.
+TimeoutStopSec=180s
 
 [Install]
 WantedBy=multi-user.target
