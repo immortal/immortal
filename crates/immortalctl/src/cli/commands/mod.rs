@@ -26,8 +26,8 @@ pub fn new() -> Command {
         .long_about(
             "Inspect immortal supervisors and request lifecycle or signal operations. With no \
              subcommand, status for safely discoverable system and user services is selected. \
-             Lifecycle commands wait for typed completion by default; --no-wait returns after \
-             acceptance.",
+             Lifecycle commands wait for typed completion by default; --no-wait returns once the \
+             supervisor has answered the request, without waiting for it to complete.",
         )
         .after_help(
             "Examples:

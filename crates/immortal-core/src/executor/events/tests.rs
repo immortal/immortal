@@ -13,7 +13,7 @@ use std::{error::Error, time::Duration};
 use tokio::time::Instant as TokioInstant;
 
 use super::super::{
-    AuxiliaryExecution, DesiredState, ExecutorError, Generation, LifecycleExecution,
+    AuxiliaryExecution, DesiredState, ExecutorError, FailureReason, Generation, LifecycleExecution,
     LifecycleHookKind, LifecycleHookState, LoggerExecutionState, LoggerShutdownState,
     LoggerShutdownTier, ProcessSignal, SupervisorState,
     logger::signal_logger_tier,
@@ -561,12 +561,20 @@ async fn a_condition_reaped_after_the_service_left_waiting_is_not_retried()
 #[tokio::test]
 async fn an_expired_cleanup_deadline_is_reported_as_the_cleanup_after_the_service_stopped()
 -> Result<(), Box<dyn Error>> {
-    for halt in [false, true] {
+    for stopped_as in ["down", "exited", "failed"] {
         let (mut fixture, _task) = condition_killed_for_a_retry(62)?;
-        if halt {
+        if stopped_as == "exited" {
             fixture.execution.machine.set_desired(DesiredState::Halt);
         }
         fixture.execution.machine.cancel_pending()?;
+        if stopped_as == "failed" {
+            // A logger out of retries fails the service while the condition's
+            // kill is still being waited for.
+            fixture
+                .execution
+                .machine
+                .fail_without_child(FailureReason::LoggerRetryLimit)?;
+        }
         fixture.execution.deadline = Some(TokioInstant::now());
         let prepared = prepare_execution(&fixture.config, false)?;
 

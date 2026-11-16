@@ -125,22 +125,24 @@ pub(super) async fn handle_executor_timer(
                 }));
             }
         },
-        // The service went down or exited while a start condition or hook was
-        // still being killed: the expired deadline is that cleanup's.
-        SupervisorState::Down | SupervisorState::Exited => match execution.auxiliary {
-            AuxiliaryExecution::Killing { .. } => {
-                return Err(ExecutorError::BrokerTimedOut("condition cleanup"));
+        // The service went down, exited, or failed while a start condition or
+        // hook was still being killed: the expired deadline is that cleanup's.
+        SupervisorState::Down | SupervisorState::Exited | SupervisorState::Failed(_) => {
+            match execution.auxiliary {
+                AuxiliaryExecution::Killing { .. } => {
+                    return Err(ExecutorError::BrokerTimedOut("condition cleanup"));
+                }
+                AuxiliaryExecution::HookKilling(_) => {
+                    return Err(ExecutorError::BrokerTimedOut("post-exit hook cleanup"));
+                }
+                _ => {
+                    return Err(ExecutorError::Transition(TransitionError::Invalid {
+                        state: execution.machine.state(),
+                        event: "executor_timer",
+                    }));
+                }
             }
-            AuxiliaryExecution::HookKilling(_) => {
-                return Err(ExecutorError::BrokerTimedOut("post-exit hook cleanup"));
-            }
-            _ => {
-                return Err(ExecutorError::Transition(TransitionError::Invalid {
-                    state: execution.machine.state(),
-                    event: "executor_timer",
-                }));
-            }
-        },
+        }
         state => {
             return Err(ExecutorError::Transition(TransitionError::Invalid {
                 state,
