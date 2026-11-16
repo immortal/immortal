@@ -50,6 +50,13 @@ pub(super) struct ExecutionContext {
     /// Number of logger failures recorded so far, which orders them across
     /// loggers so status reports the most recent one.
     pub(super) logger_failures: u64,
+    /// Tasks no state names any more whose reap the broker may still report.
+    ///
+    /// A failed start can leave a child to collect, and a kill the broker
+    /// could not confirm may still be delivered. When the owner of such a
+    /// task lets go of it, the later reap is stale rather than a fault, as a
+    /// late reap of a service generation is.
+    pub(super) released_tasks: Vec<BrokerTaskId>,
     pub(super) task_signals: OwedTaskAcknowledgements,
     pub(super) logger_shutdown: LoggerShutdownState,
     pub(super) lifecycle: Option<LifecycleExecution>,
@@ -81,6 +88,7 @@ impl ExecutionContext {
             epoch: Instant::now(),
             first_start: true,
             logger_failures: 0,
+            released_tasks: Vec::new(),
             task_signals: OwedTaskAcknowledgements::default(),
             logger_shutdown: LoggerShutdownState::Running,
             lifecycle: None,
@@ -101,6 +109,19 @@ impl ExecutionContext {
             tracker: RestartTracker::default(),
             terminal_failure: None,
         }
+    }
+
+    /// Whether a logger, the lifecycle hook, or the auxiliary task is `task`.
+    pub(super) fn names_task(&self, task: BrokerTaskId) -> bool {
+        self.auxiliary.task() == Some(task)
+            || self
+                .lifecycle
+                .as_ref()
+                .is_some_and(|lifecycle| lifecycle.task == task)
+            || self
+                .loggers
+                .iter()
+                .any(|logger| logger.state.task() == Some(task))
     }
 
     pub(super) fn loggers_ready(&self) -> bool {

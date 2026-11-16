@@ -33,6 +33,51 @@ pub(super) async fn handle_broker_event(
     config: &ServiceConfig,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
+    // A failed start that left a child to collect, and a kill the broker
+    // could not confirm, can both be followed by the task's reap. If handling
+    // the event makes the task's owner let go of it, that reap is expected.
+    let reap_may_follow = match &event {
+        ProcessBrokerEvent::TaskSpawnFailed {
+            task,
+            cleanup_pending: Some(_),
+            ..
+        }
+        | ProcessBrokerEvent::TaskSignalFailed { task, .. } => Some(*task),
+        _ => None,
+    }
+    .filter(|task| execution.names_task(*task));
+    let handled = route_broker_event(client, event, commands, config, execution).await;
+    if let Some(task) = reap_may_follow
+        && handled.is_ok()
+        && !execution.names_task(task)
+    {
+        execution.released_tasks.push(task);
+    }
+    handled
+}
+
+/// Whether `event` is the reap of a task whose owner already let go of it,
+/// which is then consumed; a terminal reap ends the expectation.
+fn consume_released_reap(released: &mut Vec<BrokerTaskId>, event: &ProcessBrokerEvent) -> bool {
+    let ProcessBrokerEvent::TaskChild { task, event } = event else {
+        return false;
+    };
+    let Some(position) = released.iter().position(|released| released == task) else {
+        return false;
+    };
+    if event.is_terminal() {
+        released.swap_remove(position);
+    }
+    true
+}
+
+async fn route_broker_event(
+    client: &mut ProcessBrokerClient,
+    event: ProcessBrokerEvent,
+    commands: &PreparedExecution,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
     if matches!(
         event,
         ProcessBrokerEvent::ContainmentFailed { .. }
@@ -82,7 +127,9 @@ pub(super) async fn handle_broker_event(
                 handle_logger_event(client, event, config, execution)
             };
         }
-        if owed && execution.auxiliary.task() != Some(task) {
+        if execution.auxiliary.task() != Some(task)
+            && (owed || consume_released_reap(&mut execution.released_tasks, &event))
+        {
             return Ok(());
         }
         return handle_auxiliary_event(client, event, config, execution);

@@ -5,6 +5,11 @@
 //! that start left behind. These tests drive the same event and timer
 //! handlers the executor uses, so a cause recorded for one task cannot stand
 //! in for a later task's failure.
+//!
+//! The later tests cover what the dispatch does for any broker task, logger
+//! or not, after its owner let go of it: the acknowledgement of a signal the
+//! supervisor sent, and the reap that can follow a failed start or a kill
+//! the broker could not confirm.
 
 use std::{error::Error, time::Instant};
 
@@ -552,5 +557,94 @@ async fn an_owned_acknowledgement_still_reaches_its_task_state() -> Result<(), B
 
     assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
     assert_eq!(fixture.execution.task_signals.len(), 0);
+
+    // Regression: a kill the broker could not confirm may still be delivered,
+    // so the reap can follow after the condition was given up. It ended
+    // supervision as an event nobody owned.
+    let reap = ProcessBrokerEvent::TaskChild {
+        task,
+        event: ChildEvent::Signaled {
+            pid: process()?,
+            signal: 9,
+        },
+    };
+    fixture.dispatch(reap.clone()).await?;
+    assert!(fixture.execution.released_tasks.is_empty());
+    assert!(
+        fixture.dispatch(reap).await.is_err(),
+        "a task is reaped once; a second reap is a fault"
+    );
+    Ok(())
+}
+
+/// Regression: a start that failed after forking leaves a child to collect.
+/// The condition retried at once and the child's reap then ended supervision.
+#[tokio::test]
+async fn the_reap_of_a_condition_whose_start_failed_is_stale_not_a_fault()
+-> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(
+        "version: 2\ncommand: [/bin/true]\nstart_condition:\n  command: [/bin/true]\n  \
+         timeout_seconds: 10\n",
+    )?;
+    let task = BrokerTaskId::new(42).ok_or("invalid test task")?;
+    fixture.execution.auxiliary = AuxiliaryExecution::Starting(task);
+
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSpawnFailed {
+            task,
+            stage: SpawnStage::Execute,
+            failure: SpawnFailure::OperatingSystem,
+            os_error: Some(2),
+            cleanup_pending: Some(process()?),
+        })
+        .await?;
+    assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
+
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskChild {
+            task,
+            event: ChildEvent::Exited {
+                pid: process()?,
+                code: 127,
+            },
+        })
+        .await?;
+    assert!(fixture.execution.released_tasks.is_empty());
+    Ok(())
+}
+
+/// A failed start with nothing to collect is followed by no reap, so one
+/// that arrives anyway answers nothing and stays a fault.
+#[tokio::test]
+async fn a_reap_after_a_failed_start_without_a_child_stays_a_protocol_fault()
+-> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(
+        "version: 2\ncommand: [/bin/true]\nstart_condition:\n  command: [/bin/true]\n  \
+         timeout_seconds: 10\n",
+    )?;
+    let task = BrokerTaskId::new(43).ok_or("invalid test task")?;
+    fixture.execution.auxiliary = AuxiliaryExecution::Starting(task);
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSpawnFailed {
+            task,
+            stage: SpawnStage::Execute,
+            failure: SpawnFailure::OperatingSystem,
+            os_error: Some(2),
+            cleanup_pending: None,
+        })
+        .await?;
+
+    let reap = fixture
+        .dispatch(ProcessBrokerEvent::TaskChild {
+            task,
+            event: ChildEvent::Exited {
+                pid: process()?,
+                code: 127,
+            },
+        })
+        .await;
+    assert!(reap.is_err());
     Ok(())
 }
