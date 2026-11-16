@@ -479,6 +479,34 @@ fn a_withheld_restart_is_made_once_a_different_definition_can_be_scheduled()
     Ok(())
 }
 
+/// Regression: editing a stopped, disabled service listed a restart, which a
+/// real pass never makes because only enabled services enter a start wave.
+#[test]
+fn a_disabled_service_is_not_restarted_until_it_is_enabled_again() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let worker = directory.path().join("worker.yml");
+    let mut preview = PlanPreview::default();
+    fs::write(&worker, "version: 2\ncommand: [/bin/true]\n")?;
+    assert_eq!(plan(&directory, &mut preview)?, "START\tworker\n");
+
+    fs::write(
+        &worker,
+        "version: 2\nenabled: false\ncommand: [/bin/true]\n",
+    )?;
+    assert_eq!(plan(&directory, &mut preview)?, "STOP\tworker\n");
+
+    fs::write(
+        &worker,
+        "version: 2\nenabled: false\ncommand: [/bin/false]\n",
+    )?;
+    assert_eq!(plan(&directory, &mut preview)?, "KEEP\tworker\n");
+
+    fs::write(&worker, "version: 2\ncommand: [/bin/false]\n")?;
+    assert_eq!(plan(&directory, &mut preview)?, "RESTART\tworker\n");
+    assert_eq!(plan(&directory, &mut preview)?, "KEEP\tworker\n");
+    Ok(())
+}
+
 /// A service that was never started has nothing to stop when its definition
 /// is removed.
 #[test]

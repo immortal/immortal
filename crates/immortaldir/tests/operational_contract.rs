@@ -59,12 +59,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     if arguments.get(1).map(String::as_str) == Some("--restart-contract") {
         let root = TestRoot::new()?;
-        prove_confirmation_poll_tolerates_replacement(root.path())?;
-        return prove_cross_restart_deletion(root.path());
+        let result = prove_confirmation_poll_tolerates_replacement(root.path())
+            .and_then(|()| prove_cross_restart_deletion(root.path()));
+        return root.finish(result);
     }
     if arguments.get(1).map(String::as_str) == Some("--dependency-contract") {
         let root = TestRoot::new()?;
-        return prove_dependency_isolation(root.path());
+        let result = prove_dependency_isolation(root.path());
+        return root.finish(result);
     }
 
     prove_cross_restart_in_subprocess()?;
@@ -220,10 +222,11 @@ impl Drop for TestProcess {
     }
 }
 
-/// Halt any supervisor a killed contract subprocess left behind.
+/// Halt any supervisor a killed or failed contract subprocess left behind.
 ///
 /// A subprocess killed for exceeding its deadline never runs its own cleanup,
-/// and the supervisors it started are daemons in their own sessions, so they
+/// and one whose contract failed keeps its tree because its cleanup may have
+/// failed too. The supervisors it started are daemons in their own sessions, so they
 /// outlive both the subprocess and its process group and keep restarting their
 /// workloads indefinitely. Their runtime tree is named after the subprocess, so
 /// the parent can still reach them once the subprocess is gone. Every step is
@@ -820,7 +823,11 @@ fn prove_parallel_launcher(control: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-struct TestRoot(PathBuf);
+struct TestRoot {
+    path: PathBuf,
+    /// Leave the tree in place when dropped, for the parent's rescue.
+    keep: bool,
+}
 
 impl TestRoot {
     fn new() -> Result<Self, Box<dyn Error>> {
@@ -831,16 +838,33 @@ impl TestRoot {
         ));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path)?;
-        Ok(Self(fs::canonicalize(path)?))
+        Ok(Self {
+            path: fs::canonicalize(path)?,
+            keep: false,
+        })
     }
 
     fn path(&self) -> &Path {
-        &self.0
+        &self.path
+    }
+
+    /// End a contract subprocess with `result`, keeping the tree when it
+    /// failed.
+    ///
+    /// A failed contract may not have halted every supervisor, and their
+    /// control sockets under this tree are the only way to reach them. The
+    /// parent halts whatever is left and removes the tree once this
+    /// subprocess is gone; see `rescue_abandoned_supervisors`.
+    fn finish(mut self, result: Result<(), Box<dyn Error>>) -> Result<(), Box<dyn Error>> {
+        self.keep = result.is_err();
+        result
     }
 }
 
 impl Drop for TestRoot {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if !self.keep {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }

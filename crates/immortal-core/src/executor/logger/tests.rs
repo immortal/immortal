@@ -11,9 +11,13 @@ use std::{error::Error, time::Instant};
 use tokio::{net::UnixStream, time::Instant as TokioInstant};
 
 use super::{
-    super::events::handle_logger_event, BrokerLoggerId, ExecutionContext, ExecutorError,
-    LoggerExecutionState, LoggerLastResult, LoggerShutdownState, ProcessBrokerClient, ProcessId,
-    SpawnDetail, SpawnFailure, SpawnStage, handle_due_logger_timers,
+    super::{
+        events::{handle_broker_event, handle_logger_event},
+        prepare::prepare_execution,
+    },
+    BrokerLoggerId, ExecutionContext, ExecutorError, LoggerExecutionState, LoggerLastResult,
+    LoggerShutdownState, LoggerShutdownTier, ProcessBrokerClient, ProcessId, ProcessSignal,
+    SpawnDetail, SpawnFailure, SpawnStage, handle_due_logger_timers, signal_logger_tier,
 };
 use crate::{
     config::ServiceConfig,
@@ -343,6 +347,138 @@ async fn a_spawn_failure_for_an_unowned_task_stays_a_protocol_fault() -> Result<
     assert!(matches!(
         outcome,
         Err(ExecutorError::UnexpectedBrokerEvent(_))
+    ));
+    Ok(())
+}
+
+impl Fixture {
+    /// Deliver a broker event through the executor's dispatch, as the event
+    /// loop does, so routing by task ownership is part of what is tested.
+    async fn dispatch(&mut self, event: ProcessBrokerEvent) -> Result<(), Box<dyn Error>> {
+        let prepared = prepare_execution(&self.config, false)?;
+        Ok(handle_broker_event(
+            &mut self.client,
+            event,
+            &prepared.execution,
+            &self.config,
+            &mut self.execution,
+        )
+        .await?)
+    }
+}
+
+/// Regression: after a late start failure the logger no longer named the
+/// task, so the broker's answer to the supervisor's own kill was routed as an
+/// event nobody owned and ended supervision.
+#[tokio::test]
+async fn the_kill_acknowledgement_is_consumed_after_a_late_spawn_failure()
+-> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    let task = time_out_shared_start(&mut fixture).await?;
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSpawnFailed {
+            task,
+            stage: SpawnStage::Execute,
+            failure: SpawnFailure::OperatingSystem,
+            os_error: Some(2),
+            cleanup_pending: None,
+        })
+        .await?;
+
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSignalFailed {
+            task,
+            os_error: Some(3),
+        })
+        .await?;
+
+    assert!(matches!(
+        fixture.logger(SHARED)?.state,
+        LoggerExecutionState::Backoff { .. }
+    ));
+    assert!(fixture.execution.logger_signal_acknowledgements.is_empty());
+    assert_eq!(fixture.reported(), Some(START_TIMED_OUT));
+    Ok(())
+}
+
+/// The process can die on its own before the broker handles the kill, so the
+/// acknowledgement trails the reap.
+#[tokio::test]
+async fn the_kill_acknowledgement_is_consumed_after_the_reap() -> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    let task = time_out_shared_start(&mut fixture).await?;
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskChild {
+            task,
+            event: ChildEvent::Exited {
+                pid: process()?,
+                code: 1,
+            },
+        })
+        .await?;
+
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSignalFailed {
+            task,
+            os_error: Some(3),
+        })
+        .await?;
+
+    assert!(fixture.execution.logger_signal_acknowledgements.is_empty());
+    Ok(())
+}
+
+/// Each signal is acknowledged once: the acknowledgement of the kill is
+/// consumed, and a second one answers nothing this supervisor sent.
+#[tokio::test]
+async fn an_acknowledgement_that_is_not_owed_stays_a_protocol_fault() -> Result<(), Box<dyn Error>>
+{
+    let mut fixture = Fixture::new()?;
+    let task = time_out_shared_start(&mut fixture).await?;
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSignalDelivered { task })
+        .await?;
+
+    let repeated = fixture
+        .dispatch(ProcessBrokerEvent::TaskSignalDelivered { task })
+        .await;
+
+    assert!(repeated.is_err());
+    Ok(())
+}
+
+/// A shutdown tier sends TERM and CONT, so two acknowledgements are owed for
+/// each logger and both are consumed, also after the logger was reaped.
+#[tokio::test]
+async fn shutdown_signals_owe_one_acknowledgement_each() -> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    let task = fixture.begin_start(SHARED, 1)?;
+    fixture.started(task)?;
+    fixture.execution.logger_shutdown = LoggerShutdownState::Complete;
+    signal_logger_tier(
+        &mut fixture.client,
+        &mut fixture.execution,
+        LoggerShutdownTier::SharedLogger,
+        ProcessSignal::Terminate,
+    )
+    .await?;
+    assert_eq!(fixture.execution.logger_signal_acknowledgements.len(), 2);
+
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSignalDelivered { task })
+        .await?;
+    fixture.killed(task)?;
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSignalFailed {
+            task,
+            os_error: Some(3),
+        })
+        .await?;
+
+    assert!(fixture.execution.logger_signal_acknowledgements.is_empty());
+    assert!(matches!(
+        fixture.logger(SHARED)?.state,
+        LoggerExecutionState::Down
     ));
     Ok(())
 }

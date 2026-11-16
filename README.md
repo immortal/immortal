@@ -730,7 +730,8 @@ a `permission-denied` response and disconnected, so clients exit `77` rather
 than reporting an ambiguous transport failure. It never removes an entry merely
 because it looks stale, and listener cleanup removes only the exact socket
 device/inode it created. Frames are limited to 64 KiB, reads/writes/connects and
-accepts have five-second idle deadlines, and active clients are bounded. Every
+accepts have five-second idle deadlines, except that a client awaits the reply
+to a mutation for its lifecycle deadline, and active clients are bounded. Every
 mutation is preceded by a status probe and carries `NoChild` or an exact
 generation; unguarded mutations and generation races are rejected.
 
@@ -767,7 +768,9 @@ publishes `Failed`, and an explicit start operation can retry initialization.
 The authenticated socket loop isolates each client, forwards requests through
 a bounded channel, and waits for the single-owner supervisor event loop to
 publish the completion response. Socket tasks never mutate lifecycle state.
-Shutdown aborts and joins every remaining connection task.
+At shutdown the server stops accepting; a connection whose response is
+already queued still writes it, every other one ends at once, and all
+connection tasks are joined.
 
 Lifecycle mutations wait up to `--timeout 30` seconds by default. Start waits
 for Ready, stop for Down, restart for a different Ready generation, and once
@@ -778,9 +781,13 @@ running out the deadline and reporting a retryable one. Neither settled state
 runs a child, so a stop goal is treated as reached. Halt/exit complete when
 their owned control socket disappears. A descriptor-tracked service answers
 stop, restart, halt, and reload only after its hook and lifetime wait, so the
-same deadline also bounds the wait for that reply. `--no-wait` explicitly
-returns after request acceptance. The outer deadline bounds polling and each generation
-comparison remains race-safe.
+reply to a mutation is awaited for the same `--timeout`, and never for less
+than five seconds; the wait that follows gets what is left of it. The status
+probe before a mutation, the connect, and the request write keep their own
+five-second deadlines, so `--timeout` bounds the lifecycle wait, not the whole
+command. `--no-wait` returns once that reply arrives. `immortaldir` awaits a
+mutation's reply for its fixed lifecycle deadline. The outer deadline bounds
+polling and each generation comparison remains race-safe.
 
 `immortalctl` selects output with `--output table|json` and `--color
 auto|always|never`; `--no-header` omits the table header and conflicts with

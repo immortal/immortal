@@ -11,12 +11,12 @@ use std::{io, time::Duration};
 use tokio::time::Instant as TokioInstant;
 
 use super::{
-    AuxiliaryExecution, BROKER_EVENT_TIMEOUT, BrokerLoggerId, BrokerSignalScope,
+    AuxiliaryExecution, BROKER_EVENT_TIMEOUT, BrokerLoggerId, BrokerSignalScope, BrokerTaskId,
     CHILD_STARTUP_TIMEOUT, ExecutionContext, ExecutorError, FailureReason, LOGGER_DRAIN_GRACE,
     LOGGER_PREPARE_GRACE, LOGGER_STOP_GRACE, LoggerExecution, LoggerExecutionState,
     LoggerRestartConfig, LoggerShutdownState, LoggerShutdownTier, LoggerStatus,
-    ProcessBrokerClient, ProcessId, ProcessSignal, SupervisorState, allocate_task,
-    cancel_auxiliary, jittered_backoff_seed,
+    ProcessBrokerClient, ProcessBrokerEvent, ProcessId, ProcessSignal, SupervisorState,
+    allocate_task, cancel_auxiliary, jittered_backoff_seed,
 };
 use crate::{
     process::{SpawnFailure, SpawnStage},
@@ -252,9 +252,13 @@ pub(super) async fn handle_due_logger_timers(
                 logger.state = LoggerExecutionState::Down;
             }
             LoggerExecutionState::Starting { task, deadline } if deadline <= now => {
-                client
-                    .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
-                    .await?;
+                signal_logger_task(
+                    client,
+                    &mut execution.logger_signal_acknowledgements,
+                    task,
+                    ProcessSignal::Kill,
+                )
+                .await?;
                 // The broker never reported this start, so the elapsed
                 // deadline is the cause; the kill's reap only completes it.
                 logger.record_failure(
@@ -285,6 +289,43 @@ pub(super) async fn handle_due_logger_timers(
     start_down_loggers(client, execution).await
 }
 
+/// Signal one logger task's group and note the acknowledgement now owed.
+async fn signal_logger_task(
+    client: &mut ProcessBrokerClient,
+    owed: &mut Vec<BrokerTaskId>,
+    task: BrokerTaskId,
+    signal: ProcessSignal,
+) -> Result<(), ExecutorError> {
+    client
+        .signal_task(task, BrokerSignalScope::Group, signal)
+        .await?;
+    owed.push(task);
+    Ok(())
+}
+
+/// Retire the acknowledgement of a signal this supervisor sent to a logger
+/// task, if `event` is one.
+///
+/// The broker answers every signal request, also for a task whose start
+/// failed or whose process it already reaped, so the answer can arrive after
+/// the logger stopped naming that task. Only an acknowledgement that is owed
+/// is consumed; any other stays subject to the usual ownership checks.
+pub(super) fn retire_logger_signal_acknowledgement(
+    owed: &mut Vec<BrokerTaskId>,
+    event: &ProcessBrokerEvent,
+) -> bool {
+    let (ProcessBrokerEvent::TaskSignalDelivered { task }
+    | ProcessBrokerEvent::TaskSignalFailed { task, .. }) = event
+    else {
+        return false;
+    };
+    let Some(position) = owed.iter().position(|pending| pending == task) else {
+        return false;
+    };
+    owed.swap_remove(position);
+    true
+}
+
 pub(super) async fn signal_logger_tier(
     client: &mut ProcessBrokerClient,
     execution: &mut ExecutionContext,
@@ -301,13 +342,10 @@ pub(super) async fn signal_logger_tier(
             logger.state = LoggerExecutionState::Down;
             continue;
         };
-        client
-            .signal_task(task, BrokerSignalScope::Group, signal)
-            .await?;
+        let owed = &mut execution.logger_signal_acknowledgements;
+        signal_logger_task(client, owed, task, signal).await?;
         if signal == ProcessSignal::Terminate {
-            client
-                .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Continue)
-                .await?;
+            signal_logger_task(client, owed, task, ProcessSignal::Continue).await?;
         }
         logger.state = LoggerExecutionState::Killing { task, deadline };
     }

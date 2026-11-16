@@ -49,6 +49,11 @@ pub(super) struct ExecutionContext {
     /// Number of logger failures recorded so far, which orders them across
     /// loggers so status reports the most recent one.
     pub(super) logger_failures: u64,
+    /// Logger tasks for which the broker still owes a signal acknowledgement,
+    /// one entry per signal sent. A logger can leave the state that names its
+    /// task, by a reap or a late start failure, before the acknowledgement
+    /// arrives, so what is owed is tracked apart from that state.
+    pub(super) logger_signal_acknowledgements: Vec<BrokerTaskId>,
     pub(super) logger_shutdown: LoggerShutdownState,
     pub(super) lifecycle: Option<LifecycleExecution>,
     pub(super) loggers: Vec<LoggerExecution>,
@@ -79,6 +84,7 @@ impl ExecutionContext {
             epoch: Instant::now(),
             first_start: true,
             logger_failures: 0,
+            logger_signal_acknowledgements: Vec::new(),
             logger_shutdown: LoggerShutdownState::Running,
             lifecycle: None,
             loggers: loggers.into_iter().map(LoggerExecution::new).collect(),

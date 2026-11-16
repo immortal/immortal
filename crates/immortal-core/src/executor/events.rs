@@ -22,7 +22,8 @@ use super::{
     SERVICE_STOP_GRACE, SPAWN_FAILURE_EXIT, ServiceConfig, SupervisorState, begin_lifecycle_hook,
     complete_generation, finish_descriptor_generation, finish_detach, finish_signal_request,
     handle_auxiliary_event, handle_lifetime_event, handle_service_child_event, logger_tier_is_down,
-    publish_readiness, request_group_stop, schedule_logger_restart,
+    publish_readiness, request_group_stop, retire_logger_signal_acknowledgement,
+    schedule_logger_restart,
 };
 use crate::status::{LoggerLastResult, SpawnDetail};
 
@@ -64,6 +65,9 @@ pub(super) async fn handle_broker_event(
             .is_some_and(|lifecycle| lifecycle.task == task)
     }) {
         return handle_lifecycle_event(client, event, commands, config, execution).await;
+    }
+    if retire_logger_signal_acknowledgement(&mut execution.logger_signal_acknowledgements, &event) {
+        return Ok(());
     }
     if task_id(&event).is_some_and(|task| {
         execution
@@ -661,9 +665,9 @@ pub(super) fn handle_logger_event(
             }
             Ok(())
         }
-        ProcessBrokerEvent::TaskChild { .. }
-        | ProcessBrokerEvent::TaskSignalDelivered { .. }
-        | ProcessBrokerEvent::TaskSignalFailed { .. } => Ok(()),
+        ProcessBrokerEvent::TaskChild { .. } => Ok(()),
+        // Every acknowledgement this supervisor is owed was retired before
+        // dispatch, so one that reaches here answers no signal it sent.
         event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
     }
 }

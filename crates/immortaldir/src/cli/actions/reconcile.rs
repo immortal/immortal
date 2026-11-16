@@ -792,6 +792,13 @@ fn write_plan(
                     config,
                     preview.applied.get(&name),
                 ) {
+                    // Only an enabled service enters a start wave, so a
+                    // real pass never starts or restarts a disabled one.
+                    DesiredPlan::Apply(ReconcileAction::Start | ReconcileAction::Restart)
+                        if !config.enabled =>
+                    {
+                        ReconcileAction::Keep
+                    }
                     DesiredPlan::Apply(action) => action,
                     DesiredPlan::Adopt | DesiredPlan::Keep => ReconcileAction::Keep,
                 }

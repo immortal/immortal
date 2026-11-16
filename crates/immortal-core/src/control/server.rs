@@ -175,8 +175,11 @@ pub(super) fn accept_error_is_exhaustion(error: &io::Error) -> bool {
 /// Each accepted client is bounded by [`ControlListener`], frame deadlines, and
 /// the supplied bounded command channel. The receiving supervisor event loop
 /// remains the only owner of lifecycle state. Malformed/disconnected clients
-/// are isolated to their connection task. Shutdown aborts and joins every
-/// remaining client task before returning.
+/// are isolated to their connection task. Shutdown stops accepting, and each
+/// remaining client task ends at once unless a response was already queued
+/// for it, which it still writes within the frame deadline; every task is
+/// joined before returning. The last answer of a supervisor, such as the one
+/// to the halt that ends it, is therefore delivered rather than cut off.
 ///
 /// Transient accept failures (peer aborts, interruptions, and descriptor or
 /// buffer exhaustion) are absorbed so a single unlucky connection cannot stop
@@ -206,8 +209,10 @@ pub async fn run_control_server(
             accepted = listener.accept() => match accepted {
                 Ok(connection) => {
                     let sender = commands.clone();
+                    let shutdown = shutdown.clone();
                     tasks.spawn(async move {
-                        let _isolated_error = serve_control_connection(connection, sender).await;
+                        let _isolated_error =
+                            serve_control_connection(connection, sender, shutdown).await;
                     });
                 }
                 Err(
@@ -225,38 +230,63 @@ pub async fn run_control_server(
             Some(_completed) = tasks.join_next(), if !tasks.is_empty() => {}
         }
     }
-    tasks.abort_all();
+    // Every task observes the same shutdown, so each one ends without being
+    // aborted, after at most one bounded response write.
     while tasks.join_next().await.is_some() {}
     Ok(())
+}
+
+/// Resolve once shutdown is requested or its sender is gone.
+#[cfg(unix)]
+async fn shutdown_requested(shutdown: &mut watch::Receiver<bool>) {
+    while !*shutdown.borrow() {
+        if shutdown.changed().await.is_err() {
+            return;
+        }
+    }
 }
 
 #[cfg(unix)]
 async fn serve_control_connection(
     mut connection: AuthorizedConnection,
     commands: mpsc::Sender<ControlCommand>,
+    mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), TransportError> {
-    let request = read_request(connection.stream_mut()).await?;
+    let request = tokio::select! {
+        request = read_request(connection.stream_mut()) => request?,
+        () = shutdown_requested(&mut shutdown) => return Ok(()),
+    };
     let peer = connection.peer();
-    let (response, receiver) = oneshot::channel();
-    commands
-        .send(ControlCommand {
-            request,
-            peer,
-            response,
-        })
-        .await
-        .map_err(|_| {
+    let (response, mut receiver) = oneshot::channel();
+    let command = ControlCommand {
+        request,
+        peer,
+        response,
+    };
+    tokio::select! {
+        sent = commands.send(command) => sent.map_err(|_| {
             io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "supervisor control command receiver closed",
             )
-        })?;
-    let response = receiver.await.map_err(|_| {
-        io::Error::new(
+        })?,
+        () = shutdown_requested(&mut shutdown) => return Ok(()),
+    }
+    // A response the supervisor queued before it asked for shutdown is still
+    // owed to the client: check for it first, and once more when shutdown is
+    // what woke this task.
+    let response = tokio::select! {
+        biased;
+        response = &mut receiver => response.ok(),
+        () = shutdown_requested(&mut shutdown) => receiver.try_recv().ok(),
+    };
+    let Some(response) = response else {
+        return Err(io::Error::new(
             io::ErrorKind::BrokenPipe,
             "supervisor dropped a control response",
         )
-    })?;
+        .into());
+    };
     write_response(connection.stream_mut(), &response).await
 }
 

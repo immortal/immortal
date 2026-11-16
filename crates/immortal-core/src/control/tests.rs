@@ -693,6 +693,57 @@ async fn server_loop_isolates_bad_clients_and_dispatches_authenticated_requests(
     Ok(())
 }
 
+/// Regression: shutdown aborted every connection task, so the reply the
+/// supervisor had just queued, typically to the halt that ended it, could be
+/// lost and the client saw the connection close instead of success.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn server_shutdown_delivers_a_response_that_was_already_queued() -> Result<(), Box<dyn Error>>
+{
+    let directory = TestDirectory::new()?;
+    let path = directory.path().join("immortal.sock");
+    let listener = Arc::new(ControlListener::bind(&path, 2)?);
+    let (sender, mut commands) = mpsc::channel(1);
+    let (shutdown_sender, shutdown) = watch::channel(false);
+    let server = tokio::spawn(run_control_server(Arc::clone(&listener), sender, shutdown));
+
+    let request = Request {
+        operation: Operation::Halt,
+        service: "api".to_owned(),
+        expected_generation: GenerationMatch::NoChild,
+        scope: SignalScope::Group,
+        signal: None,
+    };
+    let mut answered = UnixStream::connect(&path).await?;
+    write_request(&mut answered, &request).await?;
+    let command = commands.recv().await.ok_or("control server stopped")?;
+    // A second client is still waiting for an answer that never comes.
+    let mut unanswered = UnixStream::connect(&path).await?;
+    write_request(&mut unanswered, &request).await?;
+    let pending = commands.recv().await.ok_or("control server stopped")?;
+
+    // Shutdown is requested and the response queued without yielding between
+    // them, so the server sees both when it runs next, shutdown first.
+    shutdown_sender.send(true)?;
+    command
+        .respond(Response {
+            code: ResponseCode::Ok,
+            generation: None,
+            message: "halted".to_owned(),
+            status: None,
+        })
+        .map_err(|_| "client disconnected before response")?;
+
+    assert_eq!(read_response(&mut answered).await?.message, "halted");
+    server.await??;
+    assert!(
+        read_response(&mut unanswered).await.is_err(),
+        "a request without a queued response is dropped at shutdown"
+    );
+    drop(pending);
+    Ok(())
+}
+
 /// A rejected bind must never create, replace, or leave behind a socket.
 ///
 /// Every failure arm after `UnixListener::bind` succeeds has to unlink what it
