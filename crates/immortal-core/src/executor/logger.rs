@@ -38,7 +38,10 @@ pub(super) async fn fail_childless_start_on_logger_exhaustion(
         SupervisorState::WaitingCondition | SupervisorState::Backoff { .. } => {
             if !execution.auxiliary.is_idle() {
                 cancel_auxiliary(client, execution).await?;
-                return Ok(true);
+                // The task's reap is read by the event loop. Reporting progress
+                // here would restart the loop without reading anything, and
+                // spin for as long as the task takes to die, or forever.
+                return Ok(false);
             }
             execution.machine.cancel_pending()?;
             execution.auxiliary = AuxiliaryExecution::Idle;

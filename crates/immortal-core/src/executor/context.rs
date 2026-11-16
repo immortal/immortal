@@ -116,7 +116,15 @@ impl ExecutionContext {
     }
 
     pub(super) fn next_deadline(&self) -> Option<TokioInstant> {
-        self.loggers
+        // While loggers shut down only the shutdown state's own deadline is
+        // acted on; an elapsed per-logger deadline would wake the loop at
+        // once, again and again, until that deadline passes.
+        let loggers: &[LoggerExecution] = if self.logger_shutdown.permits_restart() {
+            &self.loggers
+        } else {
+            &[]
+        };
+        loggers
             .iter()
             .filter_map(|logger| logger.state.deadline())
             .fold(

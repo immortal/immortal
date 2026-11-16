@@ -21,10 +21,11 @@ use super::{
     OwnedPidFile, PreparedExecution, PreparedLaunch, ProcessBrokerClient, ProcessBrokerEvent,
     ProcessMode, ServiceConfig, StartupReporter, StateMachine, SupervisionOutcome, SupervisorState,
     TerminationSignals, advance_childless_state, advance_logger_shutdown, apply_control_command,
-    begin_descriptor_shutdown, begin_supervisor_shutdown, broker_lifetime_plan, cancel_auxiliary,
-    fail_childless_start_on_logger_exhaustion, handle_broker_event, handle_due_logger_timers,
-    handle_executor_timer, next_executor_event, outcome, reap_broker, run_control_server,
-    shutdown_broker, start_down_loggers, start_process_broker_with_logging,
+    begin_descriptor_shutdown, begin_requested_shutdown, begin_supervisor_shutdown,
+    broker_lifetime_plan, cancel_auxiliary, fail_childless_start_on_logger_exhaustion,
+    handle_broker_event, handle_due_logger_timers, handle_executor_timer, next_executor_event,
+    outcome, reap_broker, run_control_server, shutdown_broker, start_down_loggers,
+    start_process_broker_with_logging,
 };
 
 pub(super) fn run_prepared(
@@ -157,7 +158,7 @@ pub(super) async fn drive_service(
 
     loop {
         if execution.shutdown_requested && execution.lifecycle.is_none() {
-            begin_descriptor_shutdown(client, &commands, config, &mut execution).await?;
+            begin_requested_shutdown(client, &commands, config, &mut execution).await?;
             execution.shutdown_requested = false;
             continue;
         }

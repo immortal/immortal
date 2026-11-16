@@ -36,6 +36,8 @@ mod prepare;
 mod runtime;
 mod startup;
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests;
 mod timers;
 mod utilities;
@@ -78,7 +80,8 @@ use self::{
     },
     control::{
         LifecycleHookRequest, apply_control_command, begin_descriptor_shutdown,
-        begin_lifecycle_hook, begin_supervisor_shutdown, next_executor_event, request_group_stop,
+        begin_lifecycle_hook, begin_requested_shutdown, begin_supervisor_shutdown,
+        next_executor_event, request_group_stop,
     },
     events::{finish_lifecycle_failure, handle_broker_event, respond_lifecycle},
     logger::{

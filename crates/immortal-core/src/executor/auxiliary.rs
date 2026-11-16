@@ -13,7 +13,7 @@ use tokio::time::Instant as TokioInstant;
 use super::{
     AuxiliaryExecution, BROKER_EVENT_TIMEOUT, BrokerTaskId, ChildEvent, ExecutionContext,
     ExecutorError, ProcessBrokerClient, ProcessBrokerEvent, ServiceConfig, StartConditionConfig,
-    finish_completion, jittered_backoff_seed,
+    SupervisorState, finish_completion, jittered_backoff_seed,
 };
 
 pub(super) fn handle_auxiliary_event(
@@ -255,12 +255,22 @@ fn finish_condition_kill(
     }
 }
 
+/// Schedule the next evaluation of a start condition.
+///
+/// Only a service still waiting for its condition has a next evaluation: once
+/// it is down or has exited, a retry timer would fire into a state which has
+/// no use for it and end supervision, so the condition just ends.
 pub(super) fn schedule_condition_retry(
     client: &ProcessBrokerClient,
     task: BrokerTaskId,
     condition: &StartConditionConfig,
     execution: &mut ExecutionContext,
 ) {
+    if execution.machine.state() != SupervisorState::WaitingCondition {
+        execution.auxiliary = AuxiliaryExecution::Idle;
+        execution.deadline = None;
+        return;
+    }
     let retry = execution.condition_tracker.failed(condition);
     execution.auxiliary = AuxiliaryExecution::Idle;
     execution.deadline = Some(

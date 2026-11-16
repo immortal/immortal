@@ -378,6 +378,34 @@ pub(super) async fn begin_lifecycle_hook(
     Ok(())
 }
 
+/// Carry out a shutdown that was requested while a lifecycle hook was running.
+///
+/// The hook may have ended the generation meanwhile, as a finished stop does;
+/// nothing is left to stop then, and the shutdown is the plain one.
+///
+/// # Errors
+///
+/// Returns the failure of the shutdown it begins.
+pub(super) async fn begin_requested_shutdown(
+    client: &mut ProcessBrokerClient,
+    commands: &PreparedExecution,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    if execution.machine.state().live_generation().is_some() {
+        return begin_descriptor_shutdown(client, commands, config, execution).await;
+    }
+    begin_supervisor_shutdown(
+        client,
+        &mut execution.machine,
+        &mut execution.pending_stop,
+        &mut execution.deadline,
+        &mut execution.stop_kill_sent,
+        &mut execution.pending_signals,
+    )
+    .await
+}
+
 pub(super) async fn begin_descriptor_shutdown(
     client: &mut ProcessBrokerClient,
     commands: &PreparedExecution,
@@ -536,3 +564,6 @@ pub(super) const fn process_signal(signal: Signal) -> ProcessSignal {
         Signal::WindowChange => ProcessSignal::WindowChange,
     }
 }
+
+#[cfg(test)]
+mod tests;

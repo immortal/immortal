@@ -452,7 +452,16 @@ restarted after its post-exit hook, and a second lifecycle hook never started
 beside a leftover process, and a reap for a task no state names is a protocol
 fault. A stop or continue event of the task's own job control, queued ahead
 of its reap, changes nothing while the task runs or is being killed; for a
-task no state names it is a protocol fault too.
+task no state names it is a protocol fault too. A start condition that is
+cancelled while it is being killed for a retry is not retried, and a retry is
+scheduled only while the service still waits for its condition. A cleanup
+deadline that expires after the service went down or exited is the cleanup
+that did not finish, and fails supervision as such. When a logger has used up
+its retries while a condition or hook is running, the task is cancelled and
+the event loop reads its reap before deciding, so it never loops without
+reading. While loggers shut down only the shutdown state's own deadline
+wakes the loop. A shutdown requested while a lifecycle hook runs is carried
+out as the plain shutdown when that hook ended the generation.
 The supervisor event loop remains the sole lifecycle owner. The control accept
 loop treats peer-attributable and resource-attributable accept failures as
 transient: aborted or reset peers, interrupted accepts, and descriptor or

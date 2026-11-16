@@ -125,6 +125,22 @@ pub(super) async fn handle_executor_timer(
                 }));
             }
         },
+        // The service went down or exited while a start condition or hook was
+        // still being killed: the expired deadline is that cleanup's.
+        SupervisorState::Down | SupervisorState::Exited => match execution.auxiliary {
+            AuxiliaryExecution::Killing { .. } => {
+                return Err(ExecutorError::BrokerTimedOut("condition cleanup"));
+            }
+            AuxiliaryExecution::HookKilling(_) => {
+                return Err(ExecutorError::BrokerTimedOut("post-exit hook cleanup"));
+            }
+            _ => {
+                return Err(ExecutorError::Transition(TransitionError::Invalid {
+                    state: execution.machine.state(),
+                    event: "executor_timer",
+                }));
+            }
+        },
         state => {
             return Err(ExecutorError::Transition(TransitionError::Invalid {
                 state,
@@ -222,6 +238,13 @@ pub(super) async fn cancel_auxiliary(
     client: &mut ProcessBrokerClient,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
+    // A condition already being killed for a retry is now being cancelled: its
+    // reap must end it rather than schedule the retry, which would arm a timer
+    // that no state accepts once the service is down or has exited.
+    if let AuxiliaryExecution::Killing { task, retry: true } = execution.auxiliary {
+        execution.auxiliary = AuxiliaryExecution::Killing { task, retry: false };
+        return Ok(());
+    }
     let (task, hook) = match execution.auxiliary {
         AuxiliaryExecution::Starting(task) | AuxiliaryExecution::Running(task) => (task, false),
         AuxiliaryExecution::HookStarting(task) | AuxiliaryExecution::HookRunning(task) => {

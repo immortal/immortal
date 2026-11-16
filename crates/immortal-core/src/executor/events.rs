@@ -703,3 +703,6 @@ pub(super) fn handle_logger_event(
         event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
     }
 }
+
+#[cfg(test)]
+mod tests;
