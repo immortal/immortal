@@ -52,7 +52,7 @@ validation-evidence report:
     awk -f scripts/validate-evidence.awk "{{ report }}"
 
 install-check:
-    sh -n examples/run-immortal.sh examples/run-immortalctl.sh scripts/rehearse-upgrade scripts/resource-soak scripts/soak scripts/summarize-lifecycle-benchmarks scripts/test-validation-evidence scripts/validation-campaign contrib/freebsd/immortaldir
+    for script in examples/run-immortal.sh examples/run-immortalctl.sh scripts/rehearse-upgrade scripts/resource-soak scripts/soak scripts/summarize-lifecycle-benchmarks scripts/test-validation-evidence scripts/validation-campaign contrib/freebsd/immortaldir contrib/freebsd/immortal_halt; do sh -n "$script" || exit 1; done
     scripts/rehearse-upgrade
     awk -f scripts/summarize-lifecycle-benchmarks.awk /dev/null > /dev/null
     sh scripts/test-validation-evidence
