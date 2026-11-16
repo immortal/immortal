@@ -1,0 +1,180 @@
+# step: 14-before-reboot
+# host: immortal-freebsd.127.network FreeBSD 15.1-RELEASE-p5 amd64
+# start: 2026-11-16T06:13:51Z
+# script: steps/14-before-reboot.sh
++ set -e
++ . /home/devops/drill-3befcfc-freebsd/lib.sh
++ PREV=43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ CAND=3befcfc4b01b3c66a18624229795d0e1301e89a6
++ PREV_BIN=/home/devops/immortal-43a7a6e/target/release
++ CAND_BIN=/home/devops/immortal-3befcfc/target/release
++ ROLLBACK=/usr/local/lib/immortal-rollback/43a7a6e
++ DEFS=/usr/local/etc/immortal
++ RUN=/var/run/immortal
++ BINS='/usr/local/sbin/immortal /usr/local/sbin/immortaldir /usr/local/bin/immortalctl /usr/local/sbin/immortallog'
++ sysrc immortaldir_enable
+immortaldir_enable: YES
++ sudo service immortaldir status
+immortaldir is running as pid 81407.
++ sysctl -n kern.boottime
++ sudo tee /var/db/immortal-drill/boottime.before
+{ sec = 1793948048, usec = 694946 } Fri Nov  6 06:54:08 2026
++ uptime
+ 6:13AM  up 9 days, 23:20, 0 users, load averages: 0.93, 0.87, 0.50
++ snapshot
++ echo '-- processes'
+-- processes
++ ps -axo pid,ppid,pgid,sid,user,etimes,args
++ awk 'NR == 1 || /immortal|heartbeat/'
++ grep -v -e awk -e 'sh -x'
+  PID  PPID  PGID   SID USER          ELAPSED COMMAND
+81407     1 81407 81407 root               11 daemon: /usr/local/sbin/immortaldir[81408] (daemon)
+81408 81407 81407 81407 root               11 /usr/local/sbin/immortaldir --runtime-dir /var/run/immortal --supervisor-binary /usr/local/sbin/immortal /usr/local/etc/immortal
+81412 81408 81412 81407 root               11 /usr/local/sbin/immortaldir --runtime-dir /var/run/immortal --supervisor-binary /usr/local/sbin/immortal /usr/local/etc/immortal
+81419 81412 81418 81418 root               11 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/api.launch.yml --control-dir /var/run/immortal/api
+81420 81419 81420 81418 root               11 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/api.launch.yml --control-dir /var/run/immortal/api
+81421 81420 81420 81418 root               11 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/api.launch.yml --control-dir /var/run/immortal/api
+81423 81420 81422 81418 root               11 /usr/local/sbin/immortallog --max-age 86400 --keep 7 --max-bytes 1048576 /var/log/immortal-drill/api.log
+81434 81420 81420 81418 root                9 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/api.launch.yml --control-dir /var/run/immortal/api
+81436 81420 81435 81418 root                9 /bin/sh /usr/local/libexec/immortal-drill/heartbeat api
+81443 81412 81442 81442 root                9 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/worker.launch.yml --control-dir /var/run/immortal/worker
+81444 81443 81444 81442 root                9 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/worker.launch.yml --control-dir /var/run/immortal/worker
+81445 81444 81444 81442 root                9 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/worker.launch.yml --control-dir /var/run/immortal/worker
+81447 81444 81446 81442 root                9 /usr/local/sbin/immortallog /var/log/immortal-drill/worker.log
+81448 81444 81444 81442 root                9 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/worker.launch.yml --control-dir /var/run/immortal/worker
+81450 81444 81449 81442 root                9 /bin/sh /usr/local/libexec/immortal-drill/heartbeat worker
++ echo '-- executables'
+-- executables
++ supervisors
++ pgrep -x immortal
++ pgrep -x immortaldir
++ ps -o 'lstart=' -p 81443
++ exe_of 81443
++ sudo procstat -h binary 81443
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81443 'Mon Nov 16 06:13:42 2026' /usr/local/sbin/immortal
+81443 started=Mon Nov 16 06:13:42 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 81444
++ exe_of 81444
++ awk '{ print $4 }'
++ sudo procstat -h binary 81444
++ printf '%s started=%s exe=%s\n' 81444 'Mon Nov 16 06:13:42 2026' /usr/local/sbin/immortal
+81444 started=Mon Nov 16 06:13:42 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 81445
++ exe_of 81445
++ sudo procstat -h binary 81445
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81445 'Mon Nov 16 06:13:42 2026' /usr/local/sbin/immortal
+81445 started=Mon Nov 16 06:13:42 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 81446
++ exe_of 81446
++ sudo procstat -h binary 81446
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81446 'Mon Nov 16 06:13:42 2026' ''
+81446 started=Mon Nov 16 06:13:42 2026 exe=
++ ps -o 'lstart=' -p 81448
++ exe_of 81448
++ awk '{ print $4 }'
++ sudo procstat -h binary 81448
++ printf '%s started=%s exe=%s\n' 81448 'Mon Nov 16 06:13:42 2026' /usr/local/sbin/immortal
+81448 started=Mon Nov 16 06:13:42 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 81449
++ exe_of 81449
++ sudo procstat -h binary 81449
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81449 'Mon Nov 16 06:13:42 2026' ''
+81449 started=Mon Nov 16 06:13:42 2026 exe=
++ ps -o 'lstart=' -p 81434
++ exe_of 81434
++ sudo procstat -h binary 81434
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81434 'Mon Nov 16 06:13:42 2026' /usr/local/sbin/immortal
+81434 started=Mon Nov 16 06:13:42 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 81419
++ exe_of 81419
++ sudo procstat -h binary 81419
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81419 'Mon Nov 16 06:13:40 2026' /usr/local/sbin/immortal
+81419 started=Mon Nov 16 06:13:40 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 81435
++ exe_of 81435
++ sudo procstat -h binary 81435
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81435 'Mon Nov 16 06:13:42 2026' ''
+81435 started=Mon Nov 16 06:13:42 2026 exe=
++ ps -o 'lstart=' -p 81420
++ exe_of 81420
++ awk '{ print $4 }'
++ sudo procstat -h binary 81420
++ printf '%s started=%s exe=%s\n' 81420 'Mon Nov 16 06:13:40 2026' /usr/local/sbin/immortal
+81420 started=Mon Nov 16 06:13:40 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 81421
++ exe_of 81421
++ sudo procstat -h binary 81421
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81421 'Mon Nov 16 06:13:40 2026' /usr/local/sbin/immortal
+81421 started=Mon Nov 16 06:13:40 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 81422
++ exe_of 81422
++ sudo procstat -h binary 81422
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81422 'Mon Nov 16 06:13:40 2026' ''
+81422 started=Mon Nov 16 06:13:40 2026 exe=
++ ps -o 'lstart=' -p 81408
++ exe_of 81408
++ awk '{ print $4 }'
++ sudo procstat -h binary 81408
++ printf '%s started=%s exe=%s\n' 81408 'Mon Nov 16 06:13:40 2026' /usr/local/sbin/immortaldir
+81408 started=Mon Nov 16 06:13:40 2026 exe=/usr/local/sbin/immortaldir
++ ps -o 'lstart=' -p 81412
++ exe_of 81412
++ sudo procstat -h binary 81412
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 81412 'Mon Nov 16 06:13:40 2026' /usr/local/sbin/immortaldir
+81412 started=Mon Nov 16 06:13:40 2026 exe=/usr/local/sbin/immortaldir
++ echo '-- installed binaries'
+-- installed binaries
++ sha256 /usr/local/sbin/immortal /usr/local/sbin/immortaldir /usr/local/bin/immortalctl /usr/local/sbin/immortallog
+SHA256 (/usr/local/sbin/immortal) = f2c54e364998733f96e1ef0c86478fb65e8d453e2cb7505ddd0692e6c158b347
+SHA256 (/usr/local/sbin/immortaldir) = ea6d9adfdbe9892250dcd4097a3b32a6f5ab264171870d6d84f2e6b0c3cd7eb4
+SHA256 (/usr/local/bin/immortalctl) = 0daefc1f467941f74feb515cb0789f7006fd99ac069d396f90b84c83cfdc9321
+SHA256 (/usr/local/sbin/immortallog) = d95e7654f17bdd20db4d3a7dac7cb76511ff3e3f3e88653c6a12ccc97a82862b
++ echo '-- runtime root'
+-- runtime root
++ sudo find /var/run/immortal -mindepth 1 -maxdepth 2
++ sort
+/var/run/immortal/.definitions
+/var/run/immortal/.definitions/api.applied.yml
+/var/run/immortal/.definitions/api.launch.yml
+/var/run/immortal/.definitions/tracker.state
+/var/run/immortal/.definitions/worker.applied.yml
+/var/run/immortal/.definitions/worker.launch.yml
+/var/run/immortal/api
+/var/run/immortal/api/immortal.sock
+/var/run/immortal/api/supervisor.lock
+/var/run/immortal/worker
+/var/run/immortal/worker/immortal.sock
+/var/run/immortal/worker/supervisor.lock
++ echo '-- status'
+-- status
++ ctl status
++ sudo /usr/local/bin/immortalctl status
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	api	ok	81419	81436	1	up	ready	ready	9	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "api"	desired=up state=ready
+system	worker	ok	81443	81450	1	up	ready	ready	9	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "worker"	desired=up state=ready
++ echo '-- last heartbeats'
+-- last heartbeats
++ sudo tail -n 1 /var/log/immortal-drill/api.log
+api 2026-11-16T06:13:50Z pid=81436 env=drill
++ sudo tail -n 1 /var/log/immortal-drill/worker.log
+worker 2026-11-16T06:13:50Z pid=81450 env=unset
++ date -u +%Y-%m-%dT%H:%M:%SZ
++ sudo tee /var/db/immortal-drill/reboot.requested
+2026-11-16T06:13:51Z
++ date '+%b %e %H:%M:%S'
++ sudo tee /var/db/immortal-drill/reboot.syslogtime
+Nov 16 06:13:51
++ echo 'reboot scheduled'
+reboot scheduled
++ nohup sh -c 'sleep 5; sudo shutdown -r now'
+# exit: 0 2026-11-16T06:13:51Z

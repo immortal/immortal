@@ -1,0 +1,12 @@
+commit	3befcfc4b01b3c66a18624229795d0e1301e89a6
+run	08
+taken	2026-11-15T01:13:43Z
+runner	FreeBSD 15.1 VM, 2 vCPU, 2 GB
+FreeBSD immortal-freebsd.127.network 15.1-RELEASE-p5 FreeBSD 15.1-RELEASE-p5 releng/15.1-n283639-893c7c99b60d GENERIC amd64
+rustc 1.97.0 (2d8144b78 2026-07-07)
+binary: rustc
+commit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3
+commit-date: 2026-07-07
+host: x86_64-unknown-freebsd
+release: 1.97.0
+LLVM version: 22.1.6

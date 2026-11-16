@@ -144,9 +144,14 @@ retained a child and held a constant 10 descriptors, with resident memory
 between 2,884 and 2,900 KiB over 24 hours and between 3,076 and 3,096 KiB over
 seven days. The supervisor held exactly its one service child and a constant 12
 descriptors, with resident memory between 11,700 and 11,764 KiB and between
-11,352 and 11,360 KiB. The FreeBSD numbers are recorded with its records,
-which are retained once its benchmarks and drills complete. RES-005 remains
-Pending until the same campaign passes on a real macOS host.
+11,352 and 11,360 KiB. On FreeBSD the 24-hour run took 65 at-rest broker
+samples and 170,533 supervisor samples, and the seven-day run 65 and 1,193,627.
+The broker never retained a child and held a constant 13 descriptors, with
+resident memory between 5,216 and 5,220 KiB over 24 hours and between 5,224
+and 5,228 KiB over seven days. The supervisor held exactly its one service
+child and a constant 15 descriptors, with resident memory between 11,600 and
+11,624 KiB over 24 hours and a constant 12,788 KiB over seven days. RES-005
+remains Pending until the same campaign passes on a real macOS host.
 
 ### Current candidate evidence
 
@@ -244,17 +249,28 @@ exact revisions:
   [`linux-6.12-3befcfc-resource`](validation/evidence/linux-6.12-3befcfc-resource),
   [`linux-6.12-3befcfc-extended-resource`](validation/evidence/linux-6.12-3befcfc-extended-resource),
   with the supervisor-boundary records xz-compressed as before; the seven-day
-  ones are about 700 MB each before compression. The FreeBSD records stay
-  on its host until its benchmarks and drills complete and are retained then.
+  ones are about 700 MB each before compression. The FreeBSD records are
+  retained in
+  [`freebsd-15.1-3befcfc-validation`](validation/evidence/freebsd-15.1-3befcfc-validation),
+  [`freebsd-15.1-3befcfc-resource`](validation/evidence/freebsd-15.1-3befcfc-resource),
+  [`freebsd-15.1-3befcfc-canary-validation`](validation/evidence/freebsd-15.1-3befcfc-canary-validation), and
+  [`freebsd-15.1-3befcfc-canary-resource`](validation/evidence/freebsd-15.1-3befcfc-canary-resource),
+  compressed the same way.
 - At the same commit the lifecycle benchmarks ran twelve times, six hours
-  apart, across four days on Linux and establish the Linux regression
-  ceilings recorded under Performance evidence; the FreeBSD runs are still in
-  progress. The release drills, install, boot, shutdown, strict-v2
-  migration, upgrade from `43a7a6e`, and rollback to it, passed on Linux under
-  the shipped systemd unit; the FreeBSD drills follow its benchmarks. Each
-  step is a traced script retained with its output in
-  [`linux-6.12-3befcfc-drills`](validation/evidence/linux-6.12-3befcfc-drills),
-  whose summary lists the findings. The Linux drills found that `INSTALL.md`
+  apart, across four days on each of Linux and FreeBSD and establish the
+  regression ceilings recorded under Performance evidence, retained in
+  [`linux-6.12-3befcfc-benchmarks`](validation/evidence/linux-6.12-3befcfc-benchmarks)
+  and [`freebsd-15.1-3befcfc-benchmarks`](validation/evidence/freebsd-15.1-3befcfc-benchmarks).
+  The release drills, install, boot, shutdown, strict-v2 migration, upgrade
+  from `43a7a6e`, and rollback to it, passed on Linux under the shipped
+  systemd unit and on FreeBSD under the shipped `rc.d` script. Each step is a
+  traced script retained with its output in
+  [`linux-6.12-3befcfc-drills`](validation/evidence/linux-6.12-3befcfc-drills)
+  and [`freebsd-15.1-3befcfc-drills`](validation/evidence/freebsd-15.1-3befcfc-drills),
+  whose summaries list the findings. On FreeBSD both services restarted about
+  two seconds after the reboot, and the services stopped without an ordered
+  shutdown: the `rc.d` script has no equivalent of the Linux companion unit
+  yet, and the next candidate designs one. The Linux drills found that `INSTALL.md`
   installed `immortallog` where a supervisor does not look for it, and that it
   overstated what `immortaldir --once --dry-run` validates; commit `1c7fbf2`
   corrects both documents and changes no code.
@@ -268,8 +284,8 @@ exact revisions:
   that code.
 
 Apart from the Linux and FreeBSD campaigns, the FreeBSD canary, and the Linux
-benchmarks and drills recorded above, this evidence proves the repository
-contracts. It does not replace the macOS 24-hour campaign, the FreeBSD and
+and FreeBSD benchmarks and drills recorded above, this evidence proves the
+repository contracts. It does not replace the macOS 24-hour campaign, the
 macOS benchmarks and drills, or the comparative runs.
 
 The complete public CLI, strict configuration, control, status, and private
@@ -328,7 +344,13 @@ a median of 577,284 ns and a maximum of 613,087 ns, and
 ceilings are 766,359 ns and 641,913 ns, 125% of each maximum. The runs and
 their summary are retained in
 [`linux-6.12-3befcfc-benchmarks`](validation/evidence/linux-6.12-3befcfc-benchmarks).
-No FreeBSD or macOS ceiling is accepted yet.
+Twelve retained runs on the dedicated FreeBSD host over the same four days
+measured `fork-spawn-wait` at a median of 580,777 ns and a maximum of
+623,255 ns, and `fork-spawn-signal-wait` at 362,895 ns and 396,118 ns. The
+accepted FreeBSD ceilings are 779,069 ns and 495,148 ns, 125% of each maximum.
+They are retained in
+[`freebsd-15.1-3befcfc-benchmarks`](validation/evidence/freebsd-15.1-3befcfc-benchmarks).
+No macOS ceiling is accepted yet.
 
 Machine-readable result records are UTF-8 tab-separated rows with this header:
 

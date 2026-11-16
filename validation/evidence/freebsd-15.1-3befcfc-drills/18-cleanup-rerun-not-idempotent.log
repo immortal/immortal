@@ -1,0 +1,20 @@
+# step: 18-cleanup
+# host: immortal-freebsd.127.network FreeBSD 15.1-RELEASE-p5 amd64
+# start: 2026-11-16T06:15:00Z
+# script: steps/18-cleanup.sh
++ set -e
++ . /home/devops/drill-3befcfc-freebsd/lib.sh
++ PREV=43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ CAND=3befcfc4b01b3c66a18624229795d0e1301e89a6
++ PREV_BIN=/home/devops/immortal-43a7a6e/target/release
++ CAND_BIN=/home/devops/immortal-3befcfc/target/release
++ ROLLBACK=/usr/local/lib/immortal-rollback/43a7a6e
++ DEFS=/usr/local/etc/immortal
++ RUN=/var/run/immortal
++ BINS='/usr/local/sbin/immortal /usr/local/sbin/immortaldir /usr/local/bin/immortalctl /usr/local/sbin/immortallog'
++ E=/home/devops/immortal-evidence/drills-3befcfc-freebsd
++ mkdir -p /home/devops/immortal-evidence/drills-3befcfc-freebsd/service-logs
++ sudo cp /var/log/immortal-drill/api.log /var/log/immortal-drill/worker.log /home/devops/immortal-evidence/drills-3befcfc-freebsd/service-logs/
+cp: /var/log/immortal-drill/api.log: No such file or directory
+cp: /var/log/immortal-drill/worker.log: No such file or directory
+# exit: 1 2026-11-16T06:15:00Z

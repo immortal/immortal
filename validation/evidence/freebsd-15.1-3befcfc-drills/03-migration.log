@@ -1,0 +1,335 @@
+# step: 03-migration
+# host: immortal-freebsd.127.network FreeBSD 15.1-RELEASE-p5 amd64
+# start: 2026-11-16T06:11:15Z
+# script: steps/03-migration.sh
++ set -u
++ bin=/home/devops/immortal-3befcfc/target/release
++ defs=/home/devops/drill-3befcfc-freebsd/defs
++ chmod 0755 /home/devops/drill-3befcfc-freebsd/defs /home/devops/drill-3befcfc-freebsd/defs/legacy /home/devops/drill-3befcfc-freebsd/defs/v2 /home/devops/drill-3befcfc-freebsd/defs/alias
++ chmod 0644 /home/devops/drill-3befcfc-freebsd/defs/alias/api.yml /home/devops/drill-3befcfc-freebsd/defs/legacy/api.yml /home/devops/drill-3befcfc-freebsd/defs/legacy/worker.yml /home/devops/drill-3befcfc-freebsd/defs/v2/api.yml /home/devops/drill-3befcfc-freebsd/defs/v2/worker.yml
++ fail=0
++ basename /home/devops/drill-3befcfc-freebsd/defs/legacy/api.yml
++ echo '== legacy api.yml'
+== legacy api.yml
++ cat /home/devops/drill-3befcfc-freebsd/defs/legacy/api.yml
+---
+cmd: /usr/local/libexec/immortal-drill/heartbeat api
+cwd: /var/db/immortal-drill/api
+env:
+  APP_ENV: drill
+wait: 2
+retries: 3
+log:
+  file: /var/log/immortal-drill/api.log
+  age: 86400
+  num: 7
+  size: 1
++ /home/devops/immortal-3befcfc/target/release/immortal --config /home/devops/drill-3befcfc-freebsd/defs/legacy/api.yml --check-config
+immortal: configuration must declare `version: 2`; unversioned Go configuration is intentionally unsupported; see INSTALL.md#definition-migration
++ echo 'rejected as required (exit 78)'
+rejected as required (exit 78)
++ basename /home/devops/drill-3befcfc-freebsd/defs/legacy/worker.yml
++ echo '== legacy worker.yml'
+== legacy worker.yml
++ cat /home/devops/drill-3befcfc-freebsd/defs/legacy/worker.yml
+---
+cmd: /usr/local/libexec/immortal-drill/heartbeat worker
+require:
+  - api
+log:
+  file: /var/log/immortal-drill/worker.log
++ /home/devops/immortal-3befcfc/target/release/immortal --config /home/devops/drill-3befcfc-freebsd/defs/legacy/worker.yml --check-config
+immortal: configuration must declare `version: 2`; unversioned Go configuration is intentionally unsupported; see INSTALL.md#definition-migration
++ echo 'rejected as required (exit 78)'
+rejected as required (exit 78)
++ basename /home/devops/drill-3befcfc-freebsd/defs/v2/api.yml
++ echo '== v2 api.yml'
+== v2 api.yml
++ cat /home/devops/drill-3befcfc-freebsd/defs/v2/api.yml
+---
+version: 2
+command: [/usr/local/libexec/immortal-drill/heartbeat, api]
+working_directory: /var/db/immortal-drill/api
+environment:
+  APP_ENV: drill
+environment_mode: inherit
+start_delay_seconds: 2
+restart:
+  policy: always
+  limits:
+    max_retries: 3
+log:
+  file: /var/log/immortal-drill/api.log
+  age: 1d
+  keep: 7
+  size: 1MiB
++ echo '-- canonical'
+-- canonical
++ /home/devops/immortal-3befcfc/target/release/immortal --config /home/devops/drill-3befcfc-freebsd/defs/v2/api.yml --check-config
+version: 2
+enabled: true
+command:
+- /usr/local/libexec/immortal-drill/heartbeat
+- api
+working_directory: /var/db/immortal-drill/api
+environment:
+  APP_ENV: drill
+environment_mode: inherit
+user: null
+start_delay_seconds: 2
+restart:
+  policy: always
+  success_exit_codes:
+  - 0
+  exit_when_done: false
+  limits:
+    max_retries: 3
+    max_elapsed_seconds: null
+    burst: null
+  backoff:
+    initial_seconds: 1
+    max_seconds: 60
+    multiplier: 2
+    jitter_percent: 20
+    reset_after_seconds: 60
+readiness:
+  mode: immediate
+  timeout_seconds: 30
+requires: []
+start_condition: null
+post_exit: null
+log:
+  file: /var/log/immortal-drill/api.log
+  age: 1d
+  keep: 7
+  size: 1MiB
+pid_files:
+  supervisor: null
+  main: null
+process_mode: foreground
+descriptor_tracking: null
++ basename /home/devops/drill-3befcfc-freebsd/defs/v2/worker.yml
++ echo '== v2 worker.yml'
+== v2 worker.yml
++ cat /home/devops/drill-3befcfc-freebsd/defs/v2/worker.yml
+---
+version: 2
+command: [/usr/local/libexec/immortal-drill/heartbeat, worker]
+requires: [api]
+log:
+  file: /var/log/immortal-drill/worker.log
++ echo '-- canonical'
+-- canonical
++ /home/devops/immortal-3befcfc/target/release/immortal --config /home/devops/drill-3befcfc-freebsd/defs/v2/worker.yml --check-config
+version: 2
+enabled: true
+command:
+- /usr/local/libexec/immortal-drill/heartbeat
+- worker
+working_directory: null
+environment: {}
+environment_mode: inherit
+user: null
+start_delay_seconds: 0
+restart:
+  policy: always
+  success_exit_codes:
+  - 0
+  exit_when_done: false
+  limits:
+    max_retries: null
+    max_elapsed_seconds: null
+    burst: null
+  backoff:
+    initial_seconds: 1
+    max_seconds: 60
+    multiplier: 2
+    jitter_percent: 20
+    reset_after_seconds: 60
+readiness:
+  mode: immediate
+  timeout_seconds: 30
+requires:
+- api
+start_condition: null
+post_exit: null
+log:
+  file: /var/log/immortal-drill/worker.log
+pid_files:
+  supervisor: null
+  main: null
+process_mode: foreground
+descriptor_tracking: null
++ echo '== dry-run plan'
+== dry-run plan
++ /home/devops/immortal-3befcfc/target/release/immortaldir --once --dry-run /home/devops/drill-3befcfc-freebsd/defs/v2
++ plan=$'START\tapi
+START\tworker'
++ printf '%s\n' $'START\tapi
+START\tworker'
+START	api
+START	worker
++ printf 'START\tapi\nSTART\tworker'
++ [ $'START\tapi
+START\tworker' '=' $'START\tapi
+START\tworker' ]
++ echo 'plan as expected'
+plan as expected
++ echo '== deprecated logging aliases'
+== deprecated logging aliases
++ cat /home/devops/drill-3befcfc-freebsd/defs/alias/api.yml
+---
+version: 2
+command: [/usr/local/bin/api, --foreground]
+log:
+  file: /var/log/api.log
+  age: 86400
+  num: 7
+  size: 1
+stderr:
+  file: /var/log/api.err
++ /home/devops/immortal-3befcfc/target/release/immortal --config /home/devops/drill-3befcfc-freebsd/defs/alias/api.yml --check-config
++ got='version: 2
+enabled: true
+command:
+- /usr/local/bin/api
+- --foreground
+working_directory: null
+environment: {}
+environment_mode: inherit
+user: null
+start_delay_seconds: 0
+restart:
+  policy: always
+  success_exit_codes:
+  - 0
+  exit_when_done: false
+  limits:
+    max_retries: null
+    max_elapsed_seconds: null
+    burst: null
+  backoff:
+    initial_seconds: 1
+    max_seconds: 60
+    multiplier: 2
+    jitter_percent: 20
+    reset_after_seconds: 60
+readiness:
+  mode: immediate
+  timeout_seconds: 30
+requires: []
+start_condition: null
+post_exit: null
+log:
+  stdout:
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 1MiB
+  stderr:
+    file: /var/log/api.err
+pid_files:
+  supervisor: null
+  main: null
+process_mode: foreground
+descriptor_tracking: null'
++ printf '%s\n' 'version: 2
+enabled: true
+command:
+- /usr/local/bin/api
+- --foreground
+working_directory: null
+environment: {}
+environment_mode: inherit
+user: null
+start_delay_seconds: 0
+restart:
+  policy: always
+  success_exit_codes:
+  - 0
+  exit_when_done: false
+  limits:
+    max_retries: null
+    max_elapsed_seconds: null
+    burst: null
+  backoff:
+    initial_seconds: 1
+    max_seconds: 60
+    multiplier: 2
+    jitter_percent: 20
+    reset_after_seconds: 60
+readiness:
+  mode: immediate
+  timeout_seconds: 30
+requires: []
+start_condition: null
+post_exit: null
+log:
+  stdout:
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 1MiB
+  stderr:
+    file: /var/log/api.err
+pid_files:
+  supervisor: null
+  main: null
+process_mode: foreground
+descriptor_tracking: null'
++ awk '/^log:/ { on = 1; print; next } on && /^[^ ]/ { exit } on { print }'
++ log_block='log:
+  stdout:
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 1MiB
+  stderr:
+    file: /var/log/api.err'
++ printf '%s\n' 'log:
+  stdout:
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 1MiB
+  stderr:
+    file: /var/log/api.err'
+log:
+  stdout:
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 1MiB
+  stderr:
+    file: /var/log/api.err
++ printf '%s\n' log: '  stdout:' '    file: /var/log/api.log' '    age: 1d' '    keep: 7' '    size: 1MiB' '  stderr:' '    file: /var/log/api.err'
++ want='log:
+  stdout:
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 1MiB
+  stderr:
+    file: /var/log/api.err'
++ [ 'log:
+  stdout:
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 1MiB
+  stderr:
+    file: /var/log/api.err' '=' 'log:
+  stdout:
+    file: /var/log/api.log
+    age: 1d
+    keep: 7
+    size: 1MiB
+  stderr:
+    file: /var/log/api.err' ]
++ echo 'log section matches INSTALL.md canonical output'
+log section matches INSTALL.md canonical output
++ test ! -e /home/devops/.immortal
++ echo 'no runtime state created'
+no runtime state created
++ exit 0
+# exit: 0 2026-11-16T06:11:15Z

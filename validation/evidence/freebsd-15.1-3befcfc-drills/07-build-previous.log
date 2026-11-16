@@ -1,0 +1,121 @@
+# step: 07-build-previous
+# host: immortal-freebsd.127.network FreeBSD 15.1-RELEASE-p5 amd64
+# start: 2026-11-16T06:11:15Z
+# script: steps/07-build-previous.sh
++ set -e
++ export 'PATH=/home/devops/.cargo/bin:/home/devops/.local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:/home/devops/bin'
++ export 'RUSTUP_AUTO_INSTALL=0'
++ cd /home/devops/immortal-43a7a6e
++ git rev-parse HEAD
+43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ git rev-parse HEAD
++ test 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9 '=' 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ git status --porcelain
++ test -z ''
++ cargo build --workspace --release --locked
+   Compiling libc v0.2.191
+   Compiling proc-macro2 v1.0.107
+   Compiling shlex v2.0.1
+   Compiling unicode-ident v1.0.27
+   Compiling find-msvc-tools v0.1.14
+   Compiling jobserver v0.1.35
+   Compiling quote v1.0.47
+   Compiling cc v1.8.0
+   Compiling pkg-config v0.3.34
+   Compiling vcpkg v0.2.15
+   Compiling rustversion v1.0.23
+   Compiling libgit2-sys v0.18.8+1.9.7
+   Compiling libz-sys v1.1.30
+   Compiling cfg-if v1.0.5
+   Compiling serde_core v1.0.229
+   Compiling anstyle v1.0.14
+   Compiling log v0.4.34
+   Compiling bitflags v2.13.2
+   Compiling encoding_rs v0.8.42
+   Compiling syn v3.0.9
+   Compiling autocfg v1.5.1
+   Compiling once_cell v1.21.4
+   Compiling zmij v1.0.23
+   Compiling tracing-core v0.1.36
+   Compiling num-traits v0.2.19
+   Compiling syn v2.0.119
+   Compiling multiversion_no_op v1.0.0
+   Compiling pin-project-lite v0.2.17
+   Compiling scopeguard v1.2.0
+   Compiling core_detect v1.0.0
+   Compiling utf8parse v0.2.2
+   Compiling smallvec v1.16.3
+   Compiling cfg_aliases v0.2.2
+   Compiling simdutf8 v0.1.5
+   Compiling git2 v0.21.0
+   Compiling nix v0.31.3
+   Compiling anstyle-parse v1.0.0
+   Compiling tracing-attributes v0.1.31
+   Compiling built v0.8.1
+   Compiling kqueue-sys v1.1.2
+   Compiling mio v1.2.4
+   Compiling errno v0.3.14
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle-query v1.1.5
+   Compiling same-file v1.0.6
+   Compiling colorchoice v1.0.5
+   Compiling arraydeque v0.5.1
+   Compiling serde v1.0.229
+   Compiling unicode-width v0.2.2
+   Compiling granit-parser v2.0.0
+   Compiling annotate-snippets v0.12.16
+   Compiling anstream v1.0.0
+   Compiling walkdir v2.5.0
+   Compiling signal-hook-registry v1.4.8
+   Compiling immortal-core v0.1.0 (/home/devops/immortal-43a7a6e/crates/immortal-core)
+   Compiling kqueue v1.2.1
+   Compiling tracing v0.1.44
+   Compiling encoding_rs_io v0.1.8
+   Compiling serde_derive v1.0.229
+   Compiling tokio-macros v2.7.2
+   Compiling notify-types v2.1.0
+   Compiling socket2 v0.6.5
+   Compiling base64 v0.23.1
+   Compiling strsim v0.11.1
+   Compiling nohash-hasher v0.2.0
+   Compiling bytes v1.12.1
+   Compiling clap_lex v1.1.1
+   Compiling clap_builder v4.6.7
+   Compiling tokio v1.53.3
+   Compiling serde-saphyr v2.0.0
+   Compiling notify v8.2.0
+   Compiling fork v0.11.0
+   Compiling regex-syntax v0.8.11
+   Compiling regex-automata v0.4.18
+   Compiling clap v4.6.7
+   Compiling lazy_static v1.5.1
+   Compiling sharded-slab v0.1.7
+   Compiling matchers v0.2.0
+   Compiling tracing-log v0.2.0
+   Compiling thread_local v1.1.10
+   Compiling nu-ansi-term v0.50.3
+   Compiling tracing-subscriber v0.3.23
+   Compiling serde_json v1.0.154
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling jiff-core v0.1.1
+   Compiling jiff v0.2.38
+   Compiling immortallog v0.1.0 (/home/devops/immortal-43a7a6e/crates/immortallog)
+   Compiling immortalctl v0.1.0 (/home/devops/immortal-43a7a6e/crates/immortalctl)
+   Compiling immortal v0.1.0 (/home/devops/immortal-43a7a6e/crates/immortal)
+   Compiling immortaldir v0.1.0 (/home/devops/immortal-43a7a6e/crates/immortaldir)
+    Finished `release` profile [optimized] target(s) in 1m 44s
++ target/release/immortal --version
+immortal 0.1.0 - 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ target/release/immortaldir --version
+immortaldir 0.1.0 - 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ target/release/immortalctl --version
+immortalctl 0.1.0 - 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ target/release/immortallog --version
+immortallog 0.1.0 - 43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ sha256 target/release/immortal target/release/immortaldir target/release/immortalctl target/release/immortallog
+SHA256 (target/release/immortal) = ce089fe1c56dff1137a33cfe057551cc3c8fd258d9ecb2430ae1088c3c3873f0
+SHA256 (target/release/immortaldir) = 3bc211b1cd576f19edc9b9b5659bdbb0b9bceb03d93886a647bc093df3134959
+SHA256 (target/release/immortalctl) = 69d996c26648cd32233f860f31e4091635e547046c517e129b620639beec7cb3
+SHA256 (target/release/immortallog) = 60c7eed717d6348d2180315d0c58c36d93c5519b487f5e6b61e9e50b205a6bf9
+# exit: 0 2026-11-16T06:12:59Z

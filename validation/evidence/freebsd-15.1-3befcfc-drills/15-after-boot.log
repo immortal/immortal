@@ -1,0 +1,291 @@
+# step: 15-after-boot
+# host: immortal-freebsd.127.network FreeBSD 15.1-RELEASE-p5 amd64
+# start: 2026-11-16T06:14:33Z
+# script: steps/15-after-boot.sh
++ set -e
++ . /home/devops/drill-3befcfc-freebsd/lib.sh
++ PREV=43a7a6eaf05838efadb58cfbd6ef73cd6c3756c9
++ CAND=3befcfc4b01b3c66a18624229795d0e1301e89a6
++ PREV_BIN=/home/devops/immortal-43a7a6e/target/release
++ CAND_BIN=/home/devops/immortal-3befcfc/target/release
++ ROLLBACK=/usr/local/lib/immortal-rollback/43a7a6e
++ DEFS=/usr/local/etc/immortal
++ RUN=/var/run/immortal
++ BINS='/usr/local/sbin/immortal /usr/local/sbin/immortaldir /usr/local/bin/immortalctl /usr/local/sbin/immortallog'
++ sudo cat /var/db/immortal-drill/boottime.before
++ before='{ sec = 1793948048, usec = 694946 } Fri Nov  6 06:54:08 2026'
++ sysctl -n kern.boottime
++ now='{ sec = 1794809658, usec = 680960 } Mon Nov 16 06:14:18 2026'
++ echo 'boot time before: { sec = 1793948048, usec = 694946 } Fri Nov  6 06:54:08 2026'
+boot time before: { sec = 1793948048, usec = 694946 } Fri Nov  6 06:54:08 2026
++ echo 'boot time now:    { sec = 1794809658, usec = 680960 } Mon Nov 16 06:14:18 2026'
+boot time now:    { sec = 1794809658, usec = 680960 } Mon Nov 16 06:14:18 2026
++ test '{ sec = 1793948048, usec = 694946 } Fri Nov  6 06:54:08 2026' '!=' '{ sec = 1794809658, usec = 680960 } Mon Nov 16 06:14:18 2026'
++ uptime
+ 6:14AM  up 14 secs, 0 users, load averages: 0.07, 0.02, 0.00
++ sudo cat /var/db/immortal-drill/reboot.requested
++ echo 'reboot requested at 2026-11-16T06:13:51Z'
+reboot requested at 2026-11-16T06:13:51Z
++ sysrc immortaldir_enable
+immortaldir_enable: YES
++ sudo service immortaldir status
+immortaldir is running as pid 1583.
++ ls -ld /var/run/immortal
+drwxr-xr-x  5 root wheel 5 Nov 16 06:13 /var/run/immortal
++ wait_state api ready 120
++ waited=0
++ state_of api
++ ctl status --no-header
++ awk -v 's=api' '$2 == s { print $8 }'
++ [ ready '!=' ready ]
++ echo 'api is ready after 0s'
+api is ready after 0s
++ wait_state worker ready 120
++ waited=0
++ state_of worker
++ ctl status --no-header
++ awk -v 's=worker' '$2 == s { print $8 }'
++ [ ready '!=' ready ]
++ echo 'worker is ready after 0s'
+worker is ready after 0s
++ sleep 3
++ snapshot
++ echo '-- processes'
+-- processes
++ ps -axo pid,ppid,pgid,sid,user,etimes,args
++ awk 'NR == 1 || /immortal|heartbeat/'
++ grep -v -e awk -e 'sh -x'
+ PID PPID PGID  SID USER          ELAPSED COMMAND
+1583    1 1583 1583 root                8 daemon: /usr/local/sbin/immortaldir[1584] (daemon)
+1584 1583 1583 1583 root                8 /usr/local/sbin/immortaldir --runtime-dir /var/run/immortal --supervisor-binary /usr/local/sbin/immortal /usr/local/etc/immortal
+1603 1584 1603 1583 root                8 /usr/local/sbin/immortaldir --runtime-dir /var/run/immortal --supervisor-binary /usr/local/sbin/immortal /usr/local/etc/immortal
+1616 1603 1615 1615 root                8 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/api.launch.yml --control-dir /var/run/immortal/api
+1617 1616 1617 1615 root                8 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/api.launch.yml --control-dir /var/run/immortal/api
+1618 1617 1617 1615 root                8 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/api.launch.yml --control-dir /var/run/immortal/api
+1620 1617 1619 1615 root                8 /usr/local/sbin/immortallog --max-age 86400 --keep 7 --max-bytes 1048576 /var/log/immortal-drill/api.log
+1625 1617 1617 1615 root                6 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/api.launch.yml --control-dir /var/run/immortal/api
+1627 1617 1626 1615 root                6 /bin/sh /usr/local/libexec/immortal-drill/heartbeat api
+1634 1603 1633 1633 root                6 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/worker.launch.yml --control-dir /var/run/immortal/worker
+1635 1634 1635 1633 root                6 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/worker.launch.yml --control-dir /var/run/immortal/worker
+1636 1635 1635 1633 root                6 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/worker.launch.yml --control-dir /var/run/immortal/worker
+1638 1635 1637 1633 root                6 /usr/local/sbin/immortallog /var/log/immortal-drill/worker.log
+1639 1635 1635 1633 root                6 /usr/local/sbin/immortal --config /var/run/immortal/.definitions/worker.launch.yml --control-dir /var/run/immortal/worker
+1641 1635 1640 1633 root                6 /bin/sh /usr/local/libexec/immortal-drill/heartbeat worker
++ echo '-- executables'
+-- executables
++ supervisors
++ pgrep -x immortal
++ pgrep -x immortaldir
++ ps -o 'lstart=' -p 1616
++ exe_of 1616
++ sudo procstat -h binary 1616
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1616 'Mon Nov 16 06:14:28 2026' /usr/local/sbin/immortal
+1616 started=Mon Nov 16 06:14:28 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 1617
++ exe_of 1617
++ sudo procstat -h binary 1617
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1617 'Mon Nov 16 06:14:28 2026' /usr/local/sbin/immortal
+1617 started=Mon Nov 16 06:14:28 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 1618
++ exe_of 1618
++ sudo procstat -h binary 1618
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1618 'Mon Nov 16 06:14:28 2026' /usr/local/sbin/immortal
+1618 started=Mon Nov 16 06:14:28 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 1634
++ exe_of 1634
++ sudo procstat -h binary 1634
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1634 'Mon Nov 16 06:14:30 2026' /usr/local/sbin/immortal
+1634 started=Mon Nov 16 06:14:30 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 1619
++ exe_of 1619
++ sudo procstat -h binary 1619
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1619 'Mon Nov 16 06:14:28 2026' ''
+1619 started=Mon Nov 16 06:14:28 2026 exe=
++ ps -o 'lstart=' -p 1635
++ exe_of 1635
++ sudo procstat -h binary 1635
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1635 'Mon Nov 16 06:14:30 2026' /usr/local/sbin/immortal
+1635 started=Mon Nov 16 06:14:30 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 1636
++ exe_of 1636
++ sudo procstat -h binary 1636
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1636 'Mon Nov 16 06:14:30 2026' /usr/local/sbin/immortal
+1636 started=Mon Nov 16 06:14:30 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 1637
++ exe_of 1637
++ sudo procstat -h binary 1637
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1637 'Mon Nov 16 06:14:30 2026' ''
+1637 started=Mon Nov 16 06:14:30 2026 exe=
++ ps -o 'lstart=' -p 1639
++ exe_of 1639
++ sudo procstat -h binary 1639
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1639 'Mon Nov 16 06:14:30 2026' /usr/local/sbin/immortal
+1639 started=Mon Nov 16 06:14:30 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 1640
++ exe_of 1640
++ sudo procstat -h binary 1640
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1640 'Mon Nov 16 06:14:30 2026' ''
+1640 started=Mon Nov 16 06:14:30 2026 exe=
++ ps -o 'lstart=' -p 1625
++ exe_of 1625
++ sudo procstat -h binary 1625
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1625 'Mon Nov 16 06:14:30 2026' /usr/local/sbin/immortal
+1625 started=Mon Nov 16 06:14:30 2026 exe=/usr/local/sbin/immortal
++ ps -o 'lstart=' -p 1626
++ exe_of 1626
++ sudo procstat -h binary 1626
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1626 'Mon Nov 16 06:14:30 2026' ''
+1626 started=Mon Nov 16 06:14:30 2026 exe=
++ ps -o 'lstart=' -p 1584
++ exe_of 1584
++ sudo procstat -h binary 1584
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1584 'Mon Nov 16 06:14:28 2026' /usr/local/sbin/immortaldir
+1584 started=Mon Nov 16 06:14:28 2026 exe=/usr/local/sbin/immortaldir
++ ps -o 'lstart=' -p 1603
++ exe_of 1603
++ sudo procstat -h binary 1603
++ awk '{ print $4 }'
++ printf '%s started=%s exe=%s\n' 1603 'Mon Nov 16 06:14:28 2026' /usr/local/sbin/immortaldir
+1603 started=Mon Nov 16 06:14:28 2026 exe=/usr/local/sbin/immortaldir
++ echo '-- installed binaries'
+-- installed binaries
++ sha256 /usr/local/sbin/immortal /usr/local/sbin/immortaldir /usr/local/bin/immortalctl /usr/local/sbin/immortallog
+SHA256 (/usr/local/sbin/immortal) = f2c54e364998733f96e1ef0c86478fb65e8d453e2cb7505ddd0692e6c158b347
+SHA256 (/usr/local/sbin/immortaldir) = ea6d9adfdbe9892250dcd4097a3b32a6f5ab264171870d6d84f2e6b0c3cd7eb4
+SHA256 (/usr/local/bin/immortalctl) = 0daefc1f467941f74feb515cb0789f7006fd99ac069d396f90b84c83cfdc9321
+SHA256 (/usr/local/sbin/immortallog) = d95e7654f17bdd20db4d3a7dac7cb76511ff3e3f3e88653c6a12ccc97a82862b
++ echo '-- runtime root'
+-- runtime root
++ sudo find /var/run/immortal -mindepth 1 -maxdepth 2
++ sort
+/var/run/immortal/.definitions
+/var/run/immortal/.definitions/api.applied.yml
+/var/run/immortal/.definitions/api.launch.yml
+/var/run/immortal/.definitions/tracker.state
+/var/run/immortal/.definitions/worker.applied.yml
+/var/run/immortal/.definitions/worker.launch.yml
+/var/run/immortal/api
+/var/run/immortal/api/immortal.sock
+/var/run/immortal/api/supervisor.lock
+/var/run/immortal/worker
+/var/run/immortal/worker/immortal.sock
+/var/run/immortal/worker/supervisor.lock
++ echo '-- status'
+-- status
++ ctl status
++ sudo /usr/local/bin/immortalctl status
+SCOPE	SERVICE	RESULT	SUPERVISOR	MAIN	GENERATION	DESIRED	STATE	READINESS	UP	DOWN	STARTS	FAILURES	LAST	BACKOFF	LOGGER	COMMAND	MESSAGE
+system	api	ok	1616	1627	1	up	ready	ready	6	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "api"	desired=up state=ready
+system	worker	ok	1634	1641	1	up	ready	ready	6	-	1	0	-	-	ready	"/usr/local/libexec/immortal-drill/heartbeat" "worker"	desired=up state=ready
++ echo '-- last heartbeats'
+-- last heartbeats
++ sudo tail -n 1 /var/log/immortal-drill/api.log
+api 2026-11-16T06:14:36Z pid=1627 env=drill
++ sudo tail -n 1 /var/log/immortal-drill/worker.log
+worker 2026-11-16T06:14:36Z pid=1641 env=unset
++ echo '-- system log: immortal, shutdown and boot lines since the reboot request'
+-- system log: immortal, shutdown and boot lines since the reboot request
++ sudo cat /var/db/immortal-drill/reboot.syslogtime
++ grep -i -E 'immortal|heartbeat|shutdown|reboot|rc\.shutdown|Stopping|Waiting for PIDS|timed out|SIGTERM|SIGKILL|kernel: ---<<BOOT>>---|FreeBSD 1'
++ sed 's/ immortal-freebsd / /'
++ tail -60
++ sudo awk -v 't=Nov 16 06:13:51' '
+    substr($0, 1, 15) >= t || seen { seen = 1; print }' /var/log/messages
+Oct 18 15:38:07 immortal node_exporter[81351]: time=2026-10-18T15:38:07.834Z level=INFO source=node_exporter.go:217 msg="Starting node_exporter" version="(version=1.11.0, branch=release-1.11, revision=unknown)"
+Oct 18 15:38:07 immortal node_exporter[81351]: time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:218 msg="Build context" build_context="(go=go1.26.9, platform=freebsd/amd64, user=root, date=, tags=unknown)"
+Oct 18 15:38:07 immortal node_exporter[81351]: time=2026-10-18T15:38:07.835Z level=INFO source=filesystem_common.go:263 msg="Parsed flag --collector.filesystem.mount-points-exclude" collector=filesystem flag=^/(dev)($|/)
+Oct 18 15:38:07 immortal node_exporter[81351]: time=2026-10-18T15:38:07.835Z level=INFO source=filesystem_common.go:292 msg="Parsed flag --collector.filesystem.fs-types-exclude" collector=filesystem flag=^devfs$ time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:136 msg="Enabled collectors" time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=boottime time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=cpu time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=exec time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=filesystem time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=loadavg time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=meminfo time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=netdev time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=netisr time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=netstat time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=os time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=textfile time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=time time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=uname time=2026-10-18T15:38:07.835Z level=INFO source=node_exporter.go:142 msg=zfs
+Oct 18 15:38:07 immortal node_exporter[81351]: time=2026-10-18T15:38:07.836Z level=INFO source=tls_config.go:354 msg="Listening on" address=[::]:9100 time=2026-10-18T15:38:07.836Z level=INFO source=tls_config.go:357 msg="TLS is disabled." http2=false address=[::]:9100
+Oct 18 15:38:15 immortal pkg[81449]: gmp-6.3.0 installed
+Oct 18 15:38:15 immortal pkg[81449]: libedit-3.1.20260512,1 installed
+Oct 18 15:38:15 immortal pkg[81449]: libtasn1-4.21.0 installed
+Oct 18 15:38:15 immortal pkg[81449]: nettle-3.10.2 installed
+Oct 18 15:38:15 immortal pkg[81449]: p11-kit-0.26.5_1 installed
+Oct 18 15:38:15 immortal pkg[81449]: gnutls-3.8.13 installed
+Oct 18 15:38:15 immortal pkg[81449]: chrony-4.9 installed
+Oct 18 15:38:16 immortal ntpd[1443]: ntpd exiting on signal 15 (Terminated)
+Oct 18 15:42:26 immortal pkg[86898]: abseil-20250127.1_2 installed
+Oct 18 15:42:26 immortal pkg[86898]: jsoncpp-1.9.8 installed
+Oct 18 15:42:26 immortal pkg[86898]: protobuf-29.6,1 installed
+Oct 18 15:42:26 immortal pkg[86898]: mosh-1.4.0_10 installed
+Oct 18 16:08:48 immortal node_exporter[14249]: time=2026-10-18T16:08:48.565Z level=INFO source=node_exporter.go:217 msg="Starting node_exporter" version="(version=1.11.0, branch=release-1.11, revision=unknown)"
+Oct 18 16:08:48 immortal node_exporter[14249]: time=2026-10-18T16:08:48.565Z level=INFO source=node_exporter.go:218 msg="Build context" build_context="(go=go1.26.9, platform=freebsd/amd64, user=root, date=, tags=unknown)" time=2026-10-18T16:08:48.566Z level=INFO source=filesystem_common.go:263 msg="Parsed flag --collector.filesystem.mount-points-exclude" collector=filesystem flag=^/(dev)($|/) time=2026-10-18T16:08:48.566Z level=INFO source=filesystem_common.go:292 msg="Parsed flag --collector.filesystem.fs-types-exclude" collector=filesystem flag=^devfs$ time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:136 msg="Enabled collectors" time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=boottime time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=cpu time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=exec time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=filesystem time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=loadavg time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=meminfo time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=netdev time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=netisr time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=netstat time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=os time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=textfile time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=time time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=uname time=2026-10-18T16:08:48.566Z level=INFO source=node_exporter.go:142 msg=zfs time=2026-10-18T16:08:48.566Z level=INFO source=tls_config.go:354 msg="Listening on" address=[::]:9100
+Oct 18 16:08:48 immortal node_exporter[14249]: time=2026-10-18T16:08:48.569Z level=INFO source=tls_config.go:397 msg="TLS is enabled." http2=true address=[::]:9100
+Oct 18 16:08:49 immortal node_exporter[14356]: time=2026-10-18T16:08:49.148Z level=INFO source=node_exporter.go:217 msg="Starting node_exporter" version="(version=1.11.0, branch=release-1.11, revision=unknown)"
+Oct 18 16:08:49 immortal node_exporter[14356]: time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:218 msg="Build context" build_context="(go=go1.26.9, platform=freebsd/amd64, user=root, date=, tags=unknown)" time=2026-10-18T16:08:49.149Z level=INFO source=filesystem_common.go:263 msg="Parsed flag --collector.filesystem.mount-points-exclude" collector=filesystem flag=^/(dev)($|/) time=2026-10-18T16:08:49.149Z level=INFO source=filesystem_common.go:292 msg="Parsed flag --collector.filesystem.fs-types-exclude" collector=filesystem flag=^devfs$ time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:136 msg="Enabled collectors" time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=boottime time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=cpu time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=exec time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=filesystem time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=loadavg time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=meminfo time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=netdev time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=netisr time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=netstat time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=os time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=textfile time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=time time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=uname time=2026-10-18T16:08:49.149Z level=INFO source=node_exporter.go:142 msg=zfs time=2026-10-18T16:08:49.149Z level=INFO source=tls_config.go:354 msg="Listening on" address=[::]:9100 time=2026-10-18T16:08:49.149Z level=INFO source=tls_config.go:397 msg="TLS is enabled." http2=true address=[::]:9100
+Oct 18 16:09:21 immortal node_exporter[14356]: 2026/10/18 16:09:21 http: TLS handshake error from 100.64.1.255:52768: tls: client didn't provide a certificate
+Oct 21 02:00:02 shutdown[57956]: power-down by root: 
+Oct 21 02:05:27 kernel: ---<<BOOT>>---
+Oct 21 02:05:27 kernel: FreeBSD 15.1-RELEASE-p5 releng/15.1-n283639-893c7c99b60d GENERIC amd64
+Oct 21 02:05:27 kernel: WARNING: Device "psm" is Giant locked and may be deleted before FreeBSD 16.0.
+Oct 21 02:05:27 kernel: attimer0: non-PNP ISA device will be removed from GENERIC in FreeBSD 16.
+Oct 29 02:00:02 shutdown[67622]: power-down by root: 
+Oct 29 02:06:27 kernel: ---<<BOOT>>---
+Oct 29 02:06:27 kernel: FreeBSD 15.1-RELEASE-p5 releng/15.1-n283639-893c7c99b60d GENERIC amd64
+Oct 29 02:06:27 kernel: WARNING: Device "psm" is Giant locked and may be deleted before FreeBSD 16.0.
+Oct 29 02:06:27 kernel: attimer0: non-PNP ISA device will be removed from GENERIC in FreeBSD 16.
+Nov  6 02:00:02 shutdown[80380]: power-down by root: 
+Nov  6 02:06:33 kernel: ---<<BOOT>>---
+Nov  6 02:06:33 kernel: FreeBSD 15.1-RELEASE-p5 releng/15.1-n283639-893c7c99b60d GENERIC amd64
+Nov  6 02:06:33 kernel: WARNING: Device "psm" is Giant locked and may be deleted before FreeBSD 16.0.
+Nov  6 02:06:33 kernel: attimer0: non-PNP ISA device will be removed from GENERIC in FreeBSD 16.
+Nov  6 06:50:32 shutdown[2598]: power-down by root: 
+Nov  6 06:56:17 kernel: ---<<BOOT>>---
+Nov  6 06:56:17 kernel: FreeBSD 15.1-RELEASE-p5 releng/15.1-n283639-893c7c99b60d GENERIC amd64
+Nov  6 06:56:17 kernel: WARNING: Device "psm" is Giant locked and may be deleted before FreeBSD 16.0.
+Nov  6 06:56:17 kernel: attimer0: non-PNP ISA device will be removed from GENERIC in FreeBSD 16.
+Nov 16 06:13:06 immortaldir[80295]: APPLIED	api
+Nov 16 06:13:06 immortaldir[80295]: APPLIED	worker
+Nov 16 06:13:21 immortaldir[80950]: /var/run/immortal/api/immortal.sock: ignored runtime entry: MissingSocket /var/run/immortal/worker/immortal.sock: ignored runtime entry: MissingSocket
+Nov 16 06:13:23 immortaldir[80950]: APPLIED	api
+Nov 16 06:13:23 immortaldir[80950]: APPLIED	worker
+Nov 16 06:13:40 immortaldir[81407]: /var/run/immortal/api/immortal.sock: ignored runtime entry: MissingSocket /var/run/immortal/worker/immortal.sock: ignored runtime entry: MissingSocket
+Nov 16 06:13:42 immortaldir[81407]: APPLIED	api
+Nov 16 06:13:42 immortaldir[81407]: APPLIED	worker
+Nov 16 06:13:56 shutdown[81774]: reboot by devops: 
+Nov 16 06:14:28 kernel: , 1303Nov 16 06:13:56 immortal-freebsd chronyd[1303]: Could not remove /var/run/chronyd.pid : Permission denied
+Nov 16 06:14:28 kernel: ---<<BOOT>>---
+Nov 16 06:14:28 kernel: FreeBSD 15.1-RELEASE-p5 releng/15.1-n283639-893c7c99b60d GENERIC amd64
+Nov 16 06:14:28 kernel: WARNING: Device "psm" is Giant locked and may be deleted before FreeBSD 16.0.
+Nov 16 06:14:28 kernel: attimer0: non-PNP ISA device will be removed from GENERIC in FreeBSD 16.
+Nov 16 06:14:28 immortaldir[1583]: /var/run/immortal/api/immortal.sock: ignored runtime entry: MissingSocket /var/run/immortal/worker/immortal.sock: ignored runtime entry: MissingSocket
+Nov 16 06:14:30 immortaldir[1583]: APPLIED	api
+Nov 16 06:14:30 immortaldir[1583]: APPLIED	worker
++ echo '-- heartbeats around the reboot'
+-- heartbeats around the reboot
++ echo api:
+api:
++ sudo cat /var/db/immortal-drill/reboot.requested
++ head -6
++ sudo awk -v 't=2026-11-16T06:13:51Z' '$2 >= substr(t, 1, 19)' /var/log/immortal-drill/api.log
+api 2026-11-16T06:13:52Z pid=81436 env=drill
+api 2026-11-16T06:13:54Z pid=81436 env=drill
+api 2026-11-16T06:13:56Z pid=81436 env=drill
+api 2026-11-16T06:14:30Z pid=1627 env=drill
+api 2026-11-16T06:14:32Z pid=1627 env=drill
+api 2026-11-16T06:14:34Z pid=1627 env=drill
++ echo worker:
+worker:
++ sudo cat /var/db/immortal-drill/reboot.requested
++ head -6
++ sudo awk -v 't=2026-11-16T06:13:51Z' '$2 >= substr(t, 1, 19)' /var/log/immortal-drill/worker.log
+worker 2026-11-16T06:13:52Z pid=81450 env=unset
+worker 2026-11-16T06:13:54Z pid=81450 env=unset
+worker 2026-11-16T06:13:56Z pid=81450 env=unset
+worker 2026-11-16T06:14:30Z pid=1641 env=unset
+worker 2026-11-16T06:14:32Z pid=1641 env=unset
+worker 2026-11-16T06:14:34Z pid=1641 env=unset
+# exit: 0 2026-11-16T06:14:36Z

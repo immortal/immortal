@@ -1,0 +1,14 @@
+# step: 04-app-setup
+# host: immortal-freebsd.127.network FreeBSD 15.1-RELEASE-p5 amd64
+# start: 2026-11-16T06:11:15Z
+# script: steps/04-app-setup.sh
++ set -e
++ sudo install -d -m 0755 /usr/local/libexec/immortal-drill /var/db/immortal-drill /var/db/immortal-drill/api /var/log/immortal-drill
++ sudo install -m 0755 /home/devops/drill-3befcfc-freebsd/defs/heartbeat /usr/local/libexec/immortal-drill/heartbeat
++ ls -ld /usr/local/libexec/immortal-drill /var/db/immortal-drill/api /var/log/immortal-drill
+drwxr-xr-x  2 root wheel 3 Nov 16 06:11 /usr/local/libexec/immortal-drill
+drwxr-xr-x  2 root wheel 2 Nov 16 06:11 /var/db/immortal-drill/api
+drwxr-xr-x  2 root wheel 2 Nov 16 06:11 /var/log/immortal-drill
++ ls -l /usr/local/libexec/immortal-drill/heartbeat
+-rwxr-xr-x  1 root wheel 280 Nov 16 06:11 /usr/local/libexec/immortal-drill/heartbeat
+# exit: 0 2026-11-16T06:11:15Z

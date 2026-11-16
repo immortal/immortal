@@ -1,0 +1,112 @@
+# step: 02-candidate-checks
+# host: immortal-freebsd.127.network FreeBSD 15.1-RELEASE-p5 amd64
+# start: 2026-11-16T06:10:57Z
+# script: steps/02-candidate-checks.sh
++ set -e
++ export 'PATH=/home/devops/.cargo/bin:/home/devops/.local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:/home/devops/bin'
++ export 'RUSTUP_AUTO_INSTALL=0'
++ cd /home/devops/immortal-3befcfc
++ git rev-parse HEAD
++ commit=3befcfc4b01b3c66a18624229795d0e1301e89a6
++ target/release/immortal -V
++ short='immortal 0.1.0'
++ target/release/immortal --version
++ long='immortal 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6'
++ echo 'immortal -V: immortal 0.1.0'
+immortal -V: immortal 0.1.0
++ echo 'immortal --version: immortal 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6'
+immortal --version: immortal 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ test 'immortal 0.1.0' '=' 'immortal 0.1.0'
++ target/release/immortaldir -V
++ short='immortaldir 0.1.0'
++ target/release/immortaldir --version
++ long='immortaldir 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6'
++ echo 'immortaldir -V: immortaldir 0.1.0'
+immortaldir -V: immortaldir 0.1.0
++ echo 'immortaldir --version: immortaldir 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6'
+immortaldir --version: immortaldir 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ test 'immortaldir 0.1.0' '=' 'immortaldir 0.1.0'
++ target/release/immortalctl -V
++ short='immortalctl 0.1.0'
++ target/release/immortalctl --version
++ long='immortalctl 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6'
++ echo 'immortalctl -V: immortalctl 0.1.0'
+immortalctl -V: immortalctl 0.1.0
++ echo 'immortalctl --version: immortalctl 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6'
+immortalctl --version: immortalctl 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ test 'immortalctl 0.1.0' '=' 'immortalctl 0.1.0'
++ target/release/immortallog -V
++ short='immortallog 0.1.0'
++ target/release/immortallog --version
++ long='immortallog 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6'
++ echo 'immortallog -V: immortallog 0.1.0'
+immortallog -V: immortallog 0.1.0
++ echo 'immortallog --version: immortallog 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6'
+immortallog --version: immortallog 0.1.0 - 3befcfc4b01b3c66a18624229795d0e1301e89a6
++ test 'immortallog 0.1.0' '=' 'immortallog 0.1.0'
++ ls -A /tmp
++ sort
++ before_tmp='.ICE-unix
+.X11-unix
+.XIM-unix
+.font-unix
+fbsd-binsoak.tsv
+gg.out
+immortal-lifetime-release-launcher-first-5049
+immortal-lifetime-release-left-group-daemon-89010
+reap_test
+step-02-candidate-checks.out
+step00.out'
++ sh scripts/rehearse-upgrade
++ echo 'rehearse-upgrade exit=0'
+rehearse-upgrade exit=0
++ ls -A /tmp
++ sort
++ after_tmp='.ICE-unix
+.X11-unix
+.XIM-unix
+.font-unix
+fbsd-binsoak.tsv
+gg.out
+immortal-lifetime-release-launcher-first-5049
+immortal-lifetime-release-left-group-daemon-89010
+reap_test
+step-02-candidate-checks.out
+step00.out'
++ test '.ICE-unix
+.X11-unix
+.XIM-unix
+.font-unix
+fbsd-binsoak.tsv
+gg.out
+immortal-lifetime-release-launcher-first-5049
+immortal-lifetime-release-left-group-daemon-89010
+reap_test
+step-02-candidate-checks.out
+step00.out' '=' '.ICE-unix
+.X11-unix
+.XIM-unix
+.font-unix
+fbsd-binsoak.tsv
+gg.out
+immortal-lifetime-release-launcher-first-5049
+immortal-lifetime-release-left-group-daemon-89010
+reap_test
+step-02-candidate-checks.out
+step00.out'
++ echo 'no new /tmp entries'
+no new /tmp entries
++ pgrep -fl immortal
++ echo 'no immortal processes'
+no immortal processes
++ test ! -e /var/run/immortal
++ echo 'no /var/run/immortal'
+no /var/run/immortal
++ test ! -e /home/devops/.immortal
++ echo 'no ~/.immortal'
+no ~/.immortal
++ git status --porcelain
++ test -z ''
++ echo 'worktree clean'
+worktree clean
+# exit: 0 2026-11-16T06:10:58Z
