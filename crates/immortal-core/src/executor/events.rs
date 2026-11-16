@@ -16,7 +16,7 @@ use tokio::time::Instant as TokioInstant;
 use super::{
     BROKER_EVENT_TIMEOUT, BrokerTaskId, ChildEvent, ChildResult, ExecutionContext, ExecutorError,
     Generation, LOGGER_DRAIN_GRACE, LifecycleExecution, LifecycleHookKind, LifecycleHookRequest,
-    LifecycleHookState, LifetimeResult, LoggerExecutionState, LoggerRestartConfig,
+    LifecycleHookState, LifetimeResult, LoggerExecution, LoggerExecutionState, LoggerRestartConfig,
     LoggerShutdownState, LoggerShutdownTier, PreparedExecution, ProcessBrokerClient,
     ProcessBrokerEvent, ProcessGroupId, ProcessId, ProcessMode, ReadinessMode, ResponseCode,
     SERVICE_STOP_GRACE, SPAWN_FAILURE_EXIT, ServiceConfig, SupervisorState, begin_lifecycle_hook,
@@ -543,6 +543,29 @@ pub(super) const fn task_id(event: &ProcessBrokerEvent) -> Option<BrokerTaskId> 
     }
 }
 
+/// Record why a logger's process ended, unless its reap only completes a
+/// failure already recorded.
+///
+/// A start that failed and left `task` to collect is reaped here; its cause
+/// is the failure recorded then, not this exit. Any other task's reap is a
+/// failure of its own.
+fn record_logger_reap(
+    logger: &mut LoggerExecution,
+    failures: &mut u64,
+    task: BrokerTaskId,
+    event: ChildEvent,
+) {
+    if logger.reap_completes_failure(task) {
+        return;
+    }
+    let result = match event {
+        ChildEvent::Exited { code, .. } => LoggerLastResult::Exited(code),
+        ChildEvent::Signaled { signal, .. } => LoggerLastResult::Signaled(signal),
+        ChildEvent::Stopped { .. } | ChildEvent::Continued { .. } => return,
+    };
+    logger.record_failure(failures, result, None);
+}
+
 pub(super) fn handle_logger_event(
     client: &ProcessBrokerClient,
     event: ProcessBrokerEvent,
@@ -613,23 +636,25 @@ pub(super) fn handle_logger_event(
             }
             Ok(())
         }
+        ProcessBrokerEvent::TaskSpawnFailed {
+            cleanup_pending, ..
+        } if matches!(logger.state, LoggerExecutionState::Killing { .. }) => {
+            // The start was already given up on, at its deadline or for
+            // shutdown, before the broker reported that it failed. Whatever
+            // was recorded then stands. With a child still to collect the
+            // reap ends the kill as usual; without one nothing else will.
+            if cleanup_pending.is_none() {
+                if execution.logger_shutdown.permits_restart() {
+                    schedule_logger_restart(logger, client.process(), restart);
+                } else {
+                    logger.state = LoggerExecutionState::Down;
+                }
+            }
+            Ok(())
+        }
         ProcessBrokerEvent::TaskChild { event, .. } if event.is_terminal() => {
             if execution.logger_shutdown.permits_restart() {
-                // A start that failed and left this task to collect is
-                // reaped here; its cause is the failure already recorded, not
-                // this exit. Any other task's reap is a failure of its own.
-                if !logger.reap_completes_failure(task) {
-                    let result = match event {
-                        ChildEvent::Exited { code, .. } => Some(LoggerLastResult::Exited(code)),
-                        ChildEvent::Signaled { signal, .. } => {
-                            Some(LoggerLastResult::Signaled(signal))
-                        }
-                        ChildEvent::Stopped { .. } | ChildEvent::Continued { .. } => None,
-                    };
-                    if let Some(result) = result {
-                        logger.record_failure(&mut execution.logger_failures, result, None);
-                    }
-                }
+                record_logger_reap(logger, &mut execution.logger_failures, task, event);
                 schedule_logger_restart(logger, client.process(), restart);
             } else {
                 logger.state = LoggerExecutionState::Down;

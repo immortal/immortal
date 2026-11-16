@@ -434,6 +434,70 @@ fn a_withheld_restart_is_released_once_its_requirement_is_valid() -> Result<(), 
     Ok(())
 }
 
+/// Regression: the preview remembered that a restart was withheld but not
+/// what was running, so restoring the running definition printed a restart
+/// a real pass, which compares against the applied definition, never makes.
+#[test]
+fn a_withheld_restart_is_dropped_when_the_running_definition_is_restored()
+-> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let worker = directory.path().join("worker.yml");
+    let running = "version: 2\ncommand: [/bin/true]\n";
+    fs::write(&worker, running)?;
+    let mut preview = PlanPreview::default();
+    assert_eq!(plan(&directory, &mut preview)?, "START\tworker\n");
+
+    fs::write(
+        &worker,
+        "version: 2\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    assert_eq!(plan(&directory, &mut preview)?, "");
+
+    fs::write(&worker, running)?;
+    assert_eq!(plan(&directory, &mut preview)?, "KEEP\tworker\n");
+    Ok(())
+}
+
+#[test]
+fn a_withheld_restart_is_made_once_a_different_definition_can_be_scheduled()
+-> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let worker = directory.path().join("worker.yml");
+    fs::write(&worker, "version: 2\ncommand: [/bin/true]\n")?;
+    let mut preview = PlanPreview::default();
+    assert_eq!(plan(&directory, &mut preview)?, "START\tworker\n");
+
+    fs::write(
+        &worker,
+        "version: 2\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    assert_eq!(plan(&directory, &mut preview)?, "");
+
+    fs::write(&worker, "version: 2\ncommand: [/bin/false]\n")?;
+    assert_eq!(plan(&directory, &mut preview)?, "RESTART\tworker\n");
+    assert_eq!(plan(&directory, &mut preview)?, "KEEP\tworker\n");
+    Ok(())
+}
+
+/// A service that was never started has nothing to stop when its definition
+/// is removed.
+#[test]
+fn removing_a_never_started_service_prints_no_stop() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let worker = directory.path().join("worker.yml");
+    fs::write(
+        &worker,
+        "version: 2\ncommand: [/bin/true]\nrequires: [api]\n",
+    )?;
+    let mut preview = PlanPreview::default();
+    assert_eq!(plan(&directory, &mut preview)?, "");
+
+    fs::remove_file(&worker)?;
+    assert_eq!(plan(&directory, &mut preview)?, "");
+    assert_eq!(plan(&directory, &mut preview)?, "");
+    Ok(())
+}
+
 #[test]
 fn repeated_plans_confirm_deletion_without_duplicate_stop() -> Result<(), Box<dyn Error>> {
     let directory = TestDirectory::new()?;

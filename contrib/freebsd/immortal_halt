@@ -27,10 +27,15 @@ load_rc_config "$name"
 : "${immortal_halt_enable:=NO}"
 : "${immortal_halt_control:=/usr/local/bin/immortalctl}"
 : "${immortal_halt_runtime_dir:=/var/run/immortal}"
+# Services are halted one after another, and this is how long each may take
+# to stop, including its stop hook. rc.shutdown ends the whole sequence after
+# rcshutdown_timeout seconds, 90 by default, so raise both together.
+: "${immortal_halt_timeout:=60}"
 
 immortal_halt_stop()
 {
-	"$immortal_halt_control" --runtime-dir "$immortal_halt_runtime_dir" halt --all
+	"$immortal_halt_control" --runtime-dir "$immortal_halt_runtime_dir" \
+		--timeout "$immortal_halt_timeout" halt --all
 	status=$?
 	# Halting with no service present reports "not found"; that is not a
 	# failure.

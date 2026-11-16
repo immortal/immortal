@@ -11,10 +11,14 @@ After=network.target remote-fs.target local-fs.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/true
-ExecStop=/usr/local/bin/immortalctl --runtime-dir /run/immortal halt --all
+# Services are halted one after another, and --timeout is how long each may
+# take to stop, including its stop hook; the default of 30 seconds is too
+# short for a service whose hook and lifetime wait are allowed longer.
+ExecStop=/usr/local/bin/immortalctl --runtime-dir /run/immortal --timeout 100 halt --all
 # Halting with no service present reports "not found"; that is not a failure.
 SuccessExitStatus=66
-# Must exceed the longest graceful stop of all services together.
+# Bounds the whole command, so it must exceed the graceful stops of all
+# services together; systemd releases the ordering when it expires.
 TimeoutStopSec=120s
 
 [Install]

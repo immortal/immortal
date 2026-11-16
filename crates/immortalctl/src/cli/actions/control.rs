@@ -5,13 +5,13 @@ use std::{
     fmt::Display,
     io::{self, Write},
     path::PathBuf,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use immortal_core::{
     control::{
         CONTROL_IO_TIMEOUT, GenerationMatch, Operation, Request, Response, ResponseCode, Signal,
-        SignalScope, read_response, write_request,
+        SignalScope, TransportError, read_response_with_timeout, write_request,
     },
     exit::ExitClass,
     runtime::{
@@ -302,6 +302,7 @@ async fn contact(
             GenerationMatch::Any,
             SignalScope::Main,
             None,
+            CONTROL_IO_TIMEOUT,
         )
         .await?;
         if !status.code.is_success() {
@@ -314,14 +315,19 @@ async fn contact(
             generation,
         )
     };
+    // One budget covers the reply and the wait after it: a supervisor may
+    // withhold the reply to a mutation until the work is complete.
+    let started = Instant::now();
     let mut response = exchange(
         &service.service,
         operation,
         expected_generation,
         action.scope,
         action.signal,
+        reply_timeout(operation, action.wait_timeout),
     )
-    .await?;
+    .await
+    .map_err(|error| reply_error(operation, error))?;
     if response.code.is_success()
         && !action.no_wait
         && matches!(
@@ -335,7 +341,7 @@ async fn contact(
         )
     {
         response = timeout(
-            action.wait_timeout,
+            action.wait_timeout.saturating_sub(started.elapsed()),
             wait_for_completion(&service.service, operation, initial_generation, response),
         )
         .await
@@ -360,6 +366,7 @@ async fn wait_for_completion(
             GenerationMatch::Any,
             SignalScope::Main,
             None,
+            CONTROL_IO_TIMEOUT,
         )
         .await
         {
@@ -457,12 +464,37 @@ const fn outcome(completed: bool, settled: bool) -> WaitOutcome {
     }
 }
 
+/// How long to wait for the reply to `operation`.
+///
+/// Status is answered at once. A mutation of a descriptor-tracked service is
+/// answered only after its hook and lifetime wait, so its reply is awaited
+/// for the lifecycle budget, and never for less than the default deadline.
+fn reply_timeout(operation: Operation, wait_timeout: Duration) -> Duration {
+    if operation == Operation::Status {
+        CONTROL_IO_TIMEOUT
+    } else {
+        wait_timeout.max(CONTROL_IO_TIMEOUT)
+    }
+}
+
+/// A mutation whose reply did not arrive in time ran out of its lifecycle
+/// budget; any other failure is reported as it is.
+fn reply_error(operation: Operation, error: ActionError) -> ActionError {
+    match error {
+        ActionError::Transport(TransportError::Timeout) if operation != Operation::Status => {
+            ActionError::LifecycleTimeout
+        }
+        error => error,
+    }
+}
+
 async fn exchange(
     service: &RuntimeService,
     operation: Operation,
     expected_generation: GenerationMatch,
     scope: SignalScope,
     signal: Option<Signal>,
+    reply_timeout: Duration,
 ) -> Result<Response, ActionError> {
     let mut stream = timeout(CONTROL_IO_TIMEOUT, UnixStream::connect(&service.socket))
         .await
@@ -476,7 +508,9 @@ async fn exchange(
         signal,
     };
     write_request(&mut stream, &request).await?;
-    read_response(&mut stream).await.map_err(ActionError::from)
+    read_response_with_timeout(&mut stream, reply_timeout)
+        .await
+        .map_err(ActionError::from)
 }
 
 fn record(service: &ScopedService, response: Response) -> OutputRecord {

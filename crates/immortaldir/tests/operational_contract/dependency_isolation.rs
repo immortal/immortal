@@ -58,11 +58,18 @@ pub(super) fn prove_dependency_isolation(root: &Path) -> Result<(), Box<dyn Erro
         &runtime,
         [first, second, third, fourth],
     ));
+    // Every supervisor is halted even when halting an earlier one fails: the
+    // runtime root is removed afterwards, and a supervisor skipped here could
+    // no longer be reached.
     let cleanup = tokio.block_on(async {
+        let mut first_failure = Ok(());
         for name in ["api", "db", "web", "retired", "extra"] {
-            halt_if_present(&runtime, name).await?;
+            let halted = halt_if_present(&runtime, name).await;
+            if first_failure.is_ok() {
+                first_failure = halted;
+            }
         }
-        Ok::<(), Box<dyn Error>>(())
+        first_failure
     });
     drop(tokio);
     match (result, cleanup) {

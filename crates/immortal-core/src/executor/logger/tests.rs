@@ -12,8 +12,8 @@ use tokio::{net::UnixStream, time::Instant as TokioInstant};
 
 use super::{
     super::events::handle_logger_event, BrokerLoggerId, ExecutionContext, ExecutorError,
-    LoggerExecutionState, LoggerLastResult, ProcessBrokerClient, ProcessId, SpawnDetail,
-    SpawnFailure, SpawnStage, handle_due_logger_timers,
+    LoggerExecutionState, LoggerLastResult, LoggerShutdownState, ProcessBrokerClient, ProcessId,
+    SpawnDetail, SpawnFailure, SpawnStage, handle_due_logger_timers,
 };
 use crate::{
     config::ServiceConfig,
@@ -249,6 +249,100 @@ async fn a_start_deadline_is_reported_instead_of_the_previous_tasks_failure()
     assert!(matches!(
         fixture.logger(ADAPTER)?.state,
         LoggerExecutionState::Running { started_at, .. } if started_at <= Instant::now()
+    ));
+    Ok(())
+}
+
+/// Put the shared logger's start past its deadline and let the timer kill it.
+async fn time_out_shared_start(fixture: &mut Fixture) -> Result<BrokerTaskId, Box<dyn Error>> {
+    let task = fixture.begin_start(SHARED, 7)?;
+    handle_due_logger_timers(&mut fixture.client, &mut fixture.execution).await?;
+    assert!(matches!(
+        fixture.logger(SHARED)?.state,
+        LoggerExecutionState::Killing { .. }
+    ));
+    Ok(task)
+}
+
+/// Regression: the broker can report a failed start after the supervisor's
+/// own start deadline killed the task. That report was an unexpected event,
+/// which ended supervision instead of retrying the logger.
+#[tokio::test]
+async fn a_spawn_failure_reported_after_the_start_deadline_retries_the_logger()
+-> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    let task = time_out_shared_start(&mut fixture).await?;
+
+    fixture.spawn_failed(task, false)?;
+
+    assert!(
+        matches!(
+            fixture.logger(SHARED)?.state,
+            LoggerExecutionState::Backoff { .. }
+        ),
+        "no child is left to reap, so the retry is scheduled now"
+    );
+    assert_eq!(fixture.reported(), Some(START_TIMED_OUT));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_late_spawn_failure_with_a_child_to_collect_waits_for_its_reap()
+-> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    let task = time_out_shared_start(&mut fixture).await?;
+
+    fixture.spawn_failed(task, true)?;
+    assert!(matches!(
+        fixture.logger(SHARED)?.state,
+        LoggerExecutionState::Killing { .. }
+    ));
+
+    fixture.killed(task)?;
+    assert!(matches!(
+        fixture.logger(SHARED)?.state,
+        LoggerExecutionState::Backoff { .. }
+    ));
+    assert_eq!(fixture.reported(), Some(START_TIMED_OUT));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_late_spawn_failure_during_shutdown_leaves_the_logger_down() -> Result<(), Box<dyn Error>>
+{
+    let mut fixture = Fixture::new()?;
+    let task = time_out_shared_start(&mut fixture).await?;
+    fixture.execution.logger_shutdown = LoggerShutdownState::Complete;
+
+    fixture.spawn_failed(task, false)?;
+
+    assert!(matches!(
+        fixture.logger(SHARED)?.state,
+        LoggerExecutionState::Down
+    ));
+    Ok(())
+}
+
+/// Accepting a late failure for a known task must not accept one for a task
+/// no logger owns.
+#[tokio::test]
+async fn a_spawn_failure_for_an_unowned_task_stays_a_protocol_fault() -> Result<(), Box<dyn Error>>
+{
+    let mut fixture = Fixture::new()?;
+    time_out_shared_start(&mut fixture).await?;
+    let unowned = BrokerTaskId::new(99).ok_or("invalid test task")?;
+
+    let outcome = fixture.handle(ProcessBrokerEvent::TaskSpawnFailed {
+        task: unowned,
+        stage: SpawnStage::Execute,
+        failure: SpawnFailure::OperatingSystem,
+        os_error: Some(2),
+        cleanup_pending: None,
+    });
+
+    assert!(matches!(
+        outcome,
+        Err(ExecutorError::UnexpectedBrokerEvent(_))
     ));
     Ok(())
 }

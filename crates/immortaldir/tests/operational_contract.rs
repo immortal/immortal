@@ -700,6 +700,7 @@ async fn halt_if_present(runtime: &Path, name: &str) -> Result<(), Box<dyn Error
 }
 
 async fn halt_services(runtime: &Path) -> Result<(), Box<dyn Error>> {
+    let mut first_failure = Ok(());
     for name in [
         "api",
         "parallel-a",
@@ -708,9 +709,14 @@ async fn halt_services(runtime: &Path) -> Result<(), Box<dyn Error>> {
         "locked",
         "conditioned",
     ] {
-        halt_if_present(runtime, name).await?;
+        // Keep going after a failure: a supervisor skipped here would outlive
+        // the runtime root that is the only way to reach it.
+        let halted = halt_if_present(runtime, name).await;
+        if first_failure.is_ok() {
+            first_failure = halted;
+        }
     }
-    Ok(())
+    first_failure
 }
 
 async fn wait_for_service_state(

@@ -36,12 +36,12 @@ pub use self::server::{
     AcceptError, AuthorizedConnection, ControlCommand, ControlListener, PeerCredentials,
     run_control_server,
 };
-#[cfg(unix)]
-pub use self::transport::exchange;
 pub use self::transport::{
-    TransportError, read_request, read_request_with_timeout, read_response, write_request,
-    write_response,
+    TransportError, read_request, read_request_with_timeout, read_response,
+    read_response_with_timeout, write_request, write_response,
 };
+#[cfg(unix)]
+pub use self::transport::{exchange, exchange_with_response_timeout};
 
 #[cfg(all(test, unix))]
 pub(in crate::control) use self::server::{

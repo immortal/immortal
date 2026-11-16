@@ -776,8 +776,10 @@ for a generation to appear and then return Down. If the supervisor settles in
 so the client stops waiting and reports an `unavailable` failure instead of
 running out the deadline and reporting a retryable one. Neither settled state
 runs a child, so a stop goal is treated as reached. Halt/exit complete when
-their owned control socket disappears. `--no-wait` explicitly returns after
-request acceptance. The outer deadline bounds polling and each generation
+their owned control socket disappears. A descriptor-tracked service answers
+stop, restart, halt, and reload only after its hook and lifetime wait, so the
+same deadline also bounds the wait for that reply. `--no-wait` explicitly
+returns after request acceptance. The outer deadline bounds polling and each generation
 comparison remains race-safe.
 
 `immortalctl` selects output with `--output table|json` and `--color
@@ -848,9 +850,11 @@ snapshots preserve semantic comparison and enabled/Down intent when
 `immortaldir` restarts. `--dry-run` performs the same bounded scan, change
 comparison, and dependency planning without opening a broker or touching
 runtime state, so it withholds the start of a service whose requirement is
-missing, disabled, or invalid exactly as a real pass does, and a continuous
-dry run lists that start in the first later scan in which the requirement
-can be met. A `--once` pass,
+missing, disabled, or invalid exactly as a real pass does. A dry run plans
+from an empty runtime root and assumes each action it lists succeeds; a
+continuous one compares every scan with what it has listed so far, so a
+withheld start or restart appears in the first later scan in which it is
+still needed and its requirement can be met. A `--once` pass,
 real or dry, still completes its independent work and then exits `79` when a
 service could not be scheduled or applied, and otherwise `78` when it skipped
 an invalid definition; each is reported on standard error. The continuous

@@ -123,7 +123,28 @@ pub async fn read_response<R>(reader: &mut R) -> Result<Response, TransportError
 where
     R: AsyncRead + Unpin,
 {
-    let frame = read_frame_with_timeout(reader, CONTROL_IO_TIMEOUT).await?;
+    read_response_with_timeout(reader, CONTROL_IO_TIMEOUT).await
+}
+
+/// Read exactly one response, waiting up to `idle_timeout` for it.
+///
+/// A supervisor answers some mutations only when the work is complete: a
+/// descriptor-tracked service replies to stop, restart, halt, and reload
+/// after its hook and lifetime wait. A caller awaiting such a reply passes
+/// its lifecycle budget rather than the default idle deadline.
+///
+/// # Errors
+///
+/// Returns an error for I/O failure, timeout, oversized input, or an invalid
+/// response frame.
+pub async fn read_response_with_timeout<R>(
+    reader: &mut R,
+    idle_timeout: Duration,
+) -> Result<Response, TransportError>
+where
+    R: AsyncRead + Unpin,
+{
+    let frame = read_frame_with_timeout(reader, idle_timeout).await?;
     Response::decode(&frame).map_err(TransportError::Protocol)
 }
 
@@ -148,11 +169,31 @@ where
 /// failure. Peer authorization remains enforced by the supervisor.
 #[cfg(unix)]
 pub async fn exchange(path: &Path, request: &Request) -> Result<Response, TransportError> {
+    exchange_with_response_timeout(path, request, CONTROL_IO_TIMEOUT).await
+}
+
+/// Connect to one local supervisor and exchange exactly one bounded request,
+/// waiting up to `response_timeout` for the reply.
+///
+/// Connecting and writing keep the default idle deadline; only the reply,
+/// which a supervisor may withhold until a mutation completes, uses the
+/// caller's budget.
+///
+/// # Errors
+///
+/// Returns a timeout, Unix-socket I/O, request encoding, or response protocol
+/// failure. Peer authorization remains enforced by the supervisor.
+#[cfg(unix)]
+pub async fn exchange_with_response_timeout(
+    path: &Path,
+    request: &Request,
+    response_timeout: Duration,
+) -> Result<Response, TransportError> {
     let mut stream = timeout(CONTROL_IO_TIMEOUT, UnixStream::connect(path))
         .await
         .map_err(|_| TransportError::Timeout)??;
     write_request(&mut stream, request).await?;
-    read_response(&mut stream).await
+    read_response_with_timeout(&mut stream, response_timeout).await
 }
 
 async fn read_frame_with_timeout<R>(

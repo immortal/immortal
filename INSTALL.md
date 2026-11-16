@@ -303,9 +303,11 @@ both are still available. It runs `immortalctl halt --all`, so every service
 gets its ordered, graceful stop. Restarting or stopping `immortaldir` alone
 leaves it, and the running services, untouched; `service immortal_halt stop`
 by hand halts every service. Set `immortal_halt_runtime_dir` if the manager
-uses a runtime root other than `/var/run/immortal`. `rc.shutdown` ends the
-whole shutdown sequence after `rcshutdown_timeout` seconds, 90 by default;
-raise it in `rc.conf` if the services together need longer to stop.
+uses a runtime root other than `/var/run/immortal`. Services are halted one
+after another: `immortal_halt_timeout`, 60 seconds by default, is how long
+each one may take, including a stop hook, and `rc.shutdown` ends the whole
+shutdown sequence after `rcshutdown_timeout` seconds, 90 by default. Raise
+both in `rc.conf` if the services need longer to stop.
 
 ## Linux systemd
 
@@ -325,8 +327,11 @@ shutdown it stops after the manager and before the network, and runs
 `immortalctl halt --all`, so every service gets its ordered, graceful stop
 while the system is still up. Restarting or stopping `immortaldir` alone
 leaves it, and the running services, untouched; stopping `immortal-halt` by
-hand halts every service. Raise its `TimeoutStopSec` if the services together
-need longer than two minutes to stop. With the companion installed the
+hand halts every service. Services are halted one after another: `--timeout`
+in its `ExecStop` is how long each one may take, including a stop hook, and
+`TimeoutStopSec` bounds the whole command, after which systemd continues the
+shutdown regardless. Raise both if a service needs more than 100 seconds or
+the services together more than two minutes. With the companion installed the
 manager starts after `network.target` instead of right after the local file
 systems; that target does not wait for an address, so a service that needs
 connectivity still has to handle its absence at boot.

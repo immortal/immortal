@@ -31,7 +31,10 @@ use std::{
 };
 
 use immortal_core::{
-    control::{GenerationMatch, Operation, Request, Response, SignalScope, exchange},
+    control::{
+        GenerationMatch, Operation, Request, Response, SignalScope, exchange,
+        exchange_with_response_timeout,
+    },
     process::{ProcessBrokerEndpoint, start_process_broker},
     reconcile::{
         DefinitionSnapshots, DesiredStateTracker, LauncherError, ReconcileAction, ScanLimits,
@@ -205,35 +208,19 @@ async fn watch_dry_run(
     }
 }
 
-/// What successive dry-run scans have seen and still owe.
+/// What successive dry-run scans have seen and what they simulated applying.
 ///
-/// The tracker assumes each action it returns is applied, so a start the
-/// preview withholds would be forgotten by the next scan. A real pass does not
-/// forget it: the service has no supervisor, so the start stays pending. The
-/// withheld actions are kept here until their requirements can be met.
+/// A preview starts from an empty runtime root and assumes each action it
+/// prints succeeds. It keeps the configuration each service would then be
+/// running, and plans every scan against that with the real pass's own
+/// [`desired_plan`]. An action it withholds is therefore not recorded as
+/// applied and stays owed, and a definition changed back before its restart
+/// could be scheduled needs no restart, exactly as in a real pass.
 #[derive(Default)]
 struct PlanPreview {
     tracker: DesiredStateTracker,
-    /// Starts and restarts withheld behind a requirement that cannot be met.
-    withheld: BTreeMap<String, ReconcileAction>,
-}
-
-/// Combine an action withheld by earlier scans with this scan's action.
-///
-/// A service whose first start was withheld has never run, so a later change
-/// is still a first start and disabling it leaves nothing to stop.
-const fn owed_action(
-    withheld: Option<ReconcileAction>,
-    planned: ReconcileAction,
-) -> ReconcileAction {
-    match (withheld, planned) {
-        (Some(ReconcileAction::Start), ReconcileAction::Restart | ReconcileAction::Keep) => {
-            ReconcileAction::Start
-        }
-        (Some(ReconcileAction::Start), ReconcileAction::Stop) => ReconcileAction::Keep,
-        (Some(ReconcileAction::Restart), ReconcileAction::Keep) => ReconcileAction::Restart,
-        (_, planned) => planned,
-    }
+    /// Configuration of every service the preview has started, as applied.
+    applied: BTreeMap<String, immortal_core::config::ServiceConfig>,
 }
 
 /// What a complete scan found besides the work it planned.
@@ -705,7 +692,10 @@ async fn mutate(
         scope: SignalScope::Group,
         signal: None,
     };
-    let response = exchange(&service.socket, &request).await?;
+    // A descriptor-tracked service answers only after its hook and lifetime
+    // wait, so the reply is awaited for the lifecycle budget.
+    let response =
+        exchange_with_response_timeout(&service.socket, &request, LIFECYCLE_TIMEOUT).await?;
     require_success(response)
 }
 
@@ -783,7 +773,8 @@ fn scan_and_print(
 /// A start or restart is withheld for a service whose requirements can never
 /// be met, exactly as the real pass withholds it; the service is returned in
 /// the summary instead, and the action is printed by the first later scan in
-/// which its requirements can be met. Scan problems go to `stderr`.
+/// which it is still needed and its requirements can be met. Scan problems go
+/// to `stderr`.
 fn write_plan(
     preview: &mut PlanPreview,
     scan: ScanResult,
@@ -792,13 +783,26 @@ fn write_plan(
 ) -> io::Result<PlanSummary> {
     let actions = preview.tracker.apply(&scan);
     let unresolvable = dependency_plan(preview.tracker.desired()).unresolvable;
-    // Only names this scan still knows can stay withheld.
-    let withheld = std::mem::take(&mut preview.withheld);
-    for (name, planned) in actions {
-        let action = owed_action(withheld.get(&name).copied(), planned);
+    for name in actions.into_keys() {
+        let desired = preview.tracker.desired().get(&name);
+        let action = match desired {
+            Some(config) => {
+                match desired_plan(
+                    preview.applied.contains_key(&name),
+                    config,
+                    preview.applied.get(&name),
+                ) {
+                    DesiredPlan::Apply(action) => action,
+                    DesiredPlan::Adopt | DesiredPlan::Keep => ReconcileAction::Keep,
+                }
+            }
+            // A confirmed deletion stops what was started and is otherwise
+            // nothing to act on.
+            None if preview.applied.contains_key(&name) => ReconcileAction::Stop,
+            None => continue,
+        };
         let gated = matches!(action, ReconcileAction::Start | ReconcileAction::Restart);
         if gated && unresolvable.iter().any(|blocked| blocked.service == name) {
-            preview.withheld.insert(name, action);
             continue;
         }
         let verb = match action {
@@ -808,6 +812,15 @@ fn write_plan(
             ReconcileAction::Keep => "KEEP",
         };
         writeln!(stdout, "{verb}\t{name}")?;
+        match (action, desired) {
+            (ReconcileAction::Keep, _) => {}
+            (_, Some(config)) => {
+                preview.applied.insert(name, config.clone());
+            }
+            (_, None) => {
+                preview.applied.remove(&name);
+            }
+        }
     }
     let invalid_definitions = scan.problems.len();
     for problem in scan.problems {

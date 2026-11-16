@@ -11,8 +11,8 @@ use std::{
 };
 
 use immortal_core::control::{
-    ControlListener, GenerationMatch, Operation, Response, ResponseCode, SignalScope, read_request,
-    write_response,
+    CONTROL_IO_TIMEOUT, ControlListener, GenerationMatch, Operation, Response, ResponseCode,
+    SignalScope, TransportError, read_request, write_response,
 };
 use immortal_core::exit::ExitClass;
 use immortal_core::process::{SpawnFailure, SpawnStage};
@@ -20,12 +20,14 @@ use immortal_core::status::{
     LastResult, LoggerLastResult, LoggerStatus, ServiceState, SpawnDetail, StatusSnapshot,
 };
 use immortal_core::supervisor::{Generation, StateMachine};
+use tokio::time::sleep;
 
 use super::WaitOutcome;
 use super::{
     ActionError, ControlAction, DiscoveryRoot, OutputFormat, OutputRecord, RuntimeDiscovery,
     RuntimeOrigin, RuntimeScope, ScopedService, Target, contact, discover_from_roots,
-    discovery_roots_with, operation_outcome, record, render_output, select_targets,
+    discovery_roots_with, exchange, operation_outcome, record, render_output, reply_error,
+    reply_timeout, select_targets,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -407,6 +409,92 @@ async fn lifecycle_wait_has_a_hard_deadline() -> Result<(), Box<dyn Error>> {
     server_result?;
     assert!(matches!(client_result, Err(ActionError::LifecycleTimeout)));
     Ok(())
+}
+
+/// Regression: every reply was awaited for the five-second idle deadline, so
+/// stopping a descriptor-tracked service whose stop hook ran longer failed
+/// although the stop was still in progress and within its own limit.
+#[tokio::test(flavor = "current_thread")]
+async fn a_withheld_reply_is_awaited_for_the_given_time() -> Result<(), Box<dyn Error>> {
+    // The supervisor withholds its reply this long; the two client budgets
+    // sit well on either side of it, so scheduling cannot change the result.
+    const WITHHELD: Duration = Duration::from_millis(200);
+    let directory = TestDirectory::new()?;
+    let socket = directory.path().join("immortal.sock");
+    let listener = ControlListener::bind(&socket, 1)?;
+    let service = custom_service("api", directory.path(), socket, listener.owner_uid());
+    let server = async {
+        for _ in 0..2 {
+            let mut mutation = listener.accept().await?;
+            let request = read_request(mutation.stream_mut()).await?;
+            assert_eq!(request.operation, Operation::Stop);
+            sleep(WITHHELD).await;
+            // The impatient client has already gone; only the write to the
+            // patient one must succeed.
+            let _ = write_response(
+                mutation.stream_mut(),
+                &response_with_state(None, ServiceState::Down),
+            )
+            .await;
+        }
+        Ok::<(), Box<dyn Error>>(())
+    };
+    let client = async {
+        let impatient = exchange(
+            &service.service,
+            Operation::Stop,
+            GenerationMatch::NoChild,
+            SignalScope::Group,
+            None,
+            WITHHELD / 10,
+        )
+        .await;
+        let patient = exchange(
+            &service.service,
+            Operation::Stop,
+            GenerationMatch::NoChild,
+            SignalScope::Group,
+            None,
+            WITHHELD * 50,
+        )
+        .await;
+        (impatient, patient)
+    };
+    let (server_result, (impatient, patient)) = tokio::join!(server, client);
+    server_result?;
+    assert!(matches!(
+        impatient,
+        Err(ActionError::Transport(TransportError::Timeout))
+    ));
+    assert_eq!(patient?.code, ResponseCode::Ok);
+    Ok(())
+}
+
+#[test]
+fn mutation_replies_use_the_lifecycle_budget_and_status_does_not() {
+    let budget = Duration::from_secs(90);
+    assert_eq!(reply_timeout(Operation::Status, budget), CONTROL_IO_TIMEOUT);
+    for operation in [
+        Operation::Stop,
+        Operation::Restart,
+        Operation::Halt,
+        Operation::Signal,
+    ] {
+        assert_eq!(reply_timeout(operation, budget), budget);
+        assert_eq!(
+            reply_timeout(operation, Duration::from_millis(1)),
+            CONTROL_IO_TIMEOUT,
+            "a short budget never waits less than the default deadline"
+        );
+        assert!(matches!(
+            reply_error(operation, TransportError::Timeout.into()),
+            ActionError::LifecycleTimeout
+        ));
+    }
+    assert!(matches!(
+        reply_error(Operation::Status, TransportError::Timeout.into()),
+        ActionError::Transport(TransportError::Timeout)
+    ));
 }
 
 #[test]
