@@ -371,6 +371,61 @@ async fn restart_waits_for_a_new_ready_generation() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
+/// Regression, at the real default deadline: a supervisor that answers a stop
+/// only after its hook finished, longer than the five-second idle deadline,
+/// still completes when the client's own budget allows it. The wait is the
+/// default deadline plus half a second of real time; it is bounded and there
+/// is no way to observe the constant without elapsing it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stop_answered_after_the_default_deadline_completes() -> Result<(), Box<dyn Error>> {
+    let directory = TestDirectory::new()?;
+    let socket = directory.path().join("immortal.sock");
+    let listener = ControlListener::bind(&socket, 1)?;
+    let service = custom_service("api", directory.path(), socket, listener.owner_uid());
+    let action = ControlAction {
+        discovery: RuntimeDiscovery::Custom(directory.path().to_owned()),
+        output: OutputFormat::Table,
+        no_header: false,
+        wait_timeout: Duration::from_secs(30),
+        no_wait: false,
+        target: Target::Service("api".to_owned()),
+        scope: SignalScope::Main,
+        signal: None,
+    };
+    let first = Generation::FIRST;
+    let server = async {
+        respond_once(
+            &listener,
+            response_with_state(Some(first), ServiceState::Ready),
+        )
+        .await?;
+        let mut mutation = listener.accept().await?;
+        let request = read_request(mutation.stream_mut()).await?;
+        assert_eq!(request.operation, Operation::Stop);
+        sleep(CONTROL_IO_TIMEOUT + Duration::from_millis(500)).await;
+        write_response(
+            mutation.stream_mut(),
+            &Response {
+                code: ResponseCode::Ok,
+                generation: Some(first),
+                message: "stopped".to_owned(),
+                status: None,
+            },
+        )
+        .await?;
+        drop(mutation);
+        respond_once(&listener, response_with_state(None, ServiceState::Down)).await?;
+        Ok::<(), Box<dyn Error>>(())
+    };
+    let client = contact(&service, &action, Operation::Stop);
+    let (server_result, client_result) = tokio::join!(server, client);
+    server_result?;
+    let (record, failure) = client_result?;
+    assert_eq!(failure, None);
+    assert_eq!(record.state.as_deref(), Some("down"));
+    Ok(())
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn lifecycle_wait_has_a_hard_deadline() -> Result<(), Box<dyn Error>> {
     let directory = TestDirectory::new()?;

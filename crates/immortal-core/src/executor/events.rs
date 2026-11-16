@@ -174,8 +174,14 @@ pub(super) async fn handle_lifecycle_event(
             }
             finish_lifecycle_success(client, commands, config, execution).await
         }
+        // A stop or continue the hook's own job control queued ahead of its
+        // reap is no change of state, also while it is being killed.
         ProcessBrokerEvent::TaskChild { task: current, .. }
-            if current == task && state == LifecycleHookState::Running =>
+            if current == task
+                && matches!(
+                    state,
+                    LifecycleHookState::Running | LifecycleHookState::Killing
+                ) =>
         {
             Ok(())
         }

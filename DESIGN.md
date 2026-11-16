@@ -450,7 +450,9 @@ until the reap, bounded by the cleanup deadline, whose expiry fails
 supervision closed. A condition is therefore never retried, a service never
 restarted after its post-exit hook, and a second lifecycle hook never started
 beside a leftover process, and a reap for a task no state names is a protocol
-fault.
+fault. A stop or continue event of the task's own job control, queued ahead
+of its reap, changes nothing while the task runs or is being killed; for a
+task no state names it is a protocol fault too.
 The supervisor event loop remains the sole lifecycle owner. The control accept
 loop treats peer-attributable and resource-attributable accept failures as
 transient: aborted or reset peers, interrupted accepts, and descriptor or

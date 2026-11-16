@@ -84,8 +84,15 @@ pub(super) fn handle_post_exit_event(
         {
             finish_post_exit(client, config, execution)
         }
+        // A stop or continue the task's own job control queued ahead of its
+        // reap is no change of state, also while it is being killed.
         ProcessBrokerEvent::TaskChild { task, .. }
-            if execution.auxiliary == AuxiliaryExecution::HookRunning(task) =>
+            if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::HookRunning(current)
+                    | AuxiliaryExecution::HookKilling(current)
+                    if current == task
+            ) =>
         {
             Ok(())
         }
@@ -200,8 +207,15 @@ pub(super) fn handle_condition_event(
             }
             Ok(())
         }
+        // A stop or continue the task's own job control queued ahead of its
+        // reap is no change of state, also while it is being killed.
         ProcessBrokerEvent::TaskChild { task, .. }
-            if execution.auxiliary == AuxiliaryExecution::Running(task) =>
+            if matches!(
+                execution.auxiliary,
+                AuxiliaryExecution::Running(current)
+                    | AuxiliaryExecution::Killing { task: current, .. }
+                    if current == task
+            ) =>
         {
             Ok(())
         }

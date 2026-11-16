@@ -24,7 +24,7 @@ use super::{
         DesiredState, Generation, LifecycleExecution, LifecycleHookKind, LifecycleHookState,
         events::{handle_broker_event, handle_logger_event},
         prepare::prepare_execution,
-        timers::cancel_auxiliary,
+        timers::{cancel_auxiliary, handle_executor_timer},
     },
     AuxiliaryExecution, BrokerLoggerId, ExecutionContext, ExecutorError, LoggerExecutionState,
     LoggerLastResult, LoggerShutdownState, LoggerShutdownTier, ProcessBrokerClient, ProcessId,
@@ -736,5 +736,189 @@ async fn a_lifecycle_hook_is_kept_until_its_reap() -> Result<(), Box<dyn Error>>
     fixture.dispatch(failed_start(task, true)?).await?;
     assert_eq!(state(&fixture), Some(LifecycleHookState::Killing));
     assert!(fixture.execution.deadline.is_some());
+    Ok(())
+}
+
+fn stopped(task: BrokerTaskId) -> Result<ProcessBrokerEvent, Box<dyn Error>> {
+    Ok(ProcessBrokerEvent::TaskChild {
+        task,
+        event: ChildEvent::Stopped {
+            pid: process()?,
+            signal: 19,
+        },
+    })
+}
+
+fn continued(task: BrokerTaskId) -> Result<ProcessBrokerEvent, Box<dyn Error>> {
+    Ok(ProcessBrokerEvent::TaskChild {
+        task,
+        event: ChildEvent::Continued { pid: process()? },
+    })
+}
+
+/// Regression: a stop or continue queued ahead of the reap reached a task
+/// that was already being killed and ended supervision as an unexpected
+/// event, because only a running task accepted it.
+#[tokio::test]
+async fn job_control_events_do_not_disturb_a_condition_being_killed() -> Result<(), Box<dyn Error>>
+{
+    let (mut fixture, task) = cancelled_condition(48).await?;
+    fixture.dispatch(stopped(task)?).await?;
+    fixture.dispatch(continued(task)?).await?;
+    assert_eq!(
+        fixture.execution.auxiliary,
+        AuxiliaryExecution::Killing { task, retry: false }
+    );
+
+    fixture.dispatch(reap(task)?).await?;
+    assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
+    Ok(())
+}
+
+#[tokio::test]
+async fn job_control_events_do_not_disturb_a_post_exit_hook_being_killed()
+-> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(POST_EXIT)?;
+    let task = BrokerTaskId::new(49).ok_or("invalid test task")?;
+    fixture.execution.auxiliary = AuxiliaryExecution::HookRunning(task);
+    cancel_auxiliary(&mut fixture.client, &mut fixture.execution).await?;
+
+    fixture.dispatch(stopped(task)?).await?;
+    fixture.dispatch(continued(task)?).await?;
+
+    assert_eq!(
+        fixture.execution.auxiliary,
+        AuxiliaryExecution::HookKilling(task)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn job_control_events_do_not_disturb_a_lifecycle_hook_being_killed()
+-> Result<(), Box<dyn Error>> {
+    let task = BrokerTaskId::new(50).ok_or("invalid test task")?;
+    let mut fixture = Fixture::new()?;
+    fixture.execution.lifecycle = Some(LifecycleExecution {
+        after: None,
+        command: None,
+        generation: Generation::FIRST,
+        kind: LifecycleHookKind::Reload,
+        previous_desired: DesiredState::Up,
+        response: None,
+        resume_ready: true,
+        state: LifecycleHookState::Killing,
+        task,
+        timeout: Duration::from_secs(10),
+    });
+
+    fixture.dispatch(stopped(task)?).await?;
+    fixture.dispatch(continued(task)?).await?;
+
+    assert_eq!(
+        fixture.execution.lifecycle.as_ref().map(|hook| hook.state),
+        Some(LifecycleHookState::Killing)
+    );
+    Ok(())
+}
+
+/// Job control for a task no state owns is still a protocol fault.
+#[tokio::test]
+async fn job_control_events_for_an_unowned_task_stay_a_protocol_fault() -> Result<(), Box<dyn Error>>
+{
+    let (mut fixture, _task) = cancelled_condition(51).await?;
+    let stranger = BrokerTaskId::new(52).ok_or("invalid test task")?;
+    assert!(fixture.dispatch(stopped(stranger)?).await.is_err());
+    Ok(())
+}
+
+fn reload_hook(task: BrokerTaskId, state: LifecycleHookState) -> LifecycleExecution {
+    LifecycleExecution {
+        after: None,
+        command: None,
+        generation: Generation::FIRST,
+        kind: LifecycleHookKind::Reload,
+        previous_desired: DesiredState::Up,
+        response: None,
+        resume_ready: true,
+        state,
+        task,
+        timeout: Duration::from_secs(10),
+    }
+}
+
+/// A lifecycle hook whose kill the broker could not confirm is finished only
+/// by its reap, which ends it as a failed hook.
+#[tokio::test]
+async fn a_lifecycle_hook_whose_kill_was_not_confirmed_ends_at_its_reap()
+-> Result<(), Box<dyn Error>> {
+    let task = BrokerTaskId::new(53).ok_or("invalid test task")?;
+    let mut fixture = Fixture::new()?;
+    fixture.execution.lifecycle = Some(reload_hook(task, LifecycleHookState::Killing));
+    fixture
+        .execution
+        .task_signals
+        .signal(&mut fixture.client, task, ProcessSignal::Kill)
+        .await?;
+
+    fixture.dispatch(kill_failed(task)).await?;
+    assert!(fixture.execution.lifecycle.is_some(), "kept until the reap");
+
+    fixture.dispatch(reap(task)?).await?;
+    assert!(fixture.execution.lifecycle.is_none());
+    assert!(fixture.execution.deadline.is_none());
+    Ok(())
+}
+
+/// The cleanup deadline armed with a kill still fails supervision closed
+/// when the reap never comes, now that a failed kill no longer ends the task.
+#[tokio::test]
+async fn the_cleanup_deadline_of_a_lifecycle_hook_fails_closed() -> Result<(), Box<dyn Error>> {
+    let task = BrokerTaskId::new(54).ok_or("invalid test task")?;
+    let mut fixture = Fixture::new()?;
+    let prepared = prepare_execution(&fixture.config, false)?;
+    fixture.execution.lifecycle = Some(reload_hook(task, LifecycleHookState::Killing));
+    fixture.execution.deadline = Some(TokioInstant::now());
+
+    let outcome = handle_executor_timer(
+        &mut fixture.client,
+        &prepared.execution,
+        &fixture.config,
+        &mut fixture.execution,
+    )
+    .await;
+
+    assert!(matches!(
+        outcome,
+        Err(ExecutorError::BrokerTimedOut(
+            "descriptor lifecycle hook cleanup"
+        ))
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_cleanup_deadline_of_a_condition_fails_closed() -> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(CONDITION)?;
+    let prepared = prepare_execution(&fixture.config, false)?;
+    let task = BrokerTaskId::new(55).ok_or("invalid test task")?;
+    fixture.execution.machine.set_desired(DesiredState::Up);
+    fixture.execution.machine.begin_start()?;
+    fixture.execution.auxiliary = AuxiliaryExecution::Killing { task, retry: true };
+    fixture.execution.deadline = Some(TokioInstant::now());
+
+    let outcome = handle_executor_timer(
+        &mut fixture.client,
+        &prepared.execution,
+        &fixture.config,
+        &mut fixture.execution,
+    )
+    .await;
+
+    assert!(matches!(
+        outcome,
+        Err(ExecutorError::BrokerTimedOut("condition cleanup"))
+    ));
     Ok(())
 }
