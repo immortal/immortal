@@ -16,10 +16,11 @@ use std::{
 use tokio::time::Instant as TokioInstant;
 
 use super::{
-    BrokerLoggerId, BrokerTaskId, ChildResult, ConditionTracker, ControlCommand, DesiredState,
-    FailureReason, Generation, LastResult, OwnedPidFile, ProcessBrokerEvent, ProcessId, Response,
-    RestartTracker, ServiceConfig, StateMachine, StatusSnapshot, StopCompletion, SupervisorState,
-    elapsed_seconds, logger_status,
+    BrokerLoggerId, BrokerSignalScope, BrokerTaskId, ChildResult, ConditionTracker, ControlCommand,
+    DesiredState, FailureReason, Generation, LastResult, OwnedPidFile, ProcessBrokerClient,
+    ProcessBrokerError, ProcessBrokerEvent, ProcessId, ProcessSignal, Response, RestartTracker,
+    ServiceConfig, StateMachine, StatusSnapshot, StopCompletion, SupervisorState, elapsed_seconds,
+    logger_status,
 };
 use crate::status::{LoggerLastResult, LoggerStatus, SpawnDetail};
 
@@ -49,11 +50,7 @@ pub(super) struct ExecutionContext {
     /// Number of logger failures recorded so far, which orders them across
     /// loggers so status reports the most recent one.
     pub(super) logger_failures: u64,
-    /// Logger tasks for which the broker still owes a signal acknowledgement,
-    /// one entry per signal sent. A logger can leave the state that names its
-    /// task, by a reap or a late start failure, before the acknowledgement
-    /// arrives, so what is owed is tracked apart from that state.
-    pub(super) logger_signal_acknowledgements: Vec<BrokerTaskId>,
+    pub(super) task_signals: OwedTaskAcknowledgements,
     pub(super) logger_shutdown: LoggerShutdownState,
     pub(super) lifecycle: Option<LifecycleExecution>,
     pub(super) loggers: Vec<LoggerExecution>,
@@ -84,7 +81,7 @@ impl ExecutionContext {
             epoch: Instant::now(),
             first_start: true,
             logger_failures: 0,
-            logger_signal_acknowledgements: Vec::new(),
+            task_signals: OwedTaskAcknowledgements::default(),
             logger_shutdown: LoggerShutdownState::Running,
             lifecycle: None,
             loggers: loggers.into_iter().map(LoggerExecution::new).collect(),
@@ -126,6 +123,55 @@ impl ExecutionContext {
                 self.logger_shutdown.deadline().or(self.deadline),
                 |current, deadline| Some(current.map_or(deadline, |current| current.min(deadline))),
             )
+    }
+}
+
+/// Signal acknowledgements the broker still owes for broker tasks.
+///
+/// The broker answers every signal request, also for a task whose start
+/// failed or whose process it already reaped. A logger, hook, or condition
+/// can therefore leave the state that names its task before the answer
+/// arrives, so what is owed is tracked apart from that state: one entry per
+/// signal sent, retired when its answer arrives. Task identifiers are never
+/// reused, so an entry cannot match another task's answer.
+#[derive(Default)]
+pub(super) struct OwedTaskAcknowledgements {
+    tasks: Vec<BrokerTaskId>,
+}
+
+impl OwedTaskAcknowledgements {
+    /// Signal one task's process group and note the acknowledgement owed.
+    pub(super) async fn signal(
+        &mut self,
+        client: &mut ProcessBrokerClient,
+        task: BrokerTaskId,
+        signal: ProcessSignal,
+    ) -> Result<(), ProcessBrokerError> {
+        client
+            .signal_task(task, BrokerSignalScope::Group, signal)
+            .await?;
+        self.tasks.push(task);
+        Ok(())
+    }
+
+    /// Retire the entry `event` answers, if it is an owed acknowledgement.
+    pub(super) fn retire(&mut self, event: &ProcessBrokerEvent) -> bool {
+        let (ProcessBrokerEvent::TaskSignalDelivered { task }
+        | ProcessBrokerEvent::TaskSignalFailed { task, .. }) = event
+        else {
+            return false;
+        };
+        let Some(position) = self.tasks.iter().position(|owed| owed == task) else {
+            return false;
+        };
+        self.tasks.swap_remove(position);
+        true
+    }
+
+    /// Number of acknowledgements still owed.
+    #[cfg(test)]
+    pub(super) const fn len(&self) -> usize {
+        self.tasks.len()
     }
 }
 
@@ -342,6 +388,19 @@ pub(super) enum AuxiliaryExecution {
 }
 
 impl AuxiliaryExecution {
+    /// Task this state names, if any.
+    pub(super) const fn task(self) -> Option<BrokerTaskId> {
+        match self {
+            Self::Starting(task)
+            | Self::Running(task)
+            | Self::Killing { task, .. }
+            | Self::HookStarting(task)
+            | Self::HookRunning(task)
+            | Self::HookKilling(task) => Some(task),
+            Self::Idle | Self::Passed => None,
+        }
+    }
+
     pub(super) const fn is_idle(self) -> bool {
         matches!(self, Self::Idle | Self::Passed)
     }

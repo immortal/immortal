@@ -22,8 +22,7 @@ use super::{
     SERVICE_STOP_GRACE, SPAWN_FAILURE_EXIT, ServiceConfig, SupervisorState, begin_lifecycle_hook,
     complete_generation, finish_descriptor_generation, finish_detach, finish_signal_request,
     handle_auxiliary_event, handle_lifetime_event, handle_service_child_event, logger_tier_is_down,
-    publish_readiness, request_group_stop, retire_logger_signal_acknowledgement,
-    schedule_logger_restart,
+    publish_readiness, request_group_stop, schedule_logger_restart,
 };
 use crate::status::{LoggerLastResult, SpawnDetail};
 
@@ -58,6 +57,10 @@ pub(super) async fn handle_broker_event(
         };
         return Ok(());
     }
+    // An acknowledgement is retired wherever it is routed. The state which
+    // names its task still gets to act on it; one that outlived that state,
+    // because the reap or a start failure arrived first, ends here.
+    let owed = execution.task_signals.retire(&event);
     if task_id(&event).is_some_and(|task| {
         execution
             .lifecycle
@@ -66,18 +69,22 @@ pub(super) async fn handle_broker_event(
     }) {
         return handle_lifecycle_event(client, event, commands, config, execution).await;
     }
-    if retire_logger_signal_acknowledgement(&mut execution.logger_signal_acknowledgements, &event) {
-        return Ok(());
-    }
-    if task_id(&event).is_some_and(|task| {
-        execution
+    if let Some(task) = task_id(&event) {
+        if execution
             .loggers
             .iter()
             .any(|logger| logger.state.task() == Some(task))
-    }) {
-        return handle_logger_event(client, event, config, execution);
-    }
-    if task_id(&event).is_some() {
+        {
+            // A logger has nothing to do on an acknowledgement.
+            return if owed {
+                Ok(())
+            } else {
+                handle_logger_event(client, event, config, execution)
+            };
+        }
+        if owed && execution.auxiliary.task() != Some(task) {
+            return Ok(());
+        }
         return handle_auxiliary_event(client, event, config, execution);
     }
     handle_service_broker_event(client, event, commands, config, execution).await
@@ -666,8 +673,8 @@ pub(super) fn handle_logger_event(
             Ok(())
         }
         ProcessBrokerEvent::TaskChild { .. } => Ok(()),
-        // Every acknowledgement this supervisor is owed was retired before
-        // dispatch, so one that reaches here answers no signal it sent.
+        // An owed acknowledgement never reaches this handler, so one that
+        // does answers no signal this supervisor sent.
         event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
     }
 }

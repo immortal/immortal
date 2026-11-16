@@ -105,8 +105,9 @@ pub(super) async fn handle_executor_timer(
         }
         SupervisorState::Completed(_) => match execution.auxiliary {
             AuxiliaryExecution::HookRunning(task) => {
-                client
-                    .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
+                execution
+                    .task_signals
+                    .signal(client, task, ProcessSignal::Kill)
                     .await?;
                 execution.auxiliary = AuxiliaryExecution::HookKilling(task);
                 execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
@@ -148,8 +149,9 @@ pub(super) async fn handle_lifecycle_timer(
             let task = lifecycle.task;
             lifecycle.state = LifecycleHookState::Killing;
             execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
-            client
-                .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
+            execution
+                .task_signals
+                .signal(client, task, ProcessSignal::Kill)
                 .await
                 .map_err(Into::into)
         }
@@ -195,8 +197,9 @@ pub(super) async fn handle_waiting_timer(
             Ok(())
         }
         (Some(_), Some(_), AuxiliaryExecution::Running(task)) => {
-            client
-                .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
+            execution
+                .task_signals
+                .signal(client, task, ProcessSignal::Kill)
                 .await?;
             execution.auxiliary = AuxiliaryExecution::Killing { task, retry: true };
             execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
@@ -229,8 +232,9 @@ pub(super) async fn cancel_auxiliary(
         | AuxiliaryExecution::Passed
         | AuxiliaryExecution::HookKilling(_) => return Ok(()),
     };
-    client
-        .signal_task(task, BrokerSignalScope::Group, ProcessSignal::Kill)
+    execution
+        .task_signals
+        .signal(client, task, ProcessSignal::Kill)
         .await?;
     execution.auxiliary = if hook {
         AuxiliaryExecution::HookKilling(task)

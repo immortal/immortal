@@ -237,8 +237,17 @@ fn rescue_abandoned_supervisors(child: u32) {
     if !root.is_dir() {
         return;
     }
+    halt_supervisors_under(&root);
+    let _ignored = fs::remove_dir_all(&root);
+}
+
+/// Halt, best effort, every supervisor reachable through a runtime directory
+/// directly under `root`.
+///
+/// It builds its own runtime, so it must run outside any other.
+fn halt_supervisors_under(root: &Path) {
     if let Ok(tokio) = Builder::new_current_thread().enable_all().build()
-        && let Ok(entries) = fs::read_dir(&root)
+        && let Ok(entries) = fs::read_dir(root)
     {
         for runtime in entries.flatten().map(|entry| entry.path()) {
             let Ok(discovered) = discover(&runtime) else {
@@ -252,7 +261,6 @@ fn rescue_abandoned_supervisors(child: u32) {
             });
         }
     }
-    let _ignored = fs::remove_dir_all(&root);
 }
 
 fn successful_status(status: ExitStatus, context: &str) -> Result<(), Box<dyn Error>> {
@@ -306,6 +314,13 @@ fn prove_operational_lifecycle() -> Result<(), Box<dyn Error>> {
         runtime,
     ));
     drop(tokio);
+    if result.is_err() {
+        // The contract's own cleanup may have failed with it, and this
+        // process has no parent that could rescue its supervisors. Their
+        // control sockets under this tree are the only way to reach them, so
+        // halt whatever is left before the tree is removed.
+        halt_supervisors_under(root.path());
+    }
     result
 }
 

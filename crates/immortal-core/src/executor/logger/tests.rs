@@ -14,13 +14,15 @@ use super::{
     super::{
         events::{handle_broker_event, handle_logger_event},
         prepare::prepare_execution,
+        timers::cancel_auxiliary,
     },
-    BrokerLoggerId, ExecutionContext, ExecutorError, LoggerExecutionState, LoggerLastResult,
-    LoggerShutdownState, LoggerShutdownTier, ProcessBrokerClient, ProcessId, ProcessSignal,
-    SpawnDetail, SpawnFailure, SpawnStage, handle_due_logger_timers, signal_logger_tier,
+    AuxiliaryExecution, BrokerLoggerId, ExecutionContext, ExecutorError, LoggerExecutionState,
+    LoggerLastResult, LoggerShutdownState, LoggerShutdownTier, ProcessBrokerClient, ProcessId,
+    ProcessSignal, SpawnDetail, SpawnFailure, SpawnStage, handle_due_logger_timers,
+    signal_logger_tier,
 };
 use crate::{
-    config::ServiceConfig,
+    config::{ServiceConfig, parse_str},
     process::{BrokerTaskId, ChildEvent, ProcessBrokerEvent, ProcessGroupId},
 };
 
@@ -396,7 +398,7 @@ async fn the_kill_acknowledgement_is_consumed_after_a_late_spawn_failure()
         fixture.logger(SHARED)?.state,
         LoggerExecutionState::Backoff { .. }
     ));
-    assert!(fixture.execution.logger_signal_acknowledgements.is_empty());
+    assert_eq!(fixture.execution.task_signals.len(), 0);
     assert_eq!(fixture.reported(), Some(START_TIMED_OUT));
     Ok(())
 }
@@ -424,7 +426,7 @@ async fn the_kill_acknowledgement_is_consumed_after_the_reap() -> Result<(), Box
         })
         .await?;
 
-    assert!(fixture.execution.logger_signal_acknowledgements.is_empty());
+    assert_eq!(fixture.execution.task_signals.len(), 0);
     Ok(())
 }
 
@@ -462,7 +464,7 @@ async fn shutdown_signals_owe_one_acknowledgement_each() -> Result<(), Box<dyn E
         ProcessSignal::Terminate,
     )
     .await?;
-    assert_eq!(fixture.execution.logger_signal_acknowledgements.len(), 2);
+    assert_eq!(fixture.execution.task_signals.len(), 2);
 
     fixture
         .dispatch(ProcessBrokerEvent::TaskSignalDelivered { task })
@@ -475,10 +477,80 @@ async fn shutdown_signals_owe_one_acknowledgement_each() -> Result<(), Box<dyn E
         })
         .await?;
 
-    assert!(fixture.execution.logger_signal_acknowledgements.is_empty());
+    assert_eq!(fixture.execution.task_signals.len(), 0);
     assert!(matches!(
         fixture.logger(SHARED)?.state,
         LoggerExecutionState::Down
     ));
+    Ok(())
+}
+
+/// Regression: only logger tasks had their acknowledgements tracked. A start
+/// condition that was cancelled and reaped before the broker answered its
+/// kill left an answer nobody owned, which ended supervision.
+#[tokio::test]
+async fn a_cancelled_conditions_kill_acknowledgement_is_consumed_after_its_reap()
+-> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(
+        "version: 2\ncommand: [/bin/true]\nstart_condition:\n  command: [/bin/true]\n  \
+         timeout_seconds: 10\n",
+    )?;
+    let task = BrokerTaskId::new(40).ok_or("invalid test task")?;
+    fixture.execution.auxiliary = AuxiliaryExecution::Running(task);
+    cancel_auxiliary(&mut fixture.client, &mut fixture.execution).await?;
+    assert_eq!(fixture.execution.task_signals.len(), 1);
+
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskChild {
+            task,
+            event: ChildEvent::Signaled {
+                pid: process()?,
+                signal: 9,
+            },
+        })
+        .await?;
+    assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
+
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSignalFailed {
+            task,
+            os_error: Some(3),
+        })
+        .await?;
+    assert_eq!(fixture.execution.task_signals.len(), 0);
+
+    let repeated = fixture
+        .dispatch(ProcessBrokerEvent::TaskSignalFailed {
+            task,
+            os_error: Some(3),
+        })
+        .await;
+    assert!(repeated.is_err(), "an answer that is not owed is a fault");
+    Ok(())
+}
+
+/// The state that still names the task acts on its acknowledgement: a kill
+/// the broker could not deliver ends the cancelled condition at once.
+#[tokio::test]
+async fn an_owned_acknowledgement_still_reaches_its_task_state() -> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(
+        "version: 2\ncommand: [/bin/true]\nstart_condition:\n  command: [/bin/true]\n  \
+         timeout_seconds: 10\n",
+    )?;
+    let task = BrokerTaskId::new(41).ok_or("invalid test task")?;
+    fixture.execution.auxiliary = AuxiliaryExecution::Running(task);
+    cancel_auxiliary(&mut fixture.client, &mut fixture.execution).await?;
+
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskSignalFailed {
+            task,
+            os_error: Some(3),
+        })
+        .await?;
+
+    assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
+    assert_eq!(fixture.execution.task_signals.len(), 0);
     Ok(())
 }

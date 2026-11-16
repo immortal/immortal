@@ -83,8 +83,8 @@ use self::{
     events::{finish_lifecycle_failure, handle_broker_event, respond_lifecycle},
     logger::{
         advance_logger_shutdown, fail_childless_start_on_logger_exhaustion,
-        handle_due_logger_timers, logger_status, logger_tier_is_down,
-        retire_logger_signal_acknowledgement, schedule_logger_restart, start_down_loggers,
+        handle_due_logger_timers, logger_status, logger_tier_is_down, schedule_logger_restart,
+        start_down_loggers,
     },
     prepare::{PreparedExecution, PreparedLaunch, broker_lifetime_plan, prepare_execution},
     runtime::run_prepared,
