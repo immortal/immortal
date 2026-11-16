@@ -16,18 +16,22 @@ workflow definition or an unreviewed local measurement is not sufficient.
 
 These gates cannot be checked by elapsed time, intention, or generated text.
 
-The process-library dependency is the published crates.io `fork` 0.11.0
-release, built from fork commit `bf240d69e96b6f5f3ee58861307cdbb623f02b07` and
+The process-library dependency is the published crates.io `fork` 0.12.0
+release, built from fork commit `dd7fec5e87ade5a5200d840611cc693d3f3bd7ae` and
 locked in `Cargo.lock` with its registry source and checksum
-`9b8b9dc1312e1668be5ffa350e3c0adc9b501b2eeebb1b31206477240cc96554`, without a
-Git or local patch override. It adds the process-group probe, the anchor-pinned
-guard group with helper-mediated delivery, and the waitable-children policy
-APIs that COR-008 and COR-009 rely on; its own native Linux, macOS, and FreeBSD
-matrix is recorded in [VALIDATION.md](VALIDATION.md). The process-library gate
-is complete: the Immortal checkpoint locked to it passes its native Linux,
-macOS, and FreeBSD matrices, recorded under COR-008 and COR-009 in
-VALIDATION.md. Release eligibility remains blocked by the external real-host,
-campaign, and drill gates above.
+`5d11ade641d9b2dee55b7704802a27aa5208d968165355a281fc72ab2e9b2f01`, without a
+Git or local patch override. It keeps the process-group probe, the
+anchor-pinned guard group with helper-mediated delivery, and the
+waitable-children policy APIs that COR-008 and COR-009 rely on, and adds the
+guard helper's signal reset and orderly cleanup that 0.11.0 lacked; its public
+API is checked against 0.11.0 by CI, and its own native Linux, macOS, FreeBSD,
+and musl matrix passed for the release commit in
+[fork CI run 43914125390](https://github.com/immortal/fork/actions/runs/43914125390).
+The process-library gate is complete once the Immortal checkpoint locked to
+this release passes its native Linux, macOS, and FreeBSD matrices, recorded
+under COR-008 and COR-009 in VALIDATION.md. Release eligibility remains
+blocked by that checkpoint and by the external real-host, campaign, and drill
+gates above.
 
 ## Candidate validation
 
