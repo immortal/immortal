@@ -7,16 +7,21 @@
 //! in for a later task's failure.
 //!
 //! The later tests cover what the dispatch does for any broker task, logger
-//! or not, after its owner let go of it: the acknowledgement of a signal the
-//! supervisor sent, and the reap that can follow a failed start or a kill
-//! the broker could not confirm.
+//! or not: the acknowledgement of a signal the supervisor sent is consumed
+//! once, also after the task's reap, and a condition or hook is kept until
+//! its reap after a failed start that left a child or a kill the broker
+//! could not confirm.
 
-use std::{error::Error, time::Instant};
+use std::{
+    error::Error,
+    time::{Duration, Instant},
+};
 
 use tokio::{net::UnixStream, time::Instant as TokioInstant};
 
 use super::{
     super::{
+        DesiredState, Generation, LifecycleExecution, LifecycleHookKind, LifecycleHookState,
         events::{handle_broker_event, handle_logger_event},
         prepare::prepare_execution,
         timers::cancel_auxiliary,
@@ -490,161 +495,246 @@ async fn shutdown_signals_owe_one_acknowledgement_each() -> Result<(), Box<dyn E
     Ok(())
 }
 
+const CONDITION: &str = "version: 2\ncommand: [/bin/true]\nstart_condition:\n  command: [/bin/true]\n  \
+                         timeout_seconds: 10\n";
+const POST_EXIT: &str = "version: 2\ncommand: [/bin/true]\npost_exit:\n  command: [/bin/true]\n  \
+                         timeout_seconds: 10\n";
+
+fn reap(task: BrokerTaskId) -> Result<ProcessBrokerEvent, Box<dyn Error>> {
+    Ok(ProcessBrokerEvent::TaskChild {
+        task,
+        event: ChildEvent::Signaled {
+            pid: process()?,
+            signal: 9,
+        },
+    })
+}
+
+fn failed_start(task: BrokerTaskId, child: bool) -> Result<ProcessBrokerEvent, Box<dyn Error>> {
+    Ok(ProcessBrokerEvent::TaskSpawnFailed {
+        task,
+        stage: SpawnStage::Execute,
+        failure: SpawnFailure::OperatingSystem,
+        os_error: Some(2),
+        cleanup_pending: if child { Some(process()?) } else { None },
+    })
+}
+
+const fn kill_failed(task: BrokerTaskId) -> ProcessBrokerEvent {
+    ProcessBrokerEvent::TaskSignalFailed {
+        task,
+        os_error: Some(3),
+    }
+}
+
+/// A fixture whose start condition was running and has just been cancelled.
+async fn cancelled_condition(task: u64) -> Result<(Fixture, BrokerTaskId), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(CONDITION)?;
+    let task = BrokerTaskId::new(task).ok_or("invalid test task")?;
+    fixture.execution.auxiliary = AuxiliaryExecution::Running(task);
+    cancel_auxiliary(&mut fixture.client, &mut fixture.execution).await?;
+    assert_eq!(fixture.execution.task_signals.len(), 1);
+    Ok((fixture, task))
+}
+
 /// Regression: only logger tasks had their acknowledgements tracked. A start
 /// condition that was cancelled and reaped before the broker answered its
 /// kill left an answer nobody owned, which ended supervision.
 #[tokio::test]
 async fn a_cancelled_conditions_kill_acknowledgement_is_consumed_after_its_reap()
 -> Result<(), Box<dyn Error>> {
-    let mut fixture = Fixture::new()?;
-    fixture.config = parse_str(
-        "version: 2\ncommand: [/bin/true]\nstart_condition:\n  command: [/bin/true]\n  \
-         timeout_seconds: 10\n",
-    )?;
-    let task = BrokerTaskId::new(40).ok_or("invalid test task")?;
-    fixture.execution.auxiliary = AuxiliaryExecution::Running(task);
-    cancel_auxiliary(&mut fixture.client, &mut fixture.execution).await?;
-    assert_eq!(fixture.execution.task_signals.len(), 1);
-
-    fixture
-        .dispatch(ProcessBrokerEvent::TaskChild {
-            task,
-            event: ChildEvent::Signaled {
-                pid: process()?,
-                signal: 9,
-            },
-        })
-        .await?;
+    let (mut fixture, task) = cancelled_condition(40).await?;
+    fixture.dispatch(reap(task)?).await?;
     assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
 
-    fixture
-        .dispatch(ProcessBrokerEvent::TaskSignalFailed {
-            task,
-            os_error: Some(3),
-        })
-        .await?;
+    fixture.dispatch(kill_failed(task)).await?;
     assert_eq!(fixture.execution.task_signals.len(), 0);
-
-    let repeated = fixture
-        .dispatch(ProcessBrokerEvent::TaskSignalFailed {
-            task,
-            os_error: Some(3),
-        })
-        .await;
-    assert!(repeated.is_err(), "an answer that is not owed is a fault");
+    assert!(
+        fixture.dispatch(kill_failed(task)).await.is_err(),
+        "an answer that is not owed is a fault"
+    );
     Ok(())
 }
 
-/// The state that still names the task acts on its acknowledgement: a kill
-/// the broker could not deliver ends the cancelled condition at once.
+/// Regression: a kill the broker could not confirm was taken as proof that
+/// the evaluation was gone. A slow guard helper can still deliver it, so the
+/// condition was given up, and could be retried, while its process lived, and
+/// the reap that followed ended supervision. The task is kept until its reap.
 #[tokio::test]
-async fn an_owned_acknowledgement_still_reaches_its_task_state() -> Result<(), Box<dyn Error>> {
-    let mut fixture = Fixture::new()?;
-    fixture.config = parse_str(
-        "version: 2\ncommand: [/bin/true]\nstart_condition:\n  command: [/bin/true]\n  \
-         timeout_seconds: 10\n",
-    )?;
-    let task = BrokerTaskId::new(41).ok_or("invalid test task")?;
-    fixture.execution.auxiliary = AuxiliaryExecution::Running(task);
-    cancel_auxiliary(&mut fixture.client, &mut fixture.execution).await?;
+async fn a_condition_whose_kill_was_not_confirmed_is_kept_until_its_reap()
+-> Result<(), Box<dyn Error>> {
+    let (mut fixture, task) = cancelled_condition(41).await?;
+    let cleanup_deadline = fixture.execution.deadline;
 
-    fixture
-        .dispatch(ProcessBrokerEvent::TaskSignalFailed {
-            task,
-            os_error: Some(3),
-        })
-        .await?;
+    fixture.dispatch(kill_failed(task)).await?;
+    assert_eq!(
+        fixture.execution.auxiliary,
+        AuxiliaryExecution::Killing { task, retry: false }
+    );
+    assert_eq!(
+        fixture.execution.deadline, cleanup_deadline,
+        "the cleanup deadline armed with the kill still bounds the wait"
+    );
 
+    fixture.dispatch(reap(task)?).await?;
     assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
-    assert_eq!(fixture.execution.task_signals.len(), 0);
-
-    // Regression: a kill the broker could not confirm may still be delivered,
-    // so the reap can follow after the condition was given up. It ended
-    // supervision as an event nobody owned.
-    let reap = ProcessBrokerEvent::TaskChild {
-        task,
-        event: ChildEvent::Signaled {
-            pid: process()?,
-            signal: 9,
-        },
-    };
-    fixture.dispatch(reap.clone()).await?;
-    assert!(fixture.execution.released_tasks.is_empty());
     assert!(
-        fixture.dispatch(reap).await.is_err(),
+        fixture.dispatch(reap(task)?).await.is_err(),
         "a task is reaped once; a second reap is a fault"
     );
     Ok(())
 }
 
 /// Regression: a start that failed after forking leaves a child to collect.
-/// The condition retried at once and the child's reap then ended supervision.
+/// The condition was retried at once, beside that child, whose reap then
+/// ended supervision.
 #[tokio::test]
-async fn the_reap_of_a_condition_whose_start_failed_is_stale_not_a_fault()
+async fn a_condition_whose_start_left_a_child_is_retried_only_after_its_reap()
 -> Result<(), Box<dyn Error>> {
     let mut fixture = Fixture::new()?;
-    fixture.config = parse_str(
-        "version: 2\ncommand: [/bin/true]\nstart_condition:\n  command: [/bin/true]\n  \
-         timeout_seconds: 10\n",
-    )?;
+    fixture.config = parse_str(CONDITION)?;
     let task = BrokerTaskId::new(42).ok_or("invalid test task")?;
     fixture.execution.auxiliary = AuxiliaryExecution::Starting(task);
 
-    fixture
-        .dispatch(ProcessBrokerEvent::TaskSpawnFailed {
-            task,
-            stage: SpawnStage::Execute,
-            failure: SpawnFailure::OperatingSystem,
-            os_error: Some(2),
-            cleanup_pending: Some(process()?),
-        })
-        .await?;
-    assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
+    fixture.dispatch(failed_start(task, true)?).await?;
+    assert_eq!(
+        fixture.execution.auxiliary,
+        AuxiliaryExecution::Killing { task, retry: true }
+    );
+    assert!(fixture.execution.deadline.is_some());
 
-    fixture
-        .dispatch(ProcessBrokerEvent::TaskChild {
-            task,
-            event: ChildEvent::Exited {
-                pid: process()?,
-                code: 127,
-            },
-        })
-        .await?;
-    assert!(fixture.execution.released_tasks.is_empty());
+    fixture.dispatch(reap(task)?).await?;
+    assert_eq!(
+        fixture.execution.auxiliary,
+        AuxiliaryExecution::Idle,
+        "the retry is scheduled once the child is collected"
+    );
     Ok(())
 }
 
-/// A failed start with nothing to collect is followed by no reap, so one
-/// that arrives anyway answers nothing and stays a fault.
+/// A failed start with nothing to collect is retried at once and is followed
+/// by no reap, so one that arrives anyway stays a fault.
 #[tokio::test]
 async fn a_reap_after_a_failed_start_without_a_child_stays_a_protocol_fault()
 -> Result<(), Box<dyn Error>> {
     let mut fixture = Fixture::new()?;
-    fixture.config = parse_str(
-        "version: 2\ncommand: [/bin/true]\nstart_condition:\n  command: [/bin/true]\n  \
-         timeout_seconds: 10\n",
-    )?;
+    fixture.config = parse_str(CONDITION)?;
     let task = BrokerTaskId::new(43).ok_or("invalid test task")?;
     fixture.execution.auxiliary = AuxiliaryExecution::Starting(task);
+
+    fixture.dispatch(failed_start(task, false)?).await?;
+    assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
+    assert!(fixture.dispatch(reap(task)?).await.is_err());
+    Ok(())
+}
+
+/// Regression: a cancelled start that then failed without a child stayed in
+/// its killing state, and the kill's answer was what ended it. It ends at the
+/// failure; the answer is consumed afterwards and no reap is expected.
+#[tokio::test]
+async fn a_cancelled_start_that_fails_without_a_child_expects_no_reap() -> Result<(), Box<dyn Error>>
+{
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(CONDITION)?;
+    let task = BrokerTaskId::new(44).ok_or("invalid test task")?;
+    fixture.execution.auxiliary = AuxiliaryExecution::Starting(task);
+    cancel_auxiliary(&mut fixture.client, &mut fixture.execution).await?;
+
+    fixture.dispatch(failed_start(task, false)?).await?;
+    assert_eq!(fixture.execution.auxiliary, AuxiliaryExecution::Idle);
+
+    fixture.dispatch(kill_failed(task)).await?;
+    assert_eq!(fixture.execution.task_signals.len(), 0);
+    assert!(fixture.dispatch(reap(task)?).await.is_err());
+    Ok(())
+}
+
+/// Regression: an acknowledgement that answered no signal was accepted while
+/// a state still named its task, and a failed one could even end the task.
+#[tokio::test]
+async fn a_repeated_acknowledgement_is_a_fault_while_the_task_is_still_owned()
+-> Result<(), Box<dyn Error>> {
+    let (mut fixture, task) = cancelled_condition(45).await?;
     fixture
-        .dispatch(ProcessBrokerEvent::TaskSpawnFailed {
-            task,
-            stage: SpawnStage::Execute,
-            failure: SpawnFailure::OperatingSystem,
-            os_error: Some(2),
-            cleanup_pending: None,
-        })
+        .dispatch(ProcessBrokerEvent::TaskSignalDelivered { task })
         .await?;
 
-    let reap = fixture
-        .dispatch(ProcessBrokerEvent::TaskChild {
-            task,
-            event: ChildEvent::Exited {
-                pid: process()?,
-                code: 127,
-            },
-        })
-        .await;
-    assert!(reap.is_err());
+    for repeated in [
+        ProcessBrokerEvent::TaskSignalDelivered { task },
+        kill_failed(task),
+    ] {
+        assert!(fixture.dispatch(repeated).await.is_err());
+    }
+    assert_eq!(
+        fixture.execution.auxiliary,
+        AuxiliaryExecution::Killing { task, retry: false }
+    );
+    Ok(())
+}
+
+/// A post-exit hook is kept until its reap after a kill the broker could not
+/// confirm and after a failed start that left a child, so the service cannot
+/// restart beside it.
+#[tokio::test]
+async fn a_post_exit_hook_is_kept_until_its_reap() -> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(POST_EXIT)?;
+    let task = BrokerTaskId::new(46).ok_or("invalid test task")?;
+    fixture.execution.auxiliary = AuxiliaryExecution::HookRunning(task);
+    cancel_auxiliary(&mut fixture.client, &mut fixture.execution).await?;
+    fixture.dispatch(kill_failed(task)).await?;
+    assert_eq!(
+        fixture.execution.auxiliary,
+        AuxiliaryExecution::HookKilling(task)
+    );
+
+    let mut fixture = Fixture::new()?;
+    fixture.config = parse_str(POST_EXIT)?;
+    fixture.execution.auxiliary = AuxiliaryExecution::HookStarting(task);
+    fixture.dispatch(failed_start(task, true)?).await?;
+    assert_eq!(
+        fixture.execution.auxiliary,
+        AuxiliaryExecution::HookKilling(task)
+    );
+    assert!(fixture.execution.deadline.is_some());
+    Ok(())
+}
+
+/// A descriptor lifecycle hook is kept until its reap in the same two cases,
+/// so a reload or stop cannot start another hook beside it and the live
+/// service is not affected.
+#[tokio::test]
+async fn a_lifecycle_hook_is_kept_until_its_reap() -> Result<(), Box<dyn Error>> {
+    let task = BrokerTaskId::new(47).ok_or("invalid test task")?;
+    let hook = |state| LifecycleExecution {
+        after: None,
+        command: None,
+        generation: Generation::FIRST,
+        kind: LifecycleHookKind::Reload,
+        previous_desired: DesiredState::Up,
+        response: None,
+        resume_ready: true,
+        state,
+        task,
+        timeout: Duration::from_secs(10),
+    };
+    let state = |fixture: &Fixture| fixture.execution.lifecycle.as_ref().map(|hook| hook.state);
+
+    let mut fixture = Fixture::new()?;
+    fixture.execution.lifecycle = Some(hook(LifecycleHookState::Killing));
+    fixture
+        .execution
+        .task_signals
+        .signal(&mut fixture.client, task, ProcessSignal::Kill)
+        .await?;
+    fixture.dispatch(kill_failed(task)).await?;
+    assert_eq!(state(&fixture), Some(LifecycleHookState::Killing));
+
+    let mut fixture = Fixture::new()?;
+    fixture.execution.lifecycle = Some(hook(LifecycleHookState::Starting));
+    fixture.dispatch(failed_start(task, true)?).await?;
+    assert_eq!(state(&fixture), Some(LifecycleHookState::Killing));
+    assert!(fixture.execution.deadline.is_some());
     Ok(())
 }

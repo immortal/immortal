@@ -33,51 +33,6 @@ pub(super) async fn handle_broker_event(
     config: &ServiceConfig,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
-    // A failed start that left a child to collect, and a kill the broker
-    // could not confirm, can both be followed by the task's reap. If handling
-    // the event makes the task's owner let go of it, that reap is expected.
-    let reap_may_follow = match &event {
-        ProcessBrokerEvent::TaskSpawnFailed {
-            task,
-            cleanup_pending: Some(_),
-            ..
-        }
-        | ProcessBrokerEvent::TaskSignalFailed { task, .. } => Some(*task),
-        _ => None,
-    }
-    .filter(|task| execution.names_task(*task));
-    let handled = route_broker_event(client, event, commands, config, execution).await;
-    if let Some(task) = reap_may_follow
-        && handled.is_ok()
-        && !execution.names_task(task)
-    {
-        execution.released_tasks.push(task);
-    }
-    handled
-}
-
-/// Whether `event` is the reap of a task whose owner already let go of it,
-/// which is then consumed; a terminal reap ends the expectation.
-fn consume_released_reap(released: &mut Vec<BrokerTaskId>, event: &ProcessBrokerEvent) -> bool {
-    let ProcessBrokerEvent::TaskChild { task, event } = event else {
-        return false;
-    };
-    let Some(position) = released.iter().position(|released| released == task) else {
-        return false;
-    };
-    if event.is_terminal() {
-        released.swap_remove(position);
-    }
-    true
-}
-
-async fn route_broker_event(
-    client: &mut ProcessBrokerClient,
-    event: ProcessBrokerEvent,
-    commands: &PreparedExecution,
-    config: &ServiceConfig,
-    execution: &mut ExecutionContext,
-) -> Result<(), ExecutorError> {
     if matches!(
         event,
         ProcessBrokerEvent::ContainmentFailed { .. }
@@ -106,6 +61,16 @@ async fn route_broker_event(
     // names its task still gets to act on it; one that outlived that state,
     // because the reap or a start failure arrived first, ends here.
     let owed = execution.task_signals.retire(&event);
+    if !owed
+        && matches!(
+            event,
+            ProcessBrokerEvent::TaskSignalDelivered { .. }
+                | ProcessBrokerEvent::TaskSignalFailed { .. }
+        )
+    {
+        // It answers no signal this supervisor sent.
+        return Err(ExecutorError::UnexpectedBrokerEvent(event));
+    }
     if task_id(&event).is_some_and(|task| {
         execution
             .lifecycle
@@ -127,9 +92,7 @@ async fn route_broker_event(
                 handle_logger_event(client, event, config, execution)
             };
         }
-        if execution.auxiliary.task() != Some(task)
-            && (owed || consume_released_reap(&mut execution.released_tasks, &event))
-        {
+        if owed && execution.auxiliary.task() != Some(task) {
             return Ok(());
         }
         return handle_auxiliary_event(client, event, config, execution);
@@ -168,6 +131,22 @@ pub(super) async fn handle_lifecycle_event(
         {
             Ok(())
         }
+        ProcessBrokerEvent::TaskSpawnFailed {
+            task: current,
+            cleanup_pending: Some(_),
+            ..
+        } if current == task => {
+            // The failed start left a child to collect. The hook is kept
+            // until that reap, which ends it as a failure, so no other hook
+            // can start beside the leftover process.
+            if let Some(lifecycle) = execution.lifecycle.as_mut()
+                && lifecycle.state != LifecycleHookState::Killing
+            {
+                lifecycle.state = LifecycleHookState::Killing;
+                execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+            }
+            Ok(())
+        }
         ProcessBrokerEvent::TaskSpawnFailed { task: current, .. } if current == task => {
             finish_lifecycle_failure(
                 client,
@@ -200,22 +179,15 @@ pub(super) async fn handle_lifecycle_event(
         {
             Ok(())
         }
+        // A kill the broker could not confirm does not prove the hook is
+        // gone: a slow guard helper can still deliver it. Either way the hook
+        // is kept until its reap, bounded by the cleanup deadline armed when
+        // the kill was sent.
         ProcessBrokerEvent::TaskSignalDelivered { task: current }
+        | ProcessBrokerEvent::TaskSignalFailed { task: current, .. }
             if current == task && state == LifecycleHookState::Killing =>
         {
             Ok(())
-        }
-        ProcessBrokerEvent::TaskSignalFailed { task: current, .. }
-            if current == task && state == LifecycleHookState::Killing =>
-        {
-            finish_lifecycle_failure(
-                client,
-                commands,
-                config,
-                execution,
-                "descriptor lifecycle hook could not be killed",
-            )
-            .await
         }
         event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
     }

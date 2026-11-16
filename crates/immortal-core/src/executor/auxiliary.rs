@@ -11,8 +11,8 @@ use std::{io, time::Duration};
 use tokio::time::Instant as TokioInstant;
 
 use super::{
-    AuxiliaryExecution, BrokerTaskId, ChildEvent, ExecutionContext, ExecutorError,
-    ProcessBrokerClient, ProcessBrokerEvent, ServiceConfig, StartConditionConfig,
+    AuxiliaryExecution, BROKER_EVENT_TIMEOUT, BrokerTaskId, ChildEvent, ExecutionContext,
+    ExecutorError, ProcessBrokerClient, ProcessBrokerEvent, ServiceConfig, StartConditionConfig,
     finish_completion, jittered_backoff_seed,
 };
 
@@ -52,15 +52,27 @@ pub(super) fn handle_post_exit_event(
         {
             Ok(())
         }
-        ProcessBrokerEvent::TaskSpawnFailed { task, .. }
-            if matches!(
-                execution.auxiliary,
-                AuxiliaryExecution::HookStarting(current)
-                    | AuxiliaryExecution::HookKilling(current)
-                    if current == task
-            ) =>
+        ProcessBrokerEvent::TaskSpawnFailed {
+            task,
+            cleanup_pending,
+            ..
+        } if matches!(
+            execution.auxiliary,
+            AuxiliaryExecution::HookStarting(current)
+                | AuxiliaryExecution::HookKilling(current)
+                if current == task
+        ) =>
         {
-            finish_post_exit(client, config, execution)
+            if cleanup_pending.is_none() {
+                return finish_post_exit(client, config, execution);
+            }
+            // The failed start left a child to collect; completion waits for
+            // that reap so the service cannot restart beside it.
+            if execution.auxiliary == AuxiliaryExecution::HookStarting(task) {
+                execution.auxiliary = AuxiliaryExecution::HookKilling(task);
+                execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+            }
+            Ok(())
         }
         ProcessBrokerEvent::TaskChild { task, event }
             if matches!(
@@ -77,15 +89,15 @@ pub(super) fn handle_post_exit_event(
         {
             Ok(())
         }
+        // A kill the broker could not confirm does not prove the hook is
+        // gone: a slow guard helper can still deliver it. Either way
+        // completion waits for the reap, bounded by the cleanup deadline
+        // armed when the kill was sent.
         ProcessBrokerEvent::TaskSignalDelivered { task }
+        | ProcessBrokerEvent::TaskSignalFailed { task, .. }
             if execution.auxiliary == AuxiliaryExecution::HookKilling(task) =>
         {
             Ok(())
-        }
-        ProcessBrokerEvent::TaskSignalFailed { task, .. }
-            if execution.auxiliary == AuxiliaryExecution::HookKilling(task) =>
-        {
-            finish_post_exit(client, config, execution)
         }
         event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
     }
@@ -131,18 +143,35 @@ pub(super) fn handle_condition_event(
         {
             Ok(())
         }
-        ProcessBrokerEvent::TaskSpawnFailed { task, .. }
-            if execution.auxiliary == AuxiliaryExecution::Starting(task) =>
-        {
-            schedule_condition_retry(client, task, condition, execution);
+        ProcessBrokerEvent::TaskSpawnFailed {
+            task,
+            cleanup_pending,
+            ..
+        } if execution.auxiliary == AuxiliaryExecution::Starting(task) => {
+            if cleanup_pending.is_some() {
+                // The failed start left a child to collect; the retry waits
+                // for that reap so two evaluations never run together.
+                execution.auxiliary = AuxiliaryExecution::Killing { task, retry: true };
+                execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+            } else {
+                schedule_condition_retry(client, task, condition, execution);
+            }
             Ok(())
         }
-        ProcessBrokerEvent::TaskSpawnFailed { task, .. }
-            if matches!(
-                execution.auxiliary,
-                AuxiliaryExecution::Killing { task: current, .. } if current == task
-            ) =>
+        ProcessBrokerEvent::TaskSpawnFailed {
+            task,
+            cleanup_pending,
+            ..
+        } if matches!(
+            execution.auxiliary,
+            AuxiliaryExecution::Killing { task: current, .. } if current == task
+        ) =>
         {
+            // With a child to collect the reap ends the kill. Without one no
+            // reap will follow, so the kill ends here.
+            if cleanup_pending.is_none() {
+                finish_condition_kill(client, task, condition, execution);
+            }
             Ok(())
         }
         ProcessBrokerEvent::TaskChild { task, event }
@@ -176,32 +205,39 @@ pub(super) fn handle_condition_event(
         {
             Ok(())
         }
+        // A kill the broker could not confirm does not prove the evaluation
+        // is gone: a slow guard helper can still deliver it. Either way the
+        // task is kept until its reap, bounded by the cleanup deadline armed
+        // when the kill was sent.
         ProcessBrokerEvent::TaskSignalDelivered { task }
+        | ProcessBrokerEvent::TaskSignalFailed { task, .. }
             if matches!(
                 execution.auxiliary,
                 AuxiliaryExecution::Killing { task: current, .. } if current == task
             ) =>
         {
-            Ok(())
-        }
-        ProcessBrokerEvent::TaskSignalFailed { task, .. }
-            if matches!(
-                execution.auxiliary,
-                AuxiliaryExecution::Killing { task: current, .. } if current == task
-            ) =>
-        {
-            if matches!(
-                execution.auxiliary,
-                AuxiliaryExecution::Killing { retry: true, .. }
-            ) {
-                schedule_condition_retry(client, task, condition, execution);
-            } else {
-                execution.auxiliary = AuxiliaryExecution::Idle;
-                execution.deadline = None;
-            }
             Ok(())
         }
         event => Err(ExecutorError::UnexpectedBrokerEvent(event)),
+    }
+}
+
+/// End a killed evaluation: retry it if the kill was a timeout, otherwise
+/// leave the condition idle.
+fn finish_condition_kill(
+    client: &ProcessBrokerClient,
+    task: BrokerTaskId,
+    condition: &StartConditionConfig,
+    execution: &mut ExecutionContext,
+) {
+    if matches!(
+        execution.auxiliary,
+        AuxiliaryExecution::Killing { retry: true, .. }
+    ) {
+        schedule_condition_retry(client, task, condition, execution);
+    } else {
+        execution.auxiliary = AuxiliaryExecution::Idle;
+        execution.deadline = None;
     }
 }
 

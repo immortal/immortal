@@ -439,13 +439,18 @@ unread. A failed acknowledgement settles an operator signal as failed even
 without an OS error, so a signal racing the service's exit is never reported as
 delivered.
 Broker tasks, the loggers, start conditions, post-exit hooks, and descriptor
-lifecycle hooks, follow both rules. The supervisor records one owed
-acknowledgement for every signal it sends to a task and retires it when the
-answer arrives, whether or not a state still names the task; an answer that
-is not owed is a protocol fault. A task whose owner let go of it after a
-failed start that left a child to collect, or after a kill the broker could
-not confirm, which a slow guard helper can still deliver, is remembered until
-its reap arrives; a reap for any other unowned task is a protocol fault.
+lifecycle hooks, follow the acknowledgement rule. The supervisor records one
+owed acknowledgement for every signal it sends to a task and retires it when
+the answer arrives, whether or not a state still names the task; an answer
+that is not owed is a protocol fault even while one does. Their reaps are
+never stale, because a task is kept until its process is collected: a failed
+start that left a child, and a kill the broker could not confirm, which a slow
+guard helper can still deliver, both leave the task in its killing state
+until the reap, bounded by the cleanup deadline, whose expiry fails
+supervision closed. A condition is therefore never retried, a service never
+restarted after its post-exit hook, and a second lifecycle hook never started
+beside a leftover process, and a reap for a task no state names is a protocol
+fault.
 The supervisor event loop remains the sole lifecycle owner. The control accept
 loop treats peer-attributable and resource-attributable accept failures as
 transient: aborted or reset peers, interrupted accepts, and descriptor or
