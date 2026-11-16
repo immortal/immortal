@@ -285,6 +285,28 @@ umask; a directory left group writable is rejected at startup. Adjust the
 `REQUIRE` line locally if
 the definitions filesystem has additional mount ordering requirements.
 
+Because `rc.shutdown` stops only the manager, a system shutdown would leave
+the supervisors and their services running until the final step, which
+signals every remaining process and allows only a short fixed time. Install
+[the companion script](contrib/freebsd/immortal_halt) as
+`/usr/local/etc/rc.d/immortal_halt` as well, owned by root and executable,
+and enable it:
+
+```sh
+sysrc immortal_halt_enable=YES
+```
+
+It does nothing at start. `rc.shutdown` stops scripts in the reverse of their
+start order, and this one starts before the manager and after the network and
+the file systems, so at shutdown it runs after the manager is gone and while
+both are still available. It runs `immortalctl halt --all`, so every service
+gets its ordered, graceful stop. Restarting or stopping `immortaldir` alone
+leaves it, and the running services, untouched; `service immortal_halt stop`
+by hand halts every service. Set `immortal_halt_runtime_dir` if the manager
+uses a runtime root other than `/var/run/immortal`. `rc.shutdown` ends the
+whole shutdown sequence after `rcshutdown_timeout` seconds, 90 by default;
+raise it in `rc.conf` if the services together need longer to stop.
+
 ## Linux systemd
 
 Install [the example unit](contrib/systemd/immortaldir.service), then review all

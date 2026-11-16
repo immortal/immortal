@@ -1,0 +1,40 @@
+#!/bin/sh
+
+# PROVIDE: immortal_halt
+# REQUIRE: FILESYSTEMS NETWORKING
+# BEFORE: immortaldir
+# KEYWORD: shutdown
+
+# Halt every Immortal service in order at system shutdown.
+#
+# rc.shutdown stops scripts in the reverse of their start order. Starting
+# before the manager makes this script stop after it: the manager must be gone
+# before services are halted, or it would start them again. Starting after the
+# network and the file systems makes it stop while services can still reach
+# them. It does nothing at start.
+
+. /etc/rc.subr
+
+name=immortal_halt
+rcvar=immortal_halt_enable
+desc="Halt Immortal services in order at system shutdown"
+
+start_cmd=":"
+stop_cmd="${name}_stop"
+
+load_rc_config "$name"
+
+: "${immortal_halt_enable:=NO}"
+: "${immortal_halt_control:=/usr/local/bin/immortalctl}"
+: "${immortal_halt_runtime_dir:=/var/run/immortal}"
+
+immortal_halt_stop()
+{
+	"$immortal_halt_control" --runtime-dir "$immortal_halt_runtime_dir" halt --all
+	status=$?
+	# Halting with no service present reports "not found"; that is not a
+	# failure.
+	[ "$status" -eq 0 ] || [ "$status" -eq 66 ]
+}
+
+run_rc_command "$1"

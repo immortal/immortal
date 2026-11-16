@@ -112,6 +112,7 @@ jobs:
             export PATH="$HOME/.cargo/bin:$PATH"
             rustc --version --verbose
             sh -n contrib/freebsd/immortaldir
+            sh -n contrib/freebsd/immortal_halt
             cargo test --workspace --locked
             mkdir -p benchmark-results/freebsd
             printf 'commit\t%s\nrun_id\t%s\nrun_attempt\t%s\nrunner\tFreeBSD %s\n' \
