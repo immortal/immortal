@@ -646,6 +646,14 @@ fn prove_initializing_is_published_until_loggers_are_ready(
 /// readiness descriptor, so job control applied to the main process alone
 /// cannot prevent it. Resuming must then observe `Ready`, proving the
 /// observation was recorded against the paused generation rather than dropped.
+///
+/// The shell stays the main process after writing its start marker instead of
+/// `exec`ing the sleep. On macOS a `SIGSTOP` that reaches a process inside
+/// `execve` is either dropped although `kill` succeeds, or reported as a stop
+/// while the new image keeps running, after which `SIGCONT` reports nothing. On
+/// a loaded host a stop sent as soon as the marker appeared therefore left the
+/// service stuck in `Running` or `Paused`. Without an `exec` after the marker,
+/// the stop always lands and is reported.
 fn prove_readiness_racing_job_control_is_not_fatal(binary: &Path) -> Result<(), Box<dyn Error>> {
     let runtime = RuntimeDirectory::new_named("readiness-paused")?;
     let release = runtime.root().join("release-readiness");
@@ -653,7 +661,7 @@ fn prove_readiness_racing_job_control_is_not_fatal(binary: &Path) -> Result<(), 
     let config = ConfigFile::new(
         "readiness-paused",
         &format!(
-            "version: 2\ncommand:\n  - /bin/sh\n  - -c\n  - |\n      (while [ ! -e \"$RELEASE\" ]; do /bin/sleep 0.02; done; eval \"printf 'READY\\n' >&$IMMORTAL_READY_FD\") &\n      : > \"$STARTED\"\n      exec /bin/sleep 30\nenvironment:\n  RELEASE: '{}'\n  STARTED: '{}'\nreadiness:\n  mode: notify-fd\n  timeout_seconds: 60\nrestart:\n  policy: never\n",
+            "version: 2\ncommand:\n  - /bin/sh\n  - -c\n  - |\n      (while [ ! -e \"$RELEASE\" ]; do /bin/sleep 0.02; done; eval \"printf 'READY\\n' >&$IMMORTAL_READY_FD\") &\n      : > \"$STARTED\"\n      /bin/sleep 30 &\n      wait\nenvironment:\n  RELEASE: '{}'\n  STARTED: '{}'\nreadiness:\n  mode: notify-fd\n  timeout_seconds: 60\nrestart:\n  policy: never\n",
             path_str(&release)?,
             path_str(&started)?,
         ),

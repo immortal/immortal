@@ -793,6 +793,14 @@ polling and each generation comparison remains race-safe.
 auto|always|never`; `--no-header` omits the table header and conflicts with
 `--output`. `signal SIGNAL SERVICE` sends a Unix signal, and `--scope
 main|group` chooses between the main process and its whole process group.
+A successful reply means the kernel accepted the signal, not that the process
+acted on it. On macOS, a `stop` that reaches a process while it is inside
+`execve` can be dropped, or reported as a stop although the new program keeps
+running. `status` then shows `running` for a service that should be stopped,
+or `paused` for one that runs, and a later `cont` changes nothing. Sending
+`stop` again stops the process for real; `cont` then resumes it and `status`
+is accurate again. Termination and user signals such as `term`, `kill`, and
+`usr1` are not affected.
 
 `immortaldir` reconciles a definitions directory. `--scan-interval SECONDS`
 (default `30`) bounds the delay between complete scans, `--max-concurrent-starts
