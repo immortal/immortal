@@ -3,17 +3,18 @@
 //! The fixture owns an execution context, a broker client on a socket pair,
 //! and the configuration, and delivers synthetic broker events through the
 //! same handlers the event loop uses, so what the tests prove includes how
-//! an event is routed to the task that owns it. The socket pair keeps the
-//! broker end open, so signals the executor sends are accepted.
+//! an event is routed to the task that owns it. A background task reads and
+//! discards everything sent to the broker end of the socket pair, so the
+//! requests the executor sends are accepted however many there are.
 
-use std::{error::Error, time::Duration};
+use std::{error::Error, ffi::OsString, time::Duration};
 
-use tokio::{net::UnixStream, time::Instant as TokioInstant};
+use tokio::{io, net::UnixStream, time::Instant as TokioInstant};
 
 use super::{
     AuxiliaryExecution, BrokerLoggerId, DescriptorExecution, DesiredState, ExecutionContext,
     ExecutorError, Generation, LifecycleExecution, LifecycleHookKind, LifecycleHookState,
-    LoggerExecutionState, ProcessBrokerClient, ProcessId,
+    LoggerExecutionState, ProcessBrokerClient, ProcessBrokerError, ProcessCommand, ProcessId,
     events::{handle_broker_event, handle_logger_event},
     handle_due_logger_timers,
     prepare::prepare_execution,
@@ -38,20 +39,24 @@ pub(super) struct Fixture {
     pub(super) client: ProcessBrokerClient,
     pub(super) config: ServiceConfig,
     pub(super) execution: ExecutionContext,
-    // Keeps the broker end open so signals the executor sends are accepted.
-    _broker: UnixStream,
 }
 
 impl Fixture {
+    /// Build a fixture whose broker end a background task drains.
+    ///
+    /// A spawn request carries the inherited environment, and a socket pair
+    /// buffers only 8 KB each way on macOS, so a broker end nobody reads blocked
+    /// for ever a test that sent two requests from a CI runner's large
+    /// environment. The task ends at end of file, when the client is dropped.
     pub(super) fn new() -> Result<Self, Box<dyn Error>> {
         let config = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
         let (supervisor, broker) = UnixStream::pair()?;
+        tokio::spawn(drain(broker));
         let loggers = vec![BrokerLoggerId::shared_logger(), BrokerLoggerId::new(0, 0)];
         Ok(Self {
             client: ProcessBrokerClient::for_test(supervisor, process()?),
             execution: ExecutionContext::new(&config, loggers, false),
             config,
-            _broker: broker,
         })
     }
 
@@ -311,4 +316,35 @@ pub(super) fn reload_hook(task: BrokerTaskId, state: LifecycleHookState) -> Life
         task,
         timeout: HOOK_TIMEOUT,
     }
+}
+
+/// Read and discard everything the executor writes to the broker.
+async fn drain(mut broker: UnixStream) -> io::Result<u64> {
+    io::copy(&mut broker, &mut io::sink()).await
+}
+
+/// Regression: the fixture kept the broker end open without reading it, so a
+/// readiness test hung on a macOS CI runner once its second spawn request
+/// overflowed the socket buffer. Megabytes of requests now pass within bounds.
+#[tokio::test]
+async fn the_fixture_broker_accepts_more_than_a_socket_buffer_holds() -> Result<(), Box<dyn Error>>
+{
+    let mut fixture = Fixture::new()?;
+    let large = [(
+        OsString::from("IMMORTAL_TEST_LARGE"),
+        OsString::from("x".repeat(64 * 1024)),
+    )];
+    let command = ProcessCommand::from_service(&fixture.config, large)?;
+    let task = BrokerTaskId::new(94).ok_or("invalid test task")?;
+    let requests = async {
+        for _ in 0..32 {
+            fixture
+                .client
+                .spawn_task(task, command.clone(), HOOK_TIMEOUT)
+                .await?;
+        }
+        Ok::<(), ProcessBrokerError>(())
+    };
+    tokio::time::timeout(Duration::from_secs(10), requests).await??;
+    Ok(())
 }
