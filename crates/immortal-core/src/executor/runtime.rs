@@ -23,9 +23,9 @@ use super::{
     TerminationSignals, advance_childless_state, advance_logger_shutdown, apply_control_command,
     begin_descriptor_shutdown, begin_requested_shutdown, begin_supervisor_shutdown,
     broker_lifetime_plan, cancel_auxiliary, fail_childless_start_on_logger_exhaustion,
-    handle_broker_event, handle_due_logger_timers, handle_executor_timer, next_executor_event,
-    outcome, reap_broker, run_control_server, shutdown_broker, start_down_loggers,
-    start_process_broker_with_logging,
+    handle_broker_event, handle_due_logger_timers, handle_executor_timer, handle_lifecycle_timer,
+    is_due, next_executor_event, outcome, reap_broker, run_control_server, shutdown_broker,
+    start_down_loggers, start_process_broker_with_logging,
 };
 
 pub(super) fn run_prepared(
@@ -206,10 +206,12 @@ pub(super) async fn drive_service(
         {
             ExecutorEvent::Timer => {
                 handle_due_logger_timers(client, &mut execution).await?;
-                if execution
-                    .deadline
-                    .is_some_and(|deadline| deadline <= TokioInstant::now())
-                {
+                // A lifecycle hook and the generation keep separate deadlines,
+                // and each is handled only when its own has passed.
+                if execution.lifecycle_deadline_due() {
+                    handle_lifecycle_timer(client, &commands, config, &mut execution).await?;
+                }
+                if is_due(execution.deadline) {
                     handle_executor_timer(client, &commands, config, &mut execution).await?;
                 }
             }

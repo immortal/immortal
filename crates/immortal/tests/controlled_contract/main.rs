@@ -1,10 +1,13 @@
 //! Black-box contracts for one authenticated, runtime-owned foreground supervisor.
 //!
 //! Lifecycle coverage includes final logger EOF drain before Halt lets the
-//! supervisor exit.
+//! supervisor exit, a pause that outlasts the readiness timeout, and a
+//! stalled process broker, neither of which may end supervision.
 
+mod broker_stall;
 mod control_client;
 mod fixtures;
+mod readiness_pause;
 
 use std::{error::Error, fs, os::unix::fs::PermissionsExt, path::Path, time::Duration};
 
@@ -44,7 +47,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     prove_halt_drains_logger(binary)?;
     prove_logger_retry_exhaustion_and_recovery(binary)?;
     prove_readiness_racing_job_control_is_not_fatal(binary)?;
-    prove_readiness_racing_a_stop_is_not_fatal(binary)
+    prove_readiness_racing_a_stop_is_not_fatal(binary)?;
+    readiness_pause::prove_a_pause_outlasting_readiness_fails_readiness_on_continue(binary)?;
+    broker_stall::prove_a_stalled_broker_delays_but_does_not_end_a_restart(binary)
 }
 
 fn prove_halt_drains_logger(binary: &Path) -> Result<(), Box<dyn Error>> {

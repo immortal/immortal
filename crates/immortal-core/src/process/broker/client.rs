@@ -114,8 +114,9 @@ impl ProcessBrokerClient {
     /// Write one synthetic broker event to the peer of a [`Self::for_test`] client.
     ///
     /// Lets executor tests replay an exact broker event order, such as a signal
-    /// acknowledgement which trails the reap that ended supervision. Only the
-    /// service signal acknowledgements and shutdown completion are supported.
+    /// acknowledgement which trails the reap that ended supervision. Service
+    /// signal acknowledgements, lifetime closure, task starts and state
+    /// changes, and shutdown completion are supported.
     #[cfg(test)]
     pub(crate) async fn write_test_event(
         peer: &mut UnixStream,
@@ -135,6 +136,19 @@ impl ProcessBrokerClient {
             ProcessBrokerEvent::LifetimeClosed { generation } => {
                 BrokerEvent::LifetimeClosed { generation }
             }
+            ProcessBrokerEvent::TaskStarted {
+                task,
+                process,
+                group,
+            } => BrokerEvent::Started {
+                generation: task_generation(task)?,
+                process,
+                group,
+            },
+            ProcessBrokerEvent::TaskChild { task, event } => BrokerEvent::Child {
+                generation: task_generation(task)?,
+                event,
+            },
             ProcessBrokerEvent::ShutdownComplete => BrokerEvent::ShutdownComplete,
             _ => {
                 return Err(io::Error::new(
@@ -410,4 +424,16 @@ impl Drop for ProcessBrokerClient {
     fn drop(&mut self) {
         self.reader_task.abort();
     }
+}
+
+/// The wire generation that carries `task`, for synthetic test events.
+#[cfg(test)]
+fn task_generation(task: BrokerTaskId) -> Result<Generation, ProcessBrokerError> {
+    task.generation().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "task identifier has no wire generation",
+        )
+        .into()
+    })
 }

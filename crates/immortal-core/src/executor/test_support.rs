@@ -11,9 +11,9 @@ use std::{error::Error, time::Duration};
 use tokio::{net::UnixStream, time::Instant as TokioInstant};
 
 use super::{
-    AuxiliaryExecution, BrokerLoggerId, DesiredState, ExecutionContext, ExecutorError, Generation,
-    LifecycleExecution, LifecycleHookKind, LifecycleHookState, LoggerExecutionState,
-    ProcessBrokerClient, ProcessId,
+    AuxiliaryExecution, BrokerLoggerId, DescriptorExecution, DesiredState, ExecutionContext,
+    ExecutorError, Generation, LifecycleExecution, LifecycleHookKind, LifecycleHookState,
+    LoggerExecutionState, ProcessBrokerClient, ProcessId,
     events::{handle_broker_event, handle_logger_event},
     handle_due_logger_timers,
     prepare::prepare_execution,
@@ -28,6 +28,9 @@ use crate::{
 };
 
 pub(super) const SHARED: usize = 0;
+
+/// Timeout of the lifecycle hooks the fixtures build.
+pub(super) const HOOK_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) const ADAPTER: usize = 1;
 
@@ -190,6 +193,40 @@ pub(super) const CONDITION: &str = "version: 2\ncommand: [/bin/true]\nstart_cond
 pub(super) const POST_EXIT: &str = "version: 2\ncommand: [/bin/true]\npost_exit:\n  command: [/bin/true]\n  \
                          timeout_seconds: 10\n";
 
+/// A foreground service whose generation declares readiness.
+pub(super) const NOTIFY: &str =
+    "version: 2\ncommand: [/bin/true]\nreadiness:\n  mode: notify-fd\n  timeout_seconds: 30\n";
+
+/// A descriptor-tracked service whose generation declares readiness.
+pub(super) const DESCRIPTOR: &str = "version: 2\ncommand: [/bin/true]\nprocess_mode: descriptor-tracking\n\
+                         readiness:\n  mode: notify-fd\n  timeout_seconds: 30\n\
+                         descriptor_tracking:\n  stop:\n    command: [/bin/true]\n    \
+                         timeout_seconds: 10\n  reload:\n    command: [/bin/true]\n    \
+                         timeout_seconds: 10\n  lifetime_timeout_seconds: 10\n";
+
+impl Fixture {
+    /// A foreground generation that has started and awaits readiness.
+    pub(super) fn notify_generation(&mut self) -> Result<Generation, Box<dyn Error>> {
+        self.config = parse_str(NOTIFY)?;
+        self.execution.machine.set_desired(DesiredState::Up);
+        self.execution.machine.begin_start()?;
+        let generation = self.execution.machine.preconditions_ready()?;
+        self.execution.machine.child_started(generation)?;
+        Ok(generation)
+    }
+
+    /// A descriptor-tracked generation that has started and awaits readiness.
+    pub(super) fn descriptor_generation(&mut self) -> Result<Generation, Box<dyn Error>> {
+        self.config = parse_str(DESCRIPTOR)?;
+        self.execution.machine.set_desired(DesiredState::Up);
+        self.execution.machine.begin_start()?;
+        let generation = self.execution.machine.preconditions_ready()?;
+        self.execution.machine.child_started(generation)?;
+        self.execution.descriptor = Some(DescriptorExecution::new(generation));
+        Ok(generation)
+    }
+}
+
 pub(super) fn reap(task: BrokerTaskId) -> Result<ProcessBrokerEvent, Box<dyn Error>> {
     Ok(ProcessBrokerEvent::TaskChild {
         task,
@@ -250,10 +287,21 @@ pub(super) fn continued(task: BrokerTaskId) -> Result<ProcessBrokerEvent, Box<dy
     })
 }
 
+/// A descriptor stop hook for the first generation, as an operator stop of a
+/// generation not yet ready starts it.
+pub(super) fn stop_hook(task: BrokerTaskId, state: LifecycleHookState) -> LifecycleExecution {
+    LifecycleExecution {
+        kind: LifecycleHookKind::Stop,
+        resume_ready: false,
+        ..reload_hook(task, state)
+    }
+}
+
 pub(super) fn reload_hook(task: BrokerTaskId, state: LifecycleHookState) -> LifecycleExecution {
     LifecycleExecution {
         after: None,
         command: None,
+        deadline: None,
         generation: Generation::FIRST,
         kind: LifecycleHookKind::Reload,
         previous_desired: DesiredState::Up,
@@ -261,6 +309,6 @@ pub(super) fn reload_hook(task: BrokerTaskId, state: LifecycleHookState) -> Life
         resume_ready: true,
         state,
         task,
-        timeout: Duration::from_secs(10),
+        timeout: HOOK_TIMEOUT,
     }
 }

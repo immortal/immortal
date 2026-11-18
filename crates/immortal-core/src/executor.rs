@@ -15,6 +15,9 @@
 //! `prepare` owns command and logging materialization, `runtime` owns the main
 //! broker-driven loop, `context` owns mutable lifecycle state, `logger` owns
 //! logger restart and shutdown tiers, `timers` owns deadline transitions,
+//! `overdue` owns waiting for a late broker answer instead of giving up,
+//! `readiness` owns readiness failures that arrive while the generation is
+//! paused or a lifecycle hook runs,
 //! `control` owns authenticated requests and signal conversion, `events`,
 //! `completion`, and `auxiliary` own broker event state transitions, and
 //! `broker`/`utilities` own broker teardown and shared time/backoff helpers.
@@ -32,7 +35,9 @@ mod events;
 mod foreground;
 mod logger;
 mod outcome;
+mod overdue;
 mod prepare;
+mod readiness;
 mod runtime;
 mod startup;
 #[cfg(test)]
@@ -75,24 +80,31 @@ use self::{
     context::{
         AuxiliaryExecution, DescriptorExecution, ExecutionContext, ExecutorEvent,
         LifecycleExecution, LifecycleHookKind, LifecycleHookState, LoggerExecution,
-        LoggerExecutionState, LoggerShutdownState, LoggerShutdownTier, PendingCompletion,
-        PendingDetach, PendingSignal, RuntimeStatus,
+        LoggerExecutionState, LoggerShutdownState, LoggerShutdownTier, OwedTaskAcknowledgements,
+        PendingCompletion, PendingDetach, PendingSignal, RuntimeStatus, is_due,
     },
     control::{
         LifecycleHookRequest, apply_control_command, begin_descriptor_shutdown,
         begin_lifecycle_hook, begin_requested_shutdown, begin_supervisor_shutdown,
         next_executor_event, request_group_stop,
     },
-    events::{finish_lifecycle_failure, handle_broker_event, respond_lifecycle},
+    events::{
+        finish_lifecycle_failure, handle_broker_event, handle_readiness_failure, respond_lifecycle,
+    },
     logger::{
         advance_logger_shutdown, fail_childless_start_on_logger_exhaustion,
         handle_due_logger_timers, logger_status, logger_tier_is_down, schedule_logger_restart,
         start_down_loggers,
     },
+    overdue::{OverdueReports, ending, keep_killing_generation, keep_killing_task, keep_waiting},
     prepare::{PreparedExecution, PreparedLaunch, broker_lifetime_plan, prepare_execution},
+    readiness::{act_on_recorded_readiness_failure, handle_readiness_timer},
     runtime::run_prepared,
     startup::{ControlSetup, StartupReporter},
-    timers::{advance_childless_state, allocate_task, cancel_auxiliary, handle_executor_timer},
+    timers::{
+        advance_childless_state, allocate_task, cancel_auxiliary, handle_executor_timer,
+        handle_lifecycle_timer,
+    },
     utilities::{elapsed_seconds, jittered_backoff, jittered_backoff_seed},
 };
 use crate::{

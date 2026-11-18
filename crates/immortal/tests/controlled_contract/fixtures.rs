@@ -169,6 +169,13 @@ impl ChildGuard {
         self.child.id()
     }
 
+    /// The child's exit status if it has already exited, without waiting.
+    pub(crate) fn exited(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        self.reaped |= status.is_some();
+        Ok(status)
+    }
+
     pub(crate) fn wait(mut self, timeout: Duration) -> std::io::Result<ExitStatus> {
         let deadline = Instant::now() + timeout;
         loop {

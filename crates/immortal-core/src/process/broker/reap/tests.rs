@@ -739,3 +739,32 @@ fn another_nonleader_membership_snapshot_is_not_a_pin() -> Result<(), Box<dyn Er
     ));
     Ok(())
 }
+
+/// Regression: a kill whose helper exchange timed out before the request was
+/// queued retired the group as if it had been killed, and every later kill was
+/// skipped, so a TERM-ignoring service kept running while the supervisor waited
+/// for its reap. A pinned group is killed again until a kill is delivered, and
+/// then never again.
+#[test]
+fn an_undelivered_kill_is_repeated_until_one_is_delivered() -> Result<(), Box<dyn Error>> {
+    let (_, group) = process_and_group()?;
+    let mut retiring = RetiringGroups::default();
+    let mut attempts = 0;
+    for delivery in [
+        Err(io::Error::from(io::ErrorKind::TimedOut)),
+        Ok(()),
+        Ok(()),
+    ] {
+        let _ = kill_and_retire_with(group, &mut retiring, |_| {
+            attempts += 1;
+            delivery
+        });
+    }
+    assert_eq!(
+        attempts, 2,
+        "repeated once after the failure, then never again"
+    );
+    assert!(retiring.contains(group));
+    assert!(!retiring.awaits_kill(group));
+    Ok(())
+}

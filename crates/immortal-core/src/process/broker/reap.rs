@@ -10,6 +10,9 @@
 //! skipped kills close the guard fail-closed so remaining members are killed.
 //! Waits also report job-control stops and resumes, which change no ownership.
 //! Both guard-release paths reconcile the same checked process-ownership entry.
+//! A release that fails only because the helper was slow or already gone is
+//! not a broker fault (`guard_release`), so a slow machine never ends the
+//! broker and every service with it.
 //!
 //! When the broker holds the child-subreaper role, orphaned descendants of the
 //! supervised subtree also reparent to it; [`collect_child_events`] reaps those
@@ -42,10 +45,10 @@ use tokio::io::AsyncWrite;
 
 use crate::supervisor::Generation;
 
+use self::guard_release::release_guard;
 use super::error::{ProcessBrokerError, ProcessBrokerErrorKind};
 use super::logging::BrokerLogging;
 use super::retiring::RetiringGroups;
-use super::spawn::GROUP_GUARD_CLEANUP_TIMEOUT;
 use super::state::{BrokerGeneration, BrokerOwnedProcess, BrokerRuntimeState, LifetimeState};
 use super::wire::write_event;
 use super::{
@@ -58,6 +61,10 @@ use super::{
 /// budget, so a sweep cannot add 500 ms per helper beyond the phase deadline.
 /// Timeout is not cancellation and never authorizes direct group delivery.
 const GROUP_SIGNAL_TIMEOUT: Duration = Duration::from_millis(500);
+
+mod guard_release;
+
+pub(super) use self::guard_release::{GuardRelease, collect_closed_helper};
 
 /// Deliver group targets through the armed guard, and process targets directly.
 /// Missing armed ownership fails closed rather than using a numeric group ID.
@@ -177,9 +184,13 @@ pub(super) fn collect_child_events(
 ///
 /// A group already retiring was killed before and is never signalled again,
 /// because its ID may have been reused once it emptied; that case reports
-/// success. `ESRCH` means the group already has no member, so nothing is
-/// retired. Any other outcome, including a failed delivery, keeps the group
-/// retiring, so a shutdown waits for it and fails closed if it never drains.
+/// success. The exception is a group whose last kill was not delivered: every
+/// caller reaches this function only through a pin, the armed guard's helper
+/// or a verified member leader, so the kill is repeated rather than leaving
+/// the group running for good. `ESRCH` means the group already has no member,
+/// so nothing is retired. Any other outcome, including a failed delivery, keeps
+/// the group retiring, so a shutdown waits for it and fails closed if it never
+/// drains.
 ///
 /// # Errors
 ///
@@ -211,12 +222,17 @@ fn kill_and_retire_with<S>(
 where
     S: FnOnce(ProcessGroupId) -> io::Result<()>,
 {
-    if retiring.contains(group) {
+    if retiring.contains(group) && !retiring.awaits_kill(group) {
         return Ok(());
     }
     let delivered = send(group);
-    if !matches!(&delivered, Err(error) if error.raw_os_error() == Some(libc::ESRCH)) {
-        retiring.retire(group);
+    match &delivered {
+        Ok(()) => {
+            retiring.retire(group);
+            retiring.confirm(group);
+        }
+        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => retiring.confirm(group),
+        Err(_) => retiring.retire_unconfirmed(group),
     }
     delivered
 }
@@ -322,7 +338,7 @@ fn correlate_owned_event(
             }
             Ok(Some(BrokerEvent::ContainmentFailed { generation }))
         }
-        BrokerOwnedProcess::Guard(_) => Ok(None),
+        BrokerOwnedProcess::Guard(_) | BrokerOwnedProcess::ReleasedGuard(_) => Ok(None),
     }
 }
 
@@ -380,23 +396,28 @@ fn reap_adopted_orphan(
 /// disarms it under a bounded timeout so the guard exits without killing a
 /// workload which finished normally. Absence is not an error: a generation
 /// which never armed a guard, or whose guard was already disarmed, is a
-/// no-op so shutdown and reap paths can both call this.
+/// no-op so shutdown and reap paths can both call this. A release that fails
+/// without breaking ownership, such as a helper too slow to exit, is reported
+/// as [`GuardRelease::Failed`] rather than as an error; see `guard_release`.
 ///
 /// # Errors
 ///
 /// Returns an error when the guard's process identity is unavailable, when
-/// the ownership table disagrees about who owns the guard, or when disarming
-/// fails. An ownership disagreement means the broker's containment invariant
-/// is already broken, so it is reported rather than ignored.
+/// the ownership table disagrees about who owns the guard, when the
+/// waitable-child policy was violated, or when the helper cannot be probed
+/// after a failed release. An ownership disagreement means the broker's
+/// containment invariant is already broken, so it is reported rather than
+/// ignored.
 pub(super) fn disarm_generation_guard(
     generation: Generation,
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
-) -> Result<(), ProcessBrokerError> {
-    if let Some(guard) = take_generation_guard(generation, generations, processes)? {
-        guard.disarm(GROUP_GUARD_CLEANUP_TIMEOUT)?;
-    }
-    Ok(())
+) -> Result<GuardRelease, ProcessBrokerError> {
+    let Some(guard) = take_generation_guard(generation, generations, processes)? else {
+        return Ok(GuardRelease::Released);
+    };
+    let helper = guard.process()?;
+    release_guard(generation, guard, helper, processes)
 }
 
 /// Close the owner after a failed/skipped foreground kill, preserving containment.
@@ -409,8 +430,12 @@ fn fail_closed_generation_guard(
     generations: &mut BTreeMap<Generation, BrokerGeneration>,
     processes: &mut BTreeMap<ProcessId, BrokerOwnedProcess>,
 ) -> Result<(), ProcessBrokerError> {
-    drop(take_generation_guard(generation, generations, processes)?);
-    Ok(())
+    let Some(guard) = take_generation_guard(generation, generations, processes)? else {
+        return Ok(());
+    };
+    let helper = guard.process()?;
+    drop(guard);
+    collect_closed_helper(generation, helper, processes)
 }
 
 /// Transfer the guard only after reconciling its process-ownership record.

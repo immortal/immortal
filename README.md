@@ -343,7 +343,11 @@ deadlines are capped at 24 hours; scheduled delay/backoff values are capped at
 one year so monotonic deadline construction remains representable. `notify-fd`
 publishes `IMMORTAL_READY_FD=3`. The child must write the exact six-byte
 `READY\n` token before its configured deadline; fragmented writes are accepted,
-while invalid tokens, early EOF, and timeout fail that generation. The broker
+while invalid tokens, early EOF, and timeout fail that generation. The deadline
+counts from the start, including time the service spends stopped by
+`immortalctl signal stop`: a service paused past its readiness timeout has
+failed readiness, and when it continues it is stopped and restarted as its
+restart policy says. Pausing never ends the supervisor. The broker
 creates the CLOEXEC descriptor channel before spawning, maps only the child
 endpoint, and monitors the supervisor endpoint asynchronously without creating
 worker threads.
@@ -810,6 +814,21 @@ or `paused` for one that runs, and a later `cont` changes nothing. Sending
 is accurate again. Termination and user signals such as `term`, `kill`, and
 `usr1` are not affected.
 
+A slow machine never ends supervision. The supervisor waits for the process
+broker to confirm each start, readiness outcome, and reap; when the broker is
+alive but late, because the host is starved, the virtual machine was paused, or
+the broker was stopped, the supervisor keeps the service's state, starts no
+replacement beside a process whose end it has not seen, and writes
+`immortal supervisor: the process broker has not confirmed ... in time; still
+waiting` to standard error at most once a minute. A logger start the broker does
+not confirm in time is the exception: it counts as a failed logger start, so a
+long stall can use up a finite `logger_restart.max_retries`. A daemonized supervisor sends
+standard error to `/dev/null`, so the message is visible only in the
+foreground or under a service manager that keeps the stream. Only a broker
+that died, or a protocol or ownership violation, ends supervision. A
+supervisor told to halt or exit keeps bounded waits so shutdown cannot hang,
+and at startup the broker must still report ready within its bound.
+
 `immortaldir` reconciles a definitions directory. `--scan-interval SECONDS`
 (default `30`) bounds the delay between complete scans, `--max-concurrent-starts
 COUNT` (`IMMORTAL_MAX_CONCURRENT_STARTS`) bounds supervisors launched
@@ -904,8 +923,14 @@ and pending stops still drain. Dependencies gate initial starts only, so a
 service already running when its requirement becomes unavailable is left
 alone rather than cascaded down. Operational stops
 and replacement preparation remain serialized for generation safety;
-independent checked starts run in bounded batches. `SIGTERM` and `SIGINT` are
-observed while idle or during reconciliation; an in-flight mutation reaches
+independent checked starts run in bounded batches. A batch waits for every
+launch it started, however slow the host is, and writes `reconcile: still
+waiting for N supervisor launches` to standard error once a minute meanwhile.
+A definition counts as applied as soon as its supervisor launched with it;
+`APPLIED` is printed once the service is Ready, and a service still not Ready
+at the 15-second lifecycle deadline is reported but keeps running and is not
+relaunched. `SIGTERM` and `SIGINT` are observed while idle or during
+reconciliation; an in-flight mutation, including a slow launch batch, reaches
 its safe boundary before `immortaldir` shuts down and reaps its otherwise
 childless launcher broker. The independent service supervisors it previously
 started remain running.

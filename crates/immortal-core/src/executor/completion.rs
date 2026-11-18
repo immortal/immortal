@@ -10,7 +10,6 @@ use std::{collections::VecDeque, time::Instant};
 
 use tokio::time::Instant as TokioInstant;
 
-use super::events::readiness_deadline;
 use super::{
     AuxiliaryExecution, BROKER_EVENT_TIMEOUT, CHILD_STARTUP_TIMEOUT, ChildEvent, ChildResult,
     DesiredState, ExecutionContext, ExecutorError, FailureReason, Generation, LifecycleHookKind,
@@ -36,20 +35,16 @@ pub(super) async fn handle_service_child_event(
                 SupervisorState::Running(_) | SupervisorState::Ready(_)
             ) =>
         {
+            // The broker's readiness clock keeps running while job control
+            // holds the child, so paused time is part of the readiness window
+            // and the deadline stays as it was. A failure that arrives while
+            // paused is recorded and acted on when the child continues.
             execution.machine.child_paused(generation)?;
-            // A stopped child cannot declare readiness, so its readiness clock
-            // must not keep running while job control holds it. Leaving the
-            // deadline armed expired it against a paused generation, which no
-            // timer arm accepted and which therefore killed the supervisor.
-            execution.deadline = None;
         }
         ChildEvent::Continued { .. }
             if matches!(execution.machine.state(), SupervisorState::Paused { .. }) =>
         {
             execution.machine.child_continued(generation)?;
-            if execution.machine.state() == SupervisorState::Running(generation) {
-                execution.deadline = Some(readiness_deadline(config));
-            }
         }
         _ => {
             if let Some(result) = event.terminal_result() {
@@ -100,13 +95,24 @@ pub(super) async fn handle_lifetime_event(
     }
     descriptor.lifetime_preceded_launcher = descriptor.launcher_result.is_none();
     descriptor.lifetime_result = Some(result.child_result());
-    let lifecycle_stop = execution.lifecycle.as_ref().is_some_and(|lifecycle| {
-        lifecycle.generation == generation && lifecycle.kind == LifecycleHookKind::Stop
+    // A stop hook still running may stop the launcher itself, so the group
+    // stop waits for it. One that already succeeded and only waits for this
+    // closure has done its part: the launcher left behind is stopped now.
+    let stop_hook_running = execution.lifecycle.as_ref().is_some_and(|lifecycle| {
+        lifecycle.generation == generation
+            && lifecycle.kind == LifecycleHookKind::Stop
+            && lifecycle.state != LifecycleHookState::WaitingLifetime
     });
     if descriptor.launcher_result.is_none()
         && execution.machine.state().live_generation() == Some(generation)
-        && !lifecycle_stop
+        && !stop_hook_running
     {
+        if let Some(lifecycle) = execution.lifecycle.as_mut().filter(|lifecycle| {
+            lifecycle.generation == generation
+                && lifecycle.state == LifecycleHookState::WaitingLifetime
+        }) {
+            lifecycle.deadline = None;
+        }
         if !matches!(execution.machine.state(), SupervisorState::Stopping(_)) {
             execution.machine.begin_stop(generation)?;
         }

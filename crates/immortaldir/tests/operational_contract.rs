@@ -386,6 +386,7 @@ async fn prove_batch_limit(
             Path::new("/unused/immortal"),
             Vec::new(),
             LaunchConcurrency::new(1)?,
+            |_, _| {},
         )
         .await?
         .is_empty()
@@ -401,6 +402,7 @@ async fn prove_batch_limit(
             Path::new("/unused/immortal"),
             specifications,
             LaunchConcurrency::new(1)?,
+            |_, _| {},
         )
         .await;
     if !matches!(

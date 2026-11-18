@@ -311,6 +311,27 @@ stays retired until it drains. This release uses fork's three-second helper
 cleanup deadline, followed by kernel-dependent final reaping; safety cleanup
 can outlast the signal/settle budget. Descriptor completion and detach still
 disarm intentionally.
+A release that misses fork's deadline is not a broker fault. Fork then kills
+and reaps the helper, which releases the pin without signalling the group, and
+a helper that died earlier fails the release with a socket error; the owner
+socket is closed on every path, so a helper still alive kills its pinned group.
+A release after a reap follows a kill the broker retired, an ESRCH that proved
+the group empty, or the completion of a tracked generation, whose group is
+retired without a signal; a detach releases a live group on purpose. In each
+case a helper that misses the release either is reaped without signalling or
+kills the group on owner EOF, so no outcome leaves a member uncontained; a
+failed detach release still answers `DetachFailed`, while an ownership error
+behind it still ends the broker. The broker logs the failure, keeps
+supervising, and records a helper that is still an unreaped child so its later
+reap is collected rather than reported as an unowned child; the same holds for
+the helper of a guard closed fail-closed, and such a leftover never refuses a
+later detach.
+Such a residual helper is not part of the broker's own shutdown drain. If the
+broker exits first, the helper reparents to the broker's reaper: the
+supervisor, which acquires the subreaper role before forking the broker where
+the platform offers it and drains such orphans within its bounded broker
+teardown, or otherwise init or launchd. Only a violated waitable-child policy, or a helper whose
+state cannot be probed, ends the broker.
 Without an armed guard, for example once the helper exited, only an unreaped
 direct child whose PID equals the PGID and which is still a member pins the
 group; membership is checked with `getpgid` immediately before each group signal. A live nonleader can leave
@@ -351,8 +372,13 @@ so a group drains only once every member has been reaped. Without this wait a
 member still exiting outlived the broker and reparented to the supervisor. A
 reused ID, an `EPERM` member, or a probe failure only keeps a group retiring
 until the bounded wait fails closed. The set offers no iteration, and no group
-signal, a supervisor request included, reaches a group it contains; a retiring
-generation's unreaped child can still be signalled as a process. A foreground
+signal, a supervisor request included, reaches a group it contains, with one
+exception: a kill whose delivery failed is repeated on the next kill request,
+and only through a pin verified just before, the armed guard's helper or an
+unreaped member leader, so the ID cannot have been reused. A helper exchange
+that times out before its request is queued delivers nothing; without the
+repeat that group would keep running while the supervisor waited for its reap.
+A retiring generation's unreaped child can still be signalled as a process. A foreground
 group whose guard already exited is not killed again when its main child is
 reaped. An ID which a newly registered or detached
 generation leads has provably drained and is forgotten, at registration and
@@ -399,6 +425,10 @@ A lost supervisor is recognized from either direction of that socket — a read
 observing end of file or a connection reset, and a write observing a broken
 pipe — and every such observation converges on one cleanup path, because a
 descriptor-tracked generation's configured stop command runs only there.
+Only that socket can report a lost supervisor: the wire layer marks its own
+read and write failures, so the same error kinds from a group helper's socket
+are never mistaken for a departed supervisor and never kill the services of
+one that is still connected.
 Long-running components share one owned TERM/INT intake boundary. The broker is
 forked into its own process group so a terminal interrupt, which is delivered
 to the whole foreground group, reaches only the supervisor: the broker has no
@@ -417,11 +447,19 @@ executor therefore accepts readiness for any generation the supervisor still
 owns: a paused generation records it so resuming observes the declared value,
 a stopping or terminal generation discards it without disturbing the stop
 grace deadline, and only an unowned generation remains a protocol fault.
-Job control suspends the readiness clock rather than racing it: pausing a
-generation disarms its readiness deadline, because a stopped child cannot
-declare anything, and resuming an undeclared generation restarts the wait. A
-deadline which survives into a paused state disarms instead of faulting, since
-an operator command must never end supervision.
+Paused time counts toward the readiness window. The broker's watcher counts
+from the start of the generation and does not stop while job control holds the
+child, so a pause that outlasts the readiness timeout fails readiness. The
+supervisor's deadline stays as it was across a pause; it only backs up a late
+broker answer, which is waited for like any other. A failure that arrives while
+the generation is paused, or while a descriptor reload hook runs and no stop may
+start beside it, is recorded and acted on as soon as the generation is running
+again with no hook: right after it continues, or right after the hook ends. The
+broker sends nothing more for that generation, so waiting for another answer
+would wait for ever. A stop hook that fails to stop such a generation is retried
+after the stop grace, a pending shutdown takes precedence, and a paused
+generation whose readiness is settled waits for nothing. An operator command
+never ends supervision.
 Reaps follow the same rule for the same reason. A spawn which fails after the
 fork still leaves a process the broker must reap, so its `Child` event arrives
 once the supervisor has already handled the failure and moved into backoff, a
@@ -446,8 +484,8 @@ that is not owed is a protocol fault even while one does. Their reaps are
 never stale, because a task is kept until its process is collected: a failed
 start that left a child, and a kill the broker could not confirm, which a slow
 guard helper can still deliver, both leave the task in its killing state
-until the reap, bounded by the cleanup deadline, whose expiry fails
-supervision closed. A condition is therefore never retried, a service never
+until the reap. A reap that is late is waited for, as every late broker
+answer is (see below). A condition is therefore never retried, a service never
 restarted after its post-exit hook, and a second lifecycle hook never started
 beside a leftover process, and a reap for a task no state names is a protocol
 fault. A stop or continue event of the task's own job control, queued ahead
@@ -456,10 +494,38 @@ task no state names it is a protocol fault too. A start condition that is
 cancelled while it is being killed for a retry is not retried, and a retry is
 scheduled only while the service still waits for its condition. A cleanup
 deadline that expires after the service went down or exited is the cleanup
-that did not finish, and fails supervision as such. When a logger has used up
+that has not finished, and is waited for as such. When a logger has used up
 its retries while a condition or hook is running, the task is cancelled and
 the event loop reads its reap before deciding, so it never loops without
-reading. While loggers shut down only the shutdown state's own deadline
+reading. A late broker answer never ends supervision. Every state that waits
+for the broker to confirm something arms a deadline: a service, condition,
+hook, or logger start, a readiness outcome, and the reap that ends a killed
+process. The broker bounds each of those operations itself, so its answer is
+late while the broker is alive but not running, because the machine is starved,
+the host or virtual machine was paused, or the broker was stopped; a reap can
+also be late because a kill was never delivered, or because a killed process
+sits in uninterruptible sleep. A broker that died is noticed without any
+deadline, as end of file or a broken pipe on its socket, and a broker that is
+alive but stuck cannot be told apart from a slow one by elapsed time. Exiting at such a deadline would end the very service the
+supervisor exists to keep, while waiting keeps the state that protects it: no
+replacement starts beside a process whose end is not confirmed, and no stop is
+reported before it happened. An expired wait is therefore reported on standard
+error at most once a minute, shared by every wait, and examined again: a start
+or readiness wait a minute later, and a reap wait every five seconds, each
+time asking for the kill again unless an earlier request is still unanswered,
+so an undelivered kill is repeated and a stalled broker's socket never fills.
+A logger start the broker does not confirm in time is the exception that is
+given up on: it is recorded as a failed logger start and retried under the
+logger's own restart policy, unlimited by default. The event loop takes a
+broker answer that already arrived before a deadline that passed meanwhile, so
+a timer never acts on a wait the answer has ended. Only broker death or a
+protocol or ownership violation ends supervision. A supervisor told to halt or
+exit, by an operator or by TERM or INT, including a TERM or INT queued behind a
+descriptor lifecycle hook, keeps the bounded deadlines, because it is ending
+anyway: its broker teardown then cleans up within bounds instead of
+leaving shutdown waiting for ever. Startup, before supervision begins, still
+requires the broker to report ready within its bound.
+While loggers shut down only the shutdown state's own deadline
 wakes the loop. A shutdown requested while a lifecycle hook runs is carried
 out as the plain shutdown when that hook ended the generation.
 The supervisor event loop remains the sole lifecycle owner. The control accept
@@ -508,7 +574,19 @@ shutdown run the configured stop command as an isolated broker task and wait a
 separate bounded interval for EOF. HUP runs the reload command; every other raw
 signal and live-service `Exit` is rejected once descriptor tracking is selected.
 A hook failure, timeout, or missing EOF restores the logical live state rather
-than claiming Down. The immutable stop plan is copied once at the pre-Tokio
+than claiming Down. Readiness the generation reaches while its stop hook runs
+is kept for that case, because the broker reports each readiness outcome only
+once. A lifetime that closes around a successful stop hook leaves only the launcher,
+which is stopped at once, whichever of the closure and the hook's success the
+supervisor observes first, instead of waiting for a closure that already
+happened; a hook that fails after the closure keeps the stop rather than
+restore a generation that is gone, stopping the launcher if it is still there. The helper of a guard dropped because
+its spawn failed is tracked like one whose release failed. A hook keeps its own deadline beside the generation's: a
+reload runs while the service stays live, so readiness, job control,
+completion, and backoff keep driving the generation's deadline meanwhile, and
+neither may overwrite or clear the other's. A stop hook replaces the group stop,
+so it clears the generation's deadline instead of letting it escalate to a group
+kill behind the hook. The immutable stop plan is copied once at the pre-Tokio
 broker boundary so unexpected supervisor EOF can use the same bounded cleanup
 contract without trusting a PID file.
 
@@ -692,7 +770,15 @@ metadata; an exited enabled supervisor is recreated after confirmed lock
 release. Typed failed mutations remain pending for later scans while independent
 services continue in the current scan. Independent starts are submitted as
 bounded broker task batches within deterministic dependency waves; later waves
-wait for Ready, and later dependency failure does not cascade.
+wait for Ready, and later dependency failure does not cascade. A batch has no
+deadline of its own: the broker bounds each launcher's start and each launcher
+bounds its daemon's startup, so a batch still waiting is only slow, because the
+host is starved or paused, and is reported once a minute instead of ending the
+directory manager. A launcher's job control changes nothing. A definition is
+recorded as applied as soon as its launcher succeeds, because the new
+supervisor runs it from then on; `APPLIED` is still announced only once the
+service is Ready. A service slower than the lifecycle deadline is reported as
+an isolated failure but is not relaunched on every later scan.
 Confirmed deletions remain in the ledger until Halt, socket/lock disappearance,
 and applied-snapshot removal succeed. A black-box contract replaces
 `immortaldir` between the two required absence scans and proves the restarted

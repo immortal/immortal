@@ -32,6 +32,7 @@ use crate::supervisor::Generation;
 
 use super::error::ProcessBrokerError;
 use super::logging::{BrokerLoggerId, BrokerLogging};
+use super::reap::collect_closed_helper;
 use super::retiring::RetiringGroups;
 use super::state::{
     BrokerGeneration, BrokerOwnedProcess, BrokerRuntimeState, BrokerSpawnState,
@@ -108,7 +109,10 @@ where
             );
             write_event(writer, &event).await
         }
-        Err(error) => {
+        Err(GuardedSpawnFailure { error, helper }) => {
+            if let Some(helper) = helper {
+                collect_closed_helper(generation, helper, state.processes)?;
+            }
             if let Some(process) = error.cleanup_pending() {
                 state
                     .processes
@@ -229,16 +233,32 @@ fn spawn_guarded(
     startup_timeout: Duration,
     descriptors: impl IntoIterator<Item = ProcessDescriptor>,
     retiring: &mut RetiringGroups,
-) -> Result<GuardedSpawn, SpawnError> {
-    let guard = ProcessGroupGuard::new().map_err(|error| guard_spawn_error(error, None))?;
+) -> Result<GuardedSpawn, GuardedSpawnFailure> {
+    let guard = ProcessGroupGuard::new().map_err(|error| GuardedSpawnFailure {
+        error: guard_spawn_error(error, None),
+        helper: None,
+    })?;
+    let helper = guard.process().ok();
+    let failed = |error| GuardedSpawnFailure { error, helper };
     let group = guard
         .group()
-        .map_err(|error| guard_spawn_error(error, None))?;
-    let joined = join_guarded_group(command, startup_timeout, descriptors, guard, group);
+        .map_err(|error| failed(guard_spawn_error(error, None)))?;
+    let joined =
+        join_guarded_group(command, startup_timeout, descriptors, guard, group).map_err(failed);
     if joined.is_err() {
         retiring.retire(group);
     }
     joined
+}
+
+/// A guarded spawn that failed after its guard was reserved.
+///
+/// The dropped guard closed its owner socket and cleaned up its helper within
+/// fork's deadline; `helper` names that helper so the caller can probe it and
+/// track one that is still not collected.
+struct GuardedSpawnFailure {
+    error: SpawnError,
+    helper: Option<ProcessId>,
 }
 
 fn join_guarded_group(
@@ -373,7 +393,10 @@ where
             )
             .await
         }
-        Err(error) => {
+        Err(GuardedSpawnFailure { error, helper }) => {
+            if let Some(helper) = helper {
+                collect_closed_helper(generation, helper, processes)?;
+            }
             if let Some(process) = error.cleanup_pending() {
                 processes.insert(process, BrokerOwnedProcess::Generation(generation));
             }

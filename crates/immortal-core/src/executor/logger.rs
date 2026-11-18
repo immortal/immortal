@@ -15,7 +15,8 @@ use super::{
     ExecutionContext, ExecutorError, FailureReason, LOGGER_DRAIN_GRACE, LOGGER_PREPARE_GRACE,
     LOGGER_STOP_GRACE, LoggerExecution, LoggerExecutionState, LoggerRestartConfig,
     LoggerShutdownState, LoggerShutdownTier, LoggerStatus, ProcessBrokerClient, ProcessId,
-    ProcessSignal, SupervisorState, allocate_task, cancel_auxiliary, jittered_backoff_seed,
+    ProcessSignal, SupervisorState, allocate_task, cancel_auxiliary, ending, jittered_backoff_seed,
+    keep_killing_task,
 };
 use crate::{
     process::{SpawnFailure, SpawnStage},
@@ -248,6 +249,23 @@ pub(super) async fn handle_due_logger_timers(
     if !execution.logger_shutdown.permits_restart() {
         return Ok(());
     }
+    expire_logger_deadlines(client, execution, now).await?;
+    start_down_loggers(client, execution).await
+}
+
+/// Act on every logger whose own deadline has passed: end a backoff, give up
+/// on a start the broker never confirmed, and keep waiting for the reap of a
+/// killed logger, repeating its kill.
+///
+/// # Errors
+///
+/// Returns a failure to write a kill to the broker, or an overdue reap while
+/// the supervisor is ending.
+async fn expire_logger_deadlines(
+    client: &mut ProcessBrokerClient,
+    execution: &mut ExecutionContext,
+    now: TokioInstant,
+) -> Result<(), ExecutorError> {
     for logger in &mut execution.loggers {
         match logger.state {
             LoggerExecutionState::Backoff { deadline } if deadline <= now => {
@@ -274,8 +292,25 @@ pub(super) async fn handle_due_logger_timers(
                     deadline: now + BROKER_EVENT_TIMEOUT,
                 };
             }
-            LoggerExecutionState::Killing { deadline, .. } if deadline <= now => {
+            LoggerExecutionState::Killing { deadline, .. }
+                if deadline <= now && ending(&execution.machine, execution.shutdown_requested) =>
+            {
                 return Err(ExecutorError::BrokerTimedOut("logger cleanup"));
+            }
+            // The kill was sent; only its reap is late. Keep waiting for it,
+            // repeating a kill that may never have been delivered, rather than
+            // end supervision, and never start another logger beside a process
+            // whose end is not confirmed.
+            LoggerExecutionState::Killing { task, deadline } if deadline <= now => {
+                let deadline = keep_killing_task(
+                    client,
+                    task,
+                    &mut execution.task_signals,
+                    &mut execution.overdue,
+                    "the end of the killed logger",
+                )
+                .await?;
+                logger.state = LoggerExecutionState::Killing { task, deadline };
             }
             LoggerExecutionState::Down
             | LoggerExecutionState::Starting { .. }
@@ -285,7 +320,7 @@ pub(super) async fn handle_due_logger_timers(
             | LoggerExecutionState::Killing { .. } => {}
         }
     }
-    start_down_loggers(client, execution).await
+    Ok(())
 }
 
 pub(super) async fn signal_logger_tier(

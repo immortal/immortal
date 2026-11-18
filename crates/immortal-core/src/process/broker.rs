@@ -77,8 +77,8 @@ use super::{
         BrokerEvent, BrokerProtocolError, BrokerReadinessFailure, BrokerRequest,
         BrokerSignalTarget, HEADER_BYTES, MAX_FRAME_BYTES, declared_frame_length,
     },
-    current_process_group, process_group_exists, reap_any_event, signal, spawn as spawn_process,
-    spawn_with_descriptors_in_group,
+    current_process_group, process_group_exists, reap_any_event, reap_event, signal,
+    spawn as spawn_process, spawn_with_descriptors_in_group,
 };
 
 pub use self::client::{ProcessBrokerClient, ProcessBrokerEndpoint};

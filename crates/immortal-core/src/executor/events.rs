@@ -19,10 +19,11 @@ use super::{
     LifecycleHookState, LifetimeResult, LoggerExecution, LoggerExecutionState, LoggerRestartConfig,
     LoggerShutdownState, LoggerShutdownTier, PreparedExecution, ProcessBrokerClient,
     ProcessBrokerEvent, ProcessGroupId, ProcessId, ProcessMode, ReadinessMode, ResponseCode,
-    SERVICE_STOP_GRACE, SPAWN_FAILURE_EXIT, ServiceConfig, SupervisorState, begin_lifecycle_hook,
-    complete_generation, finish_descriptor_generation, finish_detach, finish_signal_request,
-    handle_auxiliary_event, handle_lifetime_event, handle_service_child_event, logger_tier_is_down,
-    publish_readiness, request_group_stop, schedule_logger_restart,
+    SERVICE_STOP_GRACE, SPAWN_FAILURE_EXIT, ServiceConfig, SupervisorState,
+    act_on_recorded_readiness_failure, begin_lifecycle_hook, complete_generation,
+    finish_descriptor_generation, finish_detach, finish_signal_request, handle_auxiliary_event,
+    handle_lifetime_event, handle_service_child_event, logger_tier_is_down, publish_readiness,
+    request_group_stop, schedule_logger_restart,
 };
 use crate::status::{LoggerLastResult, SpawnDetail};
 
@@ -123,7 +124,7 @@ pub(super) async fn handle_lifecycle_event(
                 ))
             })?;
             lifecycle.state = LifecycleHookState::Running;
-            execution.deadline = Some(TokioInstant::now() + lifecycle.timeout);
+            lifecycle.deadline = Some(TokioInstant::now() + lifecycle.timeout);
             Ok(())
         }
         ProcessBrokerEvent::TaskStarted { task: current, .. }
@@ -143,7 +144,7 @@ pub(super) async fn handle_lifecycle_event(
                 && lifecycle.state != LifecycleHookState::Killing
             {
                 lifecycle.state = LifecycleHookState::Killing;
-                execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+                lifecycle.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
             }
             Ok(())
         }
@@ -213,8 +214,7 @@ pub(super) async fn finish_lifecycle_success(
     };
     if lifecycle.kind == LifecycleHookKind::Reload {
         respond_lifecycle(execution.lifecycle.take(), ResponseCode::Ok, None);
-        execution.deadline = None;
-        return Ok(());
+        return act_on_recorded_readiness_failure(client, commands, config, execution).await;
     }
     lifecycle.state = LifecycleHookState::WaitingLifetime;
     execution.pending_stop = lifecycle.after;
@@ -225,8 +225,23 @@ pub(super) async fn finish_lifecycle_success(
         ))
     })?;
     let generation = lifecycle.generation;
-    execution.deadline =
-        Some(TokioInstant::now() + Duration::from_secs(tracking.lifetime_timeout_seconds));
+    let lifetime_closed = execution.descriptor.is_some_and(|descriptor| {
+        descriptor.generation == generation
+            && descriptor.lifetime_result.is_some()
+            && descriptor.launcher_result.is_none()
+    });
+    if lifetime_closed {
+        // The lifetime closed while the hook ran, which skipped the group
+        // stop, and only the launcher is left: stop it now rather than wait
+        // for a closure that already happened and then fail the stop.
+        lifecycle.deadline = None;
+        request_group_stop(client, generation, &mut execution.pending_signals).await?;
+        execution.stop_kill_sent = false;
+        execution.deadline = Some(TokioInstant::now() + SERVICE_STOP_GRACE);
+    } else {
+        lifecycle.deadline =
+            Some(TokioInstant::now() + Duration::from_secs(tracking.lifetime_timeout_seconds));
+    }
     finish_descriptor_generation(
         client,
         generation,
@@ -251,15 +266,45 @@ pub(super) async fn finish_lifecycle_failure(
         ))
     })?;
     let generation = lifecycle.generation;
-    if lifecycle.kind == LifecycleHookKind::Stop {
+    let reload = lifecycle.kind == LifecycleHookKind::Reload;
+    let ended = execution
+        .descriptor
+        .filter(|descriptor| {
+            descriptor.generation == generation && descriptor.lifetime_result.is_some()
+        })
+        .map(|descriptor| descriptor.launcher_result.is_none());
+    if let (LifecycleHookKind::Stop, Some(launcher_running)) = (lifecycle.kind, ended) {
+        // The service's lifetime ended while the hook ran, so there is no live
+        // generation to restore and the stop goes on: a launcher still left is
+        // stopped as after a successful hook, and the generation completes as
+        // the stop asked. The hook's failure is still reported.
+        execution.pending_stop = lifecycle.after;
+        if launcher_running {
+            request_group_stop(client, generation, &mut execution.pending_signals).await?;
+            execution.stop_kill_sent = false;
+            execution.deadline = Some(TokioInstant::now() + SERVICE_STOP_GRACE);
+        }
+    } else if lifecycle.kind == LifecycleHookKind::Stop {
         execution.machine.abort_stop(
             lifecycle.generation,
             lifecycle.resume_ready,
             lifecycle.previous_desired,
         )?;
         execution.pending_stop = None;
+        // The generation is live again and the stop hook had cleared its
+        // deadline. One whose readiness failed is stopped again after the
+        // stop grace, so a hook that keeps failing is retried at a bounded
+        // pace; one still awaiting readiness gets its backstop back.
+        execution.deadline = match execution.machine.state() {
+            SupervisorState::Running(_) if execution.status.readiness_failed => {
+                Some(TokioInstant::now() + SERVICE_STOP_GRACE)
+            }
+            SupervisorState::Running(_) if config.readiness.mode == ReadinessMode::NotifyFd => {
+                Some(readiness_deadline(config))
+            }
+            _ => None,
+        };
     }
-    execution.deadline = None;
     respond_lifecycle(Some(lifecycle), ResponseCode::Internal, Some(message));
     finish_descriptor_generation(
         client,
@@ -268,7 +313,11 @@ pub(super) async fn finish_lifecycle_failure(
         config,
         execution,
     )
-    .await
+    .await?;
+    if reload {
+        act_on_recorded_readiness_failure(client, commands, config, execution).await?;
+    }
+    Ok(())
 }
 
 pub(super) fn respond_lifecycle(
@@ -360,15 +409,7 @@ pub(super) async fn handle_service_broker_event(
         ProcessBrokerEvent::Child { generation, event }
             if execution.machine.state().live_generation() == Some(generation) =>
         {
-            handle_service_child_event(
-                client,
-                generation,
-                event,
-                commands.post_exit.as_ref(),
-                config,
-                execution,
-            )
-            .await
+            handle_live_child_event(client, generation, event, commands, config, execution).await
         }
         // A spawn that fails after forking leaves a process the broker still
         // has to reap, so its `Child` event arrives once the supervisor has
@@ -401,10 +442,14 @@ pub(super) async fn handle_service_broker_event(
         ProcessBrokerEvent::ReadinessFailed { generation, .. }
             if owns_generation(execution, generation) =>
         {
-            // The generation already has a lifecycle decision, so a late
-            // failure only updates status; its exit or continuation drives the
-            // next transition.
+            // The generation is stopping, completed, or paused, so the failure
+            // is recorded: a stop or completion already decides what comes
+            // next, and a paused generation acts on it when it continues. Its
+            // readiness is settled, so a paused one waits for nothing more.
             execution.status.readiness_failed = true;
+            if matches!(execution.machine.state(), SupervisorState::Paused { .. }) {
+                execution.deadline = None;
+            }
             Ok(())
         }
         ProcessBrokerEvent::LifetimeClosed { generation } => {
@@ -447,6 +492,33 @@ pub(super) async fn handle_service_broker_event(
     }
 }
 
+/// Apply a state change of the live generation's main child.
+///
+/// A readiness failure that arrived while the child was paused is acted on as
+/// soon as the child runs again.
+async fn handle_live_child_event(
+    client: &mut ProcessBrokerClient,
+    generation: Generation,
+    event: ChildEvent,
+    commands: &PreparedExecution,
+    config: &ServiceConfig,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    handle_service_child_event(
+        client,
+        generation,
+        event,
+        commands.post_exit.as_ref(),
+        config,
+        execution,
+    )
+    .await?;
+    if matches!(event, ChildEvent::Continued { .. }) {
+        act_on_recorded_readiness_failure(client, commands, config, execution).await?;
+    }
+    Ok(())
+}
+
 /// Return whether the supervisor still owns `generation`.
 ///
 /// Readiness observations are handled for every owned generation, including one
@@ -473,7 +545,24 @@ pub(super) fn handle_generation_ready(
     ) {
         return publish_readiness(&mut execution.machine, generation, &mut execution.deadline);
     }
+    keep_readiness_for_a_failed_stop(generation, execution);
     Ok(())
+}
+
+/// Remember readiness reached while a descriptor stop hook runs.
+///
+/// The broker sends each readiness outcome once. Should the stop hook fail,
+/// the generation is live again and must come back ready, or it would wait
+/// for an outcome that never arrives again.
+fn keep_readiness_for_a_failed_stop(generation: Generation, execution: &mut ExecutionContext) {
+    if execution.machine.state() != SupervisorState::Stopping(generation) {
+        return;
+    }
+    if let Some(lifecycle) = execution.lifecycle.as_mut().filter(|lifecycle| {
+        lifecycle.generation == generation && lifecycle.kind == LifecycleHookKind::Stop
+    }) {
+        lifecycle.resume_ready = true;
+    }
 }
 
 /// When a generation awaiting readiness must be treated as having timed out.
@@ -506,6 +595,9 @@ pub(super) fn handle_service_started(
     }
     if execution.machine.state() == SupervisorState::Stopping(generation) {
         execution.status.publish_main_pid(process)?;
+        if config.readiness.mode == ReadinessMode::Immediate {
+            keep_readiness_for_a_failed_stop(generation, execution);
+        }
         return Ok(());
     }
     Err(ExecutorError::UnexpectedBrokerEvent(
@@ -525,6 +617,11 @@ pub(super) async fn handle_readiness_failure(
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
     execution.status.readiness_failed = true;
+    // No stop may start beside a running lifecycle hook; the hook's end acts
+    // on the recorded failure instead.
+    if execution.lifecycle.is_some() {
+        return Ok(());
+    }
     let previous_desired = execution.machine.desired();
     execution.machine.begin_stop(generation)?;
     if config.process_mode == ProcessMode::DescriptorTracking {

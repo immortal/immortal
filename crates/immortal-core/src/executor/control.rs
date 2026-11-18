@@ -15,10 +15,11 @@ use super::{
     BROKER_EVENT_TIMEOUT, BrokerSignalScope, CHILD_STARTUP_TIMEOUT, ControlCommand, ControlEffect,
     DesiredState, ExecutionContext, ExecutorError, ExecutorEvent, Generation, LifecycleExecution,
     LifecycleHookKind, LifecycleHookState, LoggerExecutionState, Operation, PendingDetach,
-    PendingSignal, PreparedExecution, ProcessBrokerClient, ProcessCommand, ProcessMode,
-    ProcessSignal, Response, ResponseCode, SERVICE_STOP_GRACE, ServiceConfig, Signal, SignalScope,
-    StateMachine, StopCompletion, SupervisorState, TerminationSignals, TransitionError,
-    allocate_task, cancel_auxiliary, decide_request, start_down_loggers,
+    PendingSignal, PreparedExecution, ProcessBrokerClient, ProcessBrokerError, ProcessBrokerEvent,
+    ProcessCommand, ProcessMode, ProcessSignal, Response, ResponseCode, SERVICE_STOP_GRACE,
+    ServiceConfig, Signal, SignalScope, StateMachine, StopCompletion, SupervisorState,
+    TerminationSignals, TransitionError, allocate_task, cancel_auxiliary, decide_request,
+    start_down_loggers,
 };
 
 pub(super) async fn next_executor_event(
@@ -27,17 +28,49 @@ pub(super) async fn next_executor_event(
     controls: &mut Option<&mut mpsc::Receiver<ControlCommand>>,
     deadline: Option<TokioInstant>,
 ) -> Result<ExecutorEvent, ExecutorError> {
+    select_executor_event(
+        client.next_event(),
+        signals.recv(),
+        receive_control(controls),
+        wait_for_deadline(deadline),
+    )
+    .await
+}
+
+/// Take the first ready source, in a fixed order: broker, shutdown, control,
+/// then the deadline.
+///
+/// A broker answer that already arrived must win over a deadline that passed
+/// meanwhile, or the timer would act on a wait the answer has already ended.
+/// An unbiased choice let the deadline win about three times in four. Taking
+/// the broker first could delay the other sources only while broker events
+/// keep arriving; they are bounded by the processes the broker owns and by a
+/// 32-event queue, so a burst ends and the other sources are polled again.
+/// Every wait is cancellation-safe.
+pub(super) async fn select_executor_event<B, S, C, T>(
+    broker: B,
+    shutdown: S,
+    control: C,
+    timer: T,
+) -> Result<ExecutorEvent, ExecutorError>
+where
+    B: Future<Output = Result<ProcessBrokerEvent, ProcessBrokerError>>,
+    S: Future<Output = io::Result<()>>,
+    C: Future<Output = Option<ControlCommand>>,
+    T: Future<Output = ()>,
+{
     tokio::select! {
-        event = client.next_event() => Ok(ExecutorEvent::Broker(event?)),
-        shutdown = signals.recv() => {
+        biased;
+        event = broker => Ok(ExecutorEvent::Broker(event?)),
+        shutdown = shutdown => {
             shutdown?;
             Ok(ExecutorEvent::Shutdown)
         }
-        command = receive_control(controls) => Ok(command.map_or(
+        command = control => Ok(command.map_or(
             ExecutorEvent::ControlClosed,
             ExecutorEvent::Control,
         )),
-        () = wait_for_deadline(deadline) => Ok(ExecutorEvent::Timer),
+        () = timer => Ok(ExecutorEvent::Timer),
     }
 }
 
@@ -370,6 +403,7 @@ pub(super) async fn begin_lifecycle_hook(
     execution.lifecycle = Some(LifecycleExecution {
         after: request.after,
         command: request.command,
+        deadline: Some(TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT),
         generation: request.generation,
         kind: request.kind,
         previous_desired: request.previous_desired,
@@ -379,7 +413,12 @@ pub(super) async fn begin_lifecycle_hook(
         task,
         timeout: Duration::from_secs(timeout_seconds),
     });
-    execution.deadline = Some(TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT);
+    // A stop hook replaces the group stop, so no generation deadline may
+    // escalate to a group kill behind its back; a reload leaves the live
+    // generation's deadline alone.
+    if request.kind == LifecycleHookKind::Stop {
+        execution.deadline = None;
+    }
     Ok(())
 }
 

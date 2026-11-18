@@ -1,6 +1,7 @@
 //! Dry-run, mutation-mode, dependency-ordering, and plan-rendering tests for the reconcile action.
 
 use std::{
+    collections::BTreeMap,
     error::Error,
     fs, io,
     os::unix::fs::PermissionsExt,
@@ -12,14 +13,14 @@ use immortal_core::{
     config::ServiceConfig,
     exit::ExitClass,
     process::{SpawnFailure, SpawnStage},
-    reconcile::{ReconcileAction, ScanLimits, scan_directory},
+    reconcile::{DefinitionSnapshots, ReconcileAction, ScanLimits, scan_directory},
     status::{LastResult, LoggerLastResult, ServiceState, SpawnDetail, StatusSnapshot},
     supervisor::StateMachine,
 };
 
 use super::{
-    ActionError, DesiredPlan, DirectoryAction, PlanPreview, ServiceFailure, ServiceFailureKind,
-    StartBlocker, desired_plan, execute_with_endpoint, write_plan,
+    ActionError, DesiredPlan, DirectoryAction, OperationalState, PlanPreview, ServiceFailure,
+    ServiceFailureKind, StartBlocker, desired_plan, execute_with_endpoint, write_plan,
 };
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -602,6 +603,36 @@ fn applied_snapshot_recovers_live_action_without_in_memory_history() -> Result<(
     );
     assert_eq!(
         desired_plan(false, &disabled, Some(&disabled)),
+        DesiredPlan::Keep
+    );
+    Ok(())
+}
+
+/// Regression: a restart whose new supervisor was not Ready within the
+/// lifecycle deadline was never recorded as applied, so every later scan
+/// halted and relaunched that supervisor, even once it was Ready. A launch is
+/// recorded as soon as it succeeds, and the next plan keeps it.
+#[test]
+fn a_launched_restart_is_recorded_and_kept_by_the_next_plan() -> Result<(), Box<dyn Error>> {
+    let runtime = TestDirectory::new()?;
+    let snapshots = DefinitionSnapshots::open(runtime.path())?;
+    let previous = ServiceConfig::for_command(vec!["/bin/true".to_owned()])?;
+    let changed = ServiceConfig::for_command(vec!["/bin/false".to_owned()])?;
+    let mut operational = OperationalState {
+        known: BTreeMap::from([("api".to_owned(), previous)]),
+        pending: BTreeMap::from([("api".to_owned(), ReconcileAction::Restart)]),
+    };
+
+    operational
+        .record_launch("api", &changed, &snapshots)
+        .map_err(|error| format!("{error:?}"))?;
+
+    assert!(!operational.pending.contains_key("api"));
+    assert_eq!(operational.known.get("api"), Some(&changed));
+    let applied = snapshots.load_applied("api")?;
+    assert_eq!(applied.as_ref(), Some(&changed));
+    assert_eq!(
+        desired_plan(true, &changed, applied.as_ref()),
         DesiredPlan::Keep
     );
     Ok(())

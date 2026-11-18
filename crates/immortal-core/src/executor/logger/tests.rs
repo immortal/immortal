@@ -307,3 +307,25 @@ async fn logger_deadlines_do_not_wake_the_loop_while_loggers_shut_down()
     assert_eq!(fixture.execution.next_deadline(), Some(shutdown));
     Ok(())
 }
+
+/// Regression: a logger whose kill the broker had not confirmed five seconds
+/// later ended supervision. The kill is waited for instead, and no new logger
+/// starts beside the process until its reap arrives.
+#[tokio::test]
+async fn an_overdue_logger_kill_keeps_waiting() -> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    let task = time_out_shared_start(&mut fixture).await?;
+    fixture.logger(SHARED)?.state = LoggerExecutionState::Killing {
+        task,
+        deadline: TokioInstant::now(),
+    };
+
+    handle_due_logger_timers(&mut fixture.client, &mut fixture.execution).await?;
+
+    assert!(matches!(
+        fixture.logger(SHARED)?.state,
+        LoggerExecutionState::Killing { task: current, deadline }
+            if current == task && deadline > TokioInstant::now()
+    ));
+    Ok(())
+}

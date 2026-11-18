@@ -3,7 +3,9 @@
 //! Each function pairs one wire type's `encode`/`decode` with the shared
 //! bounded frame writer/reader so callers never see a partially written or
 //! partially read frame: [`write_frame`]/[`read_frame`] enforce the declared
-//! length against [`MAX_FRAME_BYTES`] before any payload is trusted.
+//! length against [`MAX_FRAME_BYTES`] before any payload is trusted. Every
+//! socket read or write failure is reported as a supervisor connection failure,
+//! the only kind the broker may treat as a departed supervisor.
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -51,8 +53,14 @@ async fn write_frame<W>(writer: &mut W, frame: &[u8]) -> Result<(), ProcessBroke
 where
     W: AsyncWrite + Unpin,
 {
-    writer.write_all(frame).await?;
-    writer.flush().await?;
+    writer
+        .write_all(frame)
+        .await
+        .map_err(ProcessBrokerError::connection)?;
+    writer
+        .flush()
+        .await
+        .map_err(ProcessBrokerError::connection)?;
     Ok(())
 }
 
@@ -61,7 +69,10 @@ where
     R: AsyncRead + Unpin,
 {
     let mut header = [0; HEADER_BYTES];
-    let _ = reader.read_exact(&mut header).await?;
+    let _ = reader
+        .read_exact(&mut header)
+        .await
+        .map_err(ProcessBrokerError::connection)?;
     let frame_length = declared_frame_length(&header)?;
     let payload_length = frame_length.saturating_sub(HEADER_BYTES);
     if frame_length > MAX_FRAME_BYTES {
@@ -76,6 +87,9 @@ where
     if payload.len() != payload_length {
         return Err(BrokerProtocolError::LengthMismatch.into());
     }
-    let _ = reader.read_exact(payload).await?;
+    let _ = reader
+        .read_exact(payload)
+        .await
+        .map_err(ProcessBrokerError::connection)?;
     Ok(frame)
 }

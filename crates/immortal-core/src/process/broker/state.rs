@@ -43,6 +43,9 @@ pub(super) struct BrokerGeneration {
 pub(super) enum BrokerOwnedProcess {
     Generation(Generation),
     Guard(Generation),
+    /// A guard helper whose release failed while it was still exiting. It no
+    /// longer pins anything; its eventual reap is only collected.
+    ReleasedGuard(Generation),
 }
 
 pub(super) struct BrokerRuntimeState {

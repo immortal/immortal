@@ -452,6 +452,13 @@ async fn apply_launch_batch(
             &action.supervisor_binary,
             specifications,
             action.launch_concurrency,
+            |remaining, waited| {
+                let _ = writeln!(
+                    io::stderr().lock(),
+                    "reconcile: still waiting for {remaining} supervisor launches after {} s",
+                    waited.as_secs()
+                );
+            },
         )
         .await
         .map_err(ActionError::Launcher)?;
@@ -460,22 +467,35 @@ async fn apply_launch_batch(
             io::Error::other("launch batch outcome count mismatch"),
         )));
     }
+    // Every supervisor that launched runs its new definition from now on, so
+    // all of them are recorded before any Ready wait: an interrupted scan then
+    // never relaunches a supervisor that already runs what it should.
     let mut failures = Vec::new();
+    let mut started = Vec::with_capacity(names.len());
     for (name, outcome) in names.into_iter().zip(outcomes) {
         let Some(config) = desired.get(&name) else {
             continue;
         };
-        let result = match outcome {
-            Ok(()) => {
-                operational
-                    .complete_start(action, &name, config, snapshots)
-                    .await
-            }
+        let recorded = match outcome {
+            Ok(()) => operational
+                .record_launch(&name, config, snapshots)
+                .map_err(MutationError::Isolated),
             Err(error) => Err(MutationError::Isolated(ServiceFailureKind::Launcher(
                 LauncherError::from(error),
             ))),
         };
-        match result {
+        match recorded {
+            Ok(()) => started.push(name),
+            Err(MutationError::Isolated(error)) => {
+                failures.push(ServiceFailure::new(&name, error));
+            }
+            Err(MutationError::RuntimeLost(error)) => {
+                return Err(ActionError::Runtime(error));
+            }
+        }
+    }
+    for name in started {
+        match confirm_ready(action, &name).await {
             Ok(()) => {}
             Err(MutationError::Isolated(error)) => {
                 failures.push(ServiceFailure::new(&name, error));
@@ -650,20 +670,34 @@ impl OperationalState {
         Ok(Some(SupervisorLaunch::new(snapshot, runtime_directory)))
     }
 
-    async fn complete_start(
+    /// Record that a supervisor launched with `config` and runs it now.
+    ///
+    /// A launcher exits successfully only once its daemon owns the control
+    /// socket, so the definition is applied whether or not the service becomes
+    /// Ready in time. Recording it only after Ready made a service slower than
+    /// the lifecycle deadline look unapplied, and every later scan halted and
+    /// relaunched it, even once it was Ready.
+    fn record_launch(
         &mut self,
-        action: &DirectoryAction,
         name: &str,
         config: &immortal_core::config::ServiceConfig,
         snapshots: &DefinitionSnapshots,
-    ) -> Result<(), MutationError> {
-        wait_for_state(&action.runtime_directory, name, ServiceState::Ready).await?;
+    ) -> Result<(), ServiceFailureKind> {
         self.pending.remove(name);
         self.known.insert(name.to_owned(), config.clone());
         snapshots.record_applied(name, config)?;
-        writeln!(io::stdout().lock(), "APPLIED\t{name}")?;
         Ok(())
     }
+}
+
+/// Wait for a launched supervisor to report Ready, then announce `APPLIED`.
+///
+/// A service still not Ready at the lifecycle deadline is reported as an
+/// isolated failure; it keeps running and is not relaunched.
+async fn confirm_ready(action: &DirectoryAction, name: &str) -> Result<(), MutationError> {
+    wait_for_state(&action.runtime_directory, name, ServiceState::Ready).await?;
+    writeln!(io::stdout().lock(), "APPLIED\t{name}")?;
+    Ok(())
 }
 
 async fn status(service: &RuntimeService) -> Result<Response, ServiceFailureKind> {

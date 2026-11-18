@@ -503,7 +503,7 @@ mod tests {
     /// write escape as a fatal error.
     #[test]
     fn broken_pipe_is_classified_as_end_of_stream() {
-        let error = ProcessBrokerError::from(io::Error::new(
+        let error = ProcessBrokerError::connection(io::Error::new(
             io::ErrorKind::BrokenPipe,
             "supervisor closed the connection",
         ));
@@ -518,8 +518,26 @@ mod tests {
             io::ErrorKind::InvalidInput,
             io::ErrorKind::Other,
         ] {
-            let error = ProcessBrokerError::from(io::Error::new(kind, "unusable socket"));
+            let error = ProcessBrokerError::connection(io::Error::new(kind, "unusable socket"));
             assert!(!error.is_end_of_stream(), "{kind:?} must stay fatal");
+        }
+    }
+
+    /// Regression: only the supervisor socket can report a departed supervisor.
+    ///
+    /// Releasing a group guard writes to the helper's socket, which reports a
+    /// dead helper as `BrokenPipe`. Classifying that like a supervisor write
+    /// ran supervisor-loss cleanup, killing every service of a supervisor that
+    /// was still connected.
+    #[test]
+    fn an_io_failure_outside_the_supervisor_socket_is_not_supervisor_loss() {
+        for kind in [
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::UnexpectedEof,
+        ] {
+            let error = ProcessBrokerError::from(io::Error::new(kind, "group helper socket"));
+            assert!(!error.is_end_of_stream(), "{kind:?} is not a disconnect");
         }
     }
 

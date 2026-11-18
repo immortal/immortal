@@ -4,7 +4,14 @@
 //! prepares all commands before submission, and then waits for bounded readiness,
 //! start, and terminal events. Batch state is task-local: individual spawn or
 //! nonzero-exit outcomes are returned per launch, while broker protocol,
-//! ordering, task-space, and deadline failures abort the whole batch.
+//! ordering, and task-space failures abort the whole batch.
+//!
+//! A batch has no deadline of its own. Each launch is bounded by itself: the
+//! broker bounds the launcher's start and the launcher bounds its daemon's
+//! startup handshake. A batch that is still waiting is therefore only slow,
+//! because the host is starved or paused, and is reported once a minute rather
+//! than abandoned; abandoning it ended the whole directory manager, although
+//! every launch was still on its way. Job control of a launcher changes nothing.
 
 use std::{
     collections::BTreeMap,
@@ -15,7 +22,7 @@ use std::{
     time::Duration,
 };
 
-use tokio::time::timeout;
+use tokio::time::{Instant, MissedTickBehavior, interval_at, timeout};
 
 use super::limits::LaunchConcurrency;
 use crate::{
@@ -28,6 +35,8 @@ use crate::{
 
 const SUPERVISOR_START_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// How often a launch batch that is still waiting is reported.
+pub const LAUNCH_REPORT_INTERVAL: Duration = Duration::from_mins(1);
 /// Failure while launching a checked supervisor through the pre-Tokio broker.
 #[derive(Debug)]
 pub enum LauncherError {
@@ -185,44 +194,29 @@ impl SupervisorLauncher {
         }
     }
 
-    /// Launch one checked daemon and wait for its invoking process to report success.
-    ///
-    /// # Errors
-    ///
-    /// Returns preparation, broker, timeout, exec, or nonzero launcher-exit failure.
-    pub async fn launch(
-        &mut self,
-        binary: &Path,
-        snapshot: &Path,
-        runtime_directory: &Path,
-    ) -> Result<(), LauncherError> {
-        let command = prepare_launcher_command(binary, snapshot, runtime_directory)?;
-        let task = self.allocate_task()?;
-        self.client
-            .spawn_task(task, command, SUPERVISOR_START_TIMEOUT)
-            .await?;
-        timeout(SUPERVISOR_START_TIMEOUT, self.wait_for_launcher(task))
-            .await
-            .map_err(|_| LauncherError::Timeout)?
-    }
-
     /// Submit one bounded batch and return task outcomes in input order.
     ///
     /// Commands and task IDs are fully prepared before the first broker write.
     /// A task-local spawn/nonzero-exit failure does not discard other outcomes;
-    /// broker, protocol, or deadline failure aborts the complete batch.
+    /// broker or protocol failure aborts the complete batch. While launches are
+    /// still outstanding, `report` receives their number and the time waited
+    /// so far once every [`LAUNCH_REPORT_INTERVAL`].
     ///
     /// # Errors
     ///
     /// Returns an error for an oversized batch, invalid command preparation,
-    /// task-space exhaustion, broker transport/protocol failure, or the shared
-    /// batch deadline. An empty batch succeeds with an empty result.
-    pub async fn launch_batch(
+    /// task-space exhaustion, or broker transport/protocol failure. An empty
+    /// batch succeeds with an empty result.
+    pub async fn launch_batch<R>(
         &mut self,
         binary: &Path,
         launches: Vec<SupervisorLaunch>,
         concurrency: LaunchConcurrency,
-    ) -> Result<Vec<Result<(), LauncherTaskError>>, LauncherError> {
+        mut report: R,
+    ) -> Result<Vec<Result<(), LauncherTaskError>>, LauncherError>
+    where
+        R: FnMut(usize, Duration),
+    {
         if launches.len() > concurrency.get() {
             return Err(LauncherError::BatchLimit {
                 actual: launches.len(),
@@ -248,12 +242,8 @@ impl SupervisorLauncher {
         if states.is_empty() {
             return Ok(Vec::new());
         }
-        timeout(
-            SUPERVISOR_START_TIMEOUT,
-            self.wait_for_launch_batch(&mut states),
-        )
-        .await
-        .map_err(|_| LauncherError::Timeout)??;
+        self.wait_for_launch_batch(&mut states, LAUNCH_REPORT_INTERVAL, &mut report)
+            .await?;
         order
             .into_iter()
             .map(|task| {
@@ -279,87 +269,39 @@ impl SupervisorLauncher {
         Ok(task)
     }
 
-    async fn wait_for_launcher(&mut self, task: BrokerTaskId) -> Result<(), LauncherError> {
-        loop {
-            match self.client.next_event().await? {
-                ProcessBrokerEvent::TaskStarted { task: current, .. } if current == task => {}
-                ProcessBrokerEvent::TaskChild {
-                    task: current,
-                    event: ChildEvent::Exited { code: 0, .. },
-                } if current == task => return Ok(()),
-                ProcessBrokerEvent::TaskChild {
-                    task: current,
-                    event,
-                } if current == task && event.is_terminal() => {
-                    return Err(LauncherError::LauncherExited(event));
-                }
-                ProcessBrokerEvent::TaskSpawnFailed { task: current, .. } if current == task => {
-                    return Err(LauncherError::OperatingSystem(io::Error::other(
-                        "broker could not execute the immortal launcher",
-                    )));
-                }
-                event => return Err(LauncherError::UnexpectedEvent(event)),
-            }
-        }
-    }
-
-    async fn wait_for_launch_batch(
+    /// Wait until every task of the batch has an outcome, reporting the wait
+    /// every `interval`.
+    ///
+    /// All progress lives in `states`, so the wait itself holds nothing a
+    /// report could lose.
+    async fn wait_for_launch_batch<R>(
         &mut self,
         states: &mut BTreeMap<BrokerTaskId, LaunchTaskState>,
-    ) -> Result<(), LauncherError> {
-        let mut remaining = states.len();
-        while remaining != 0 {
-            let event = self.client.next_event().await?;
-            match &event {
-                ProcessBrokerEvent::TaskStarted { task, .. } => {
-                    let Some(state) = states.get_mut(task) else {
-                        return Err(LauncherError::UnexpectedEvent(event));
-                    };
-                    if state.started || state.outcome.is_some() {
-                        return Err(LauncherError::OperatingSystem(io::Error::other(
-                            "duplicate or late launcher start event",
-                        )));
-                    }
-                    state.started = true;
-                }
-                ProcessBrokerEvent::TaskChild {
-                    task,
-                    event: child_event,
-                } if child_event.is_terminal() => {
-                    let Some(state) = states.get_mut(task) else {
-                        return Err(LauncherError::UnexpectedEvent(event));
-                    };
-                    if !state.started || state.outcome.is_some() {
-                        return Err(LauncherError::OperatingSystem(io::Error::other(
-                            "launcher terminal event violated task ordering",
-                        )));
-                    }
-                    state.outcome = Some(match child_event {
-                        ChildEvent::Exited { code: 0, .. } => Ok(()),
-                        terminal => Err(LauncherTaskError::Exited(*terminal)),
-                    });
-                    remaining = remaining
-                        .checked_sub(1)
-                        .ok_or_else(|| io::Error::other("launcher completion counter underflow"))?;
-                }
-                ProcessBrokerEvent::TaskSpawnFailed { task, .. } => {
-                    let Some(state) = states.get_mut(task) else {
-                        return Err(LauncherError::UnexpectedEvent(event));
-                    };
-                    if state.started || state.outcome.is_some() {
-                        return Err(LauncherError::OperatingSystem(io::Error::other(
-                            "launcher spawn failure violated task ordering",
-                        )));
-                    }
-                    state.outcome = Some(Err(LauncherTaskError::Spawn));
-                    remaining = remaining
-                        .checked_sub(1)
-                        .ok_or_else(|| io::Error::other("launcher completion counter underflow"))?;
-                }
-                _ => return Err(LauncherError::UnexpectedEvent(event)),
+        interval: Duration,
+        report: &mut R,
+    ) -> Result<(), LauncherError>
+    where
+        R: FnMut(usize, Duration),
+    {
+        // A zero period would be meaningless and is refused by the timer.
+        let interval = interval.max(Duration::from_millis(1));
+        let started = Instant::now();
+        let mut reports = interval_at(started + interval, interval);
+        reports.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            let remaining = states
+                .values()
+                .filter(|state| state.outcome.is_none())
+                .count();
+            if remaining == 0 {
+                return Ok(());
+            }
+            tokio::select! {
+                biased;
+                event = self.client.next_event() => record_launch_event(states, event?)?,
+                _ = reports.tick() => report(remaining, started.elapsed()),
             }
         }
-        Ok(())
     }
 
     /// Stop and reap the otherwise childless launch broker.
@@ -386,6 +328,72 @@ impl SupervisorLauncher {
     }
 }
 
+/// Apply one broker event to the batch it must belong to.
+///
+/// # Errors
+///
+/// Returns an error for an event of an unknown task or one out of order.
+fn record_launch_event(
+    states: &mut BTreeMap<BrokerTaskId, LaunchTaskState>,
+    event: ProcessBrokerEvent,
+) -> Result<(), LauncherError> {
+    match &event {
+        ProcessBrokerEvent::TaskStarted { task, .. } => {
+            let Some(state) = states.get_mut(task) else {
+                return Err(LauncherError::UnexpectedEvent(event));
+            };
+            if state.started || state.outcome.is_some() {
+                return Err(LauncherError::OperatingSystem(io::Error::other(
+                    "duplicate or late launcher start event",
+                )));
+            }
+            state.started = true;
+        }
+        ProcessBrokerEvent::TaskChild {
+            task,
+            event: child_event,
+        } if child_event.is_terminal() => {
+            let Some(state) = states.get_mut(task) else {
+                return Err(LauncherError::UnexpectedEvent(event));
+            };
+            if !state.started || state.outcome.is_some() {
+                return Err(LauncherError::OperatingSystem(io::Error::other(
+                    "launcher terminal event violated task ordering",
+                )));
+            }
+            state.outcome = Some(match child_event {
+                ChildEvent::Exited { code: 0, .. } => Ok(()),
+                terminal => Err(LauncherTaskError::Exited(*terminal)),
+            });
+        }
+        // A stop or continue of a launcher's own job control changes nothing:
+        // the launch is still on its way and ends with its terminal event.
+        ProcessBrokerEvent::TaskChild { task, .. } => {
+            let Some(state) = states.get(task) else {
+                return Err(LauncherError::UnexpectedEvent(event));
+            };
+            if !state.started || state.outcome.is_some() {
+                return Err(LauncherError::OperatingSystem(io::Error::other(
+                    "launcher job-control event violated task ordering",
+                )));
+            }
+        }
+        ProcessBrokerEvent::TaskSpawnFailed { task, .. } => {
+            let Some(state) = states.get_mut(task) else {
+                return Err(LauncherError::UnexpectedEvent(event));
+            };
+            if state.started || state.outcome.is_some() {
+                return Err(LauncherError::OperatingSystem(io::Error::other(
+                    "launcher spawn failure violated task ordering",
+                )));
+            }
+            state.outcome = Some(Err(LauncherTaskError::Spawn));
+        }
+        _ => return Err(LauncherError::UnexpectedEvent(event)),
+    }
+    Ok(())
+}
+
 fn prepare_launcher_command(
     binary: &Path,
     snapshot: &Path,
@@ -406,3 +414,6 @@ fn prepare_launcher_command(
         .argument(runtime_directory.as_os_str());
     Ok(command)
 }
+
+#[cfg(test)]
+mod tests;

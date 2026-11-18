@@ -4,7 +4,10 @@
 //! conditions, enforces startup/readiness/stop deadlines, and escalates timed
 //! out lifecycle hooks. Each transition either mutates the single executor
 //! context or asks the broker to signal an owned group, preserving signal order
-//! and keeping descriptor lifecycle shutdown serialized.
+//! and keeping descriptor lifecycle shutdown serialized. A deadline that only
+//! waits for the broker to confirm a start, a readiness outcome, or the end of
+//! a killed process never ends supervision when it passes: the wait is reported
+//! and kept (`overdue`). Only a state no deadline belongs to stays a fault.
 
 use std::{
     io,
@@ -16,9 +19,10 @@ use tokio::time::Instant as TokioInstant;
 use super::{
     AuxiliaryExecution, BROKER_EVENT_TIMEOUT, BrokerSignalScope, BrokerTaskId,
     CHILD_STARTUP_TIMEOUT, DescriptorExecution, DesiredState, ExecutionContext, ExecutorError,
-    LifecycleHookState, PendingSignal, PreparedExecution, ProcessBrokerClient, ProcessMode,
-    ProcessSignal, ReadinessMode, ServiceConfig, StateMachine, SupervisorState, TransitionError,
-    elapsed_seconds, finish_lifecycle_failure,
+    Generation, LifecycleHookState, PendingSignal, PreparedExecution, ProcessBrokerClient,
+    ProcessMode, ProcessSignal, ReadinessMode, ServiceConfig, StateMachine, SupervisorState,
+    TransitionError, elapsed_seconds, ending, finish_lifecycle_failure, handle_readiness_timer,
+    keep_killing_generation, keep_killing_task, keep_waiting,
 };
 
 pub(super) fn advance_childless_state(
@@ -62,9 +66,6 @@ pub(super) async fn handle_executor_timer(
     config: &ServiceConfig,
     execution: &mut ExecutionContext,
 ) -> Result<(), ExecutorError> {
-    if execution.lifecycle.is_some() {
-        return handle_lifecycle_timer(client, commands, config, execution).await;
-    }
     match execution.machine.state() {
         SupervisorState::WaitingCondition => {
             handle_waiting_timer(client, commands, config, execution).await?;
@@ -73,35 +74,21 @@ pub(super) async fn handle_executor_timer(
             execution.deadline = None;
             execution.machine.backoff_elapsed(generation)?;
         }
-        SupervisorState::Stopping(generation) if !execution.stop_kill_sent => {
-            client
-                .signal(generation, BrokerSignalScope::Group, ProcessSignal::Kill)
-                .await?;
-            execution
-                .pending_signals
-                .push_back(PendingSignal::Lifecycle);
-            execution.stop_kill_sent = true;
-            execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+        SupervisorState::Stopping(generation) => {
+            handle_stopping_timer(client, generation, execution).await?;
         }
-        SupervisorState::Stopping(_) => {
-            return Err(ExecutorError::BrokerTimedOut("service termination"));
-        }
-        SupervisorState::Starting(_) => {
+        SupervisorState::Starting(_)
+            if ending(&execution.machine, execution.shutdown_requested) =>
+        {
             return Err(ExecutorError::BrokerTimedOut("service startup"));
         }
-        // Job control suspends the readiness clock, so a paused generation
-        // should carry no deadline. Should one survive a race, disarming it is
-        // correct: the child is stopped and cannot make progress, and treating
-        // it as a fault would kill the supervisor over an operator command.
-        SupervisorState::Paused { .. } => {
-            execution.deadline = None;
-        }
-        // Job control suspends the readiness clock, so a paused generation
-        // should carry no deadline. Should one survive a race, disarming it is
-        // correct: the child is stopped and cannot make progress, and treating
-        // it as a fault would kill the supervisor over an operator command.
-        SupervisorState::Running(_) => {
-            return Err(ExecutorError::BrokerTimedOut("service readiness"));
+        SupervisorState::Starting(_) => keep_waiting(
+            &mut execution.overdue,
+            &mut execution.deadline,
+            "the service start",
+        ),
+        SupervisorState::Paused { .. } | SupervisorState::Running(_) => {
+            handle_readiness_timer(client, commands, config, execution).await?;
         }
         SupervisorState::Completed(_) => match execution.auxiliary {
             AuxiliaryExecution::HookRunning(task) => {
@@ -112,11 +99,18 @@ pub(super) async fn handle_executor_timer(
                 execution.auxiliary = AuxiliaryExecution::HookKilling(task);
                 execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
             }
-            AuxiliaryExecution::HookStarting(_) => {
+            AuxiliaryExecution::HookStarting(_)
+                if ending(&execution.machine, execution.shutdown_requested) =>
+            {
                 return Err(ExecutorError::BrokerTimedOut("post-exit hook startup"));
             }
-            AuxiliaryExecution::HookKilling(_) => {
-                return Err(ExecutorError::BrokerTimedOut("post-exit hook cleanup"));
+            AuxiliaryExecution::HookStarting(_) => keep_waiting(
+                &mut execution.overdue,
+                &mut execution.deadline,
+                "the post-exit command start",
+            ),
+            AuxiliaryExecution::HookKilling(task) => {
+                keep_killing_auxiliary(client, execution, task, "post-exit hook cleanup").await?;
             }
             _ => {
                 return Err(ExecutorError::Transition(TransitionError::Invalid {
@@ -129,11 +123,12 @@ pub(super) async fn handle_executor_timer(
         // hook was still being killed: the expired deadline is that cleanup's.
         SupervisorState::Down | SupervisorState::Exited | SupervisorState::Failed(_) => {
             match execution.auxiliary {
-                AuxiliaryExecution::Killing { .. } => {
-                    return Err(ExecutorError::BrokerTimedOut("condition cleanup"));
+                AuxiliaryExecution::Killing { task, .. } => {
+                    keep_killing_auxiliary(client, execution, task, "condition cleanup").await?;
                 }
-                AuxiliaryExecution::HookKilling(_) => {
-                    return Err(ExecutorError::BrokerTimedOut("post-exit hook cleanup"));
+                AuxiliaryExecution::HookKilling(task) => {
+                    keep_killing_auxiliary(client, execution, task, "post-exit hook cleanup")
+                        .await?;
                 }
                 _ => {
                     return Err(ExecutorError::Transition(TransitionError::Invalid {
@@ -153,6 +148,40 @@ pub(super) async fn handle_executor_timer(
     Ok(())
 }
 
+/// Escalate a stop that outlasted its grace to a group kill, then keep
+/// waiting for the reap, repeating the kill, unless the supervisor is ending.
+async fn handle_stopping_timer(
+    client: &mut ProcessBrokerClient,
+    generation: Generation,
+    execution: &mut ExecutionContext,
+) -> Result<(), ExecutorError> {
+    if !execution.stop_kill_sent {
+        client
+            .signal(generation, BrokerSignalScope::Group, ProcessSignal::Kill)
+            .await?;
+        execution
+            .pending_signals
+            .push_back(PendingSignal::Lifecycle);
+        execution.stop_kill_sent = true;
+        execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+        return Ok(());
+    }
+    if ending(&execution.machine, execution.shutdown_requested) {
+        return Err(ExecutorError::BrokerTimedOut("service termination"));
+    }
+    execution.deadline = Some(
+        keep_killing_generation(
+            client,
+            generation,
+            &mut execution.pending_signals,
+            &mut execution.overdue,
+            "the end of the killed service",
+        )
+        .await?,
+    );
+    Ok(())
+}
+
 pub(super) async fn handle_lifecycle_timer(
     client: &mut ProcessBrokerClient,
     commands: &PreparedExecution,
@@ -166,7 +195,7 @@ pub(super) async fn handle_lifecycle_timer(
         LifecycleHookState::Running => {
             let task = lifecycle.task;
             lifecycle.state = LifecycleHookState::Killing;
-            execution.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
+            lifecycle.deadline = Some(TokioInstant::now() + BROKER_EVENT_TIMEOUT);
             execution
                 .task_signals
                 .signal(client, task, ProcessSignal::Kill)
@@ -183,13 +212,71 @@ pub(super) async fn handle_lifecycle_timer(
             )
             .await
         }
-        LifecycleHookState::Starting => Err(ExecutorError::BrokerTimedOut(
-            "descriptor lifecycle hook startup",
-        )),
-        LifecycleHookState::Killing => Err(ExecutorError::BrokerTimedOut(
-            "descriptor lifecycle hook cleanup",
-        )),
+        LifecycleHookState::Starting
+            if ending(&execution.machine, execution.shutdown_requested) =>
+        {
+            Err(ExecutorError::BrokerTimedOut(
+                "descriptor lifecycle hook startup",
+            ))
+        }
+        LifecycleHookState::Starting => {
+            keep_waiting(
+                &mut execution.overdue,
+                &mut lifecycle.deadline,
+                "the descriptor lifecycle command start",
+            );
+            Ok(())
+        }
+        LifecycleHookState::Killing if ending(&execution.machine, execution.shutdown_requested) => {
+            Err(ExecutorError::BrokerTimedOut(
+                "descriptor lifecycle hook cleanup",
+            ))
+        }
+        LifecycleHookState::Killing => {
+            let task = lifecycle.task;
+            lifecycle.deadline = Some(
+                keep_killing_task(
+                    client,
+                    task,
+                    &mut execution.task_signals,
+                    &mut execution.overdue,
+                    "the end of the killed descriptor lifecycle command",
+                )
+                .await?,
+            );
+            Ok(())
+        }
     }
+}
+
+/// Keep waiting for the reap of a killed condition or post-exit hook,
+/// repeating the kill as [`keep_killing_task`] does, or give up on it as
+/// `operation` while the supervisor is ending.
+async fn keep_killing_auxiliary(
+    client: &mut ProcessBrokerClient,
+    execution: &mut ExecutionContext,
+    task: BrokerTaskId,
+    operation: &'static str,
+) -> Result<(), ExecutorError> {
+    if ending(&execution.machine, execution.shutdown_requested) {
+        return Err(ExecutorError::BrokerTimedOut(operation));
+    }
+    let what = if operation == "condition cleanup" {
+        "the end of the killed start condition"
+    } else {
+        "the end of the killed post-exit command"
+    };
+    execution.deadline = Some(
+        keep_killing_task(
+            client,
+            task,
+            &mut execution.task_signals,
+            &mut execution.overdue,
+            what,
+        )
+        .await?,
+    );
+    Ok(())
 }
 
 pub(super) async fn handle_waiting_timer(
@@ -224,10 +311,15 @@ pub(super) async fn handle_waiting_timer(
             Ok(())
         }
         (Some(_), Some(_), AuxiliaryExecution::Starting(_)) => {
-            Err(ExecutorError::BrokerTimedOut("condition startup"))
+            keep_waiting(
+                &mut execution.overdue,
+                &mut execution.deadline,
+                "the start condition start",
+            );
+            Ok(())
         }
-        (Some(_), Some(_), AuxiliaryExecution::Killing { .. }) => {
-            Err(ExecutorError::BrokerTimedOut("condition cleanup"))
+        (Some(_), Some(_), AuxiliaryExecution::Killing { task, .. }) => {
+            keep_killing_auxiliary(client, execution, task, "condition cleanup").await
         }
         _ => Err(ExecutorError::OperatingSystem(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -323,3 +415,6 @@ pub(super) async fn start_service(
     execution.deadline = Some(TokioInstant::now() + CHILD_STARTUP_TIMEOUT + BROKER_EVENT_TIMEOUT);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

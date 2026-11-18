@@ -18,6 +18,13 @@
 //! - The set offers no iteration, and no explicit group signal, a supervisor
 //!   request included, reaches a group it [`contains`](RetiringGroups::contains): once
 //!   a group may have emptied, its numeric ID can belong to an unrelated group.
+//!   The one exception repeats a kill whose delivery failed
+//!   ([`awaits_kill`](RetiringGroups::awaits_kill)), and only through a pin the
+//!   caller verified just before: the armed guard's helper, which still holds the
+//!   anchor, or an unreaped member leader. Such a group cannot have drained into
+//!   a reused ID, and without the repeat a kill the helper never received, for
+//!   instance because its exchange timed out before the request was queued,
+//!   would leave the group running for good.
 //!   A retiring generation's unreaped child can still be signalled as a
 //!   process, which its PID pins. A still-armed guard may instead be closed
 //!   fail-closed: its helper's owner-loss kill remains protected by its anchor.
@@ -37,6 +44,8 @@ use super::{ProcessGroupId, process_group_exists};
 #[derive(Debug, Default)]
 pub(super) struct RetiringGroups {
     groups: BTreeSet<ProcessGroupId>,
+    /// Retiring groups whose most recent kill was not delivered.
+    unconfirmed: BTreeSet<ProcessGroupId>,
     last_probe_error: Option<i32>,
 }
 
@@ -46,12 +55,30 @@ impl RetiringGroups {
         self.groups.insert(group);
     }
 
+    /// Remember a group whose kill failed to be delivered, so a pinned kill
+    /// may be repeated until one is.
+    pub(super) fn retire_unconfirmed(&mut self, group: ProcessGroupId) {
+        self.groups.insert(group);
+        self.unconfirmed.insert(group);
+    }
+
+    /// Record that a kill reached `group`, or that it had no member left.
+    pub(super) fn confirm(&mut self, group: ProcessGroupId) {
+        self.unconfirmed.remove(&group);
+    }
+
+    /// Whether `group` is retiring but its kill was never delivered.
+    pub(super) fn awaits_kill(&self, group: ProcessGroupId) -> bool {
+        self.unconfirmed.contains(&group)
+    }
+
     /// Stop waiting for `group`, whose ID now provably names a different group.
     ///
     /// A new process can lead a group with this ID only after every member of
     /// the old group was reaped, so the retiring entry is already satisfied.
     pub(super) fn forget(&mut self, group: ProcessGroupId) {
         self.groups.remove(&group);
+        self.unconfirmed.remove(&group);
     }
 
     /// Whether `group` is retiring, so no explicit group request may signal it again.
@@ -91,6 +118,8 @@ impl RetiringGroups {
                 true
             }
         });
+        let groups = &self.groups;
+        self.unconfirmed.retain(|group| groups.contains(group));
         self.last_probe_error = last_error;
     }
 }

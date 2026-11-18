@@ -17,10 +17,10 @@ use tokio::time::Instant as TokioInstant;
 
 use super::{
     BrokerLoggerId, BrokerSignalScope, BrokerTaskId, ChildResult, ConditionTracker, ControlCommand,
-    DesiredState, FailureReason, Generation, LastResult, OwnedPidFile, ProcessBrokerClient,
-    ProcessBrokerError, ProcessBrokerEvent, ProcessId, ProcessSignal, Response, RestartTracker,
-    ServiceConfig, StateMachine, StatusSnapshot, StopCompletion, SupervisorState, elapsed_seconds,
-    logger_status,
+    DesiredState, FailureReason, Generation, LastResult, OverdueReports, OwnedPidFile,
+    ProcessBrokerClient, ProcessBrokerError, ProcessBrokerEvent, ProcessId, ProcessSignal,
+    Response, RestartTracker, ServiceConfig, StateMachine, StatusSnapshot, StopCompletion,
+    SupervisorState, elapsed_seconds, logger_status,
 };
 use crate::status::{LoggerLastResult, LoggerStatus, SpawnDetail};
 
@@ -60,6 +60,8 @@ pub(super) struct ExecutionContext {
     pub(super) loggers: Vec<LoggerExecution>,
     pub(super) machine: StateMachine,
     pub(super) next_task: u64,
+    /// Rate limit for reports of broker answers that are late.
+    pub(super) overdue: OverdueReports,
     pub(super) pending_completion: Option<PendingCompletion>,
     pub(super) pending_detach: Option<PendingDetach>,
     pub(super) pending_signals: VecDeque<PendingSignal>,
@@ -96,6 +98,7 @@ impl ExecutionContext {
                 StateMachine::default()
             },
             next_task: 1,
+            overdue: OverdueReports::default(),
             pending_completion: None,
             pending_detach: None,
             pending_signals: VecDeque::new(),
@@ -129,14 +132,42 @@ impl ExecutionContext {
         } else {
             &[]
         };
+        let supervision = earliest(
+            self.deadline,
+            self.lifecycle
+                .as_ref()
+                .and_then(|lifecycle| lifecycle.deadline),
+        );
         loggers
             .iter()
             .filter_map(|logger| logger.state.deadline())
             .fold(
-                self.logger_shutdown.deadline().or(self.deadline),
-                |current, deadline| Some(current.map_or(deadline, |current| current.min(deadline))),
+                self.logger_shutdown.deadline().or(supervision),
+                |current, deadline| earliest(current, Some(deadline)),
             )
     }
+
+    /// Whether the lifecycle hook's own deadline has passed.
+    pub(super) fn lifecycle_deadline_due(&self) -> bool {
+        is_due(
+            self.lifecycle
+                .as_ref()
+                .and_then(|lifecycle| lifecycle.deadline),
+        )
+    }
+}
+
+/// The earlier of two optional deadlines.
+fn earliest(first: Option<TokioInstant>, second: Option<TokioInstant>) -> Option<TokioInstant> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(first.min(second)),
+        (first, second) => first.or(second),
+    }
+}
+
+/// Whether `deadline` is set and has passed.
+pub(super) fn is_due(deadline: Option<TokioInstant>) -> bool {
+    deadline.is_some_and(|deadline| deadline <= TokioInstant::now())
 }
 
 /// Signal acknowledgements the broker still owes for broker tasks.
@@ -181,6 +212,11 @@ impl OwedTaskAcknowledgements {
         true
     }
 
+    /// Whether an answer to a signal sent to `task` is still owed.
+    pub(super) fn owes(&self, task: BrokerTaskId) -> bool {
+        self.tasks.contains(&task)
+    }
+
     /// Number of acknowledgements still owed.
     #[cfg(test)]
     pub(super) const fn len(&self) -> usize {
@@ -202,9 +238,16 @@ pub(super) enum LifecycleHookState {
     WaitingLifetime,
 }
 
+/// One descriptor lifecycle hook and the deadline only it owns.
+///
+/// The hook keeps its own deadline beside the generation's: a reload runs while
+/// the service stays live, so readiness, job control, completion, and backoff
+/// keep driving the generation's deadline meanwhile, and neither may overwrite
+/// or clear the other's.
 pub(super) struct LifecycleExecution {
     pub(super) after: Option<StopCompletion>,
     pub(super) command: Option<ControlCommand>,
+    pub(super) deadline: Option<TokioInstant>,
     pub(super) generation: Generation,
     pub(super) kind: LifecycleHookKind,
     pub(super) previous_desired: DesiredState,

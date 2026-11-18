@@ -5,8 +5,9 @@
 //! after the task's reap, and a condition or hook is kept until its reap after
 //! a failed start that left a child or a kill the broker could not confirm.
 //! A stop or continue of a task's own job control changes nothing while the
-//! task runs or is being killed, and each cleanup deadline fails supervision
-//! closed. Events for a task no state owns stay protocol faults.
+//! task runs or is being killed, and a cleanup the broker confirms late is
+//! waited for rather than ending supervision. Events for a task no state owns
+//! stay protocol faults.
 
 use std::{error::Error, time::Duration};
 
@@ -19,10 +20,11 @@ use super::super::{
     logger::signal_logger_tier,
     prepare::prepare_execution,
     test_support::{
-        CONDITION, Fixture, POST_EXIT, SHARED, START_TIMED_OUT, cancelled_condition, continued,
-        failed_start, kill_failed, process, reap, reload_hook, stopped, time_out_shared_start,
+        CONDITION, Fixture, HOOK_TIMEOUT, POST_EXIT, SHARED, START_TIMED_OUT, cancelled_condition,
+        continued, failed_start, kill_failed, process, reap, reload_hook, stopped,
+        time_out_shared_start,
     },
-    timers::{cancel_auxiliary, handle_executor_timer},
+    timers::{cancel_auxiliary, handle_executor_timer, handle_lifecycle_timer},
 };
 use crate::{
     config::parse_str,
@@ -317,6 +319,7 @@ async fn a_lifecycle_hook_is_kept_until_its_reap() -> Result<(), Box<dyn Error>>
     let hook = |state| LifecycleExecution {
         after: None,
         command: None,
+        deadline: None,
         generation: Generation::FIRST,
         kind: LifecycleHookKind::Reload,
         previous_desired: DesiredState::Up,
@@ -342,7 +345,13 @@ async fn a_lifecycle_hook_is_kept_until_its_reap() -> Result<(), Box<dyn Error>>
     fixture.execution.lifecycle = Some(hook(LifecycleHookState::Starting));
     fixture.dispatch(failed_start(task, true)?).await?;
     assert_eq!(state(&fixture), Some(LifecycleHookState::Killing));
-    assert!(fixture.execution.deadline.is_some());
+    assert!(
+        fixture
+            .execution
+            .lifecycle
+            .as_ref()
+            .is_some_and(|hook| hook.deadline.is_some())
+    );
     Ok(())
 }
 
@@ -392,6 +401,7 @@ async fn job_control_events_do_not_disturb_a_lifecycle_hook_being_killed()
     fixture.execution.lifecycle = Some(LifecycleExecution {
         after: None,
         command: None,
+        deadline: None,
         generation: Generation::FIRST,
         kind: LifecycleHookKind::Reload,
         previous_desired: DesiredState::Up,
@@ -445,17 +455,19 @@ async fn a_lifecycle_hook_whose_kill_was_not_confirmed_ends_at_its_reap()
     Ok(())
 }
 
-/// The cleanup deadline armed with a kill still fails supervision closed
-/// when the reap never comes, now that a failed kill no longer ends the task.
+/// A hook whose reap is late is waited for, never given up on: ending
+/// supervision would end the service too, and starting another hook beside
+/// the leftover process is not allowed.
 #[tokio::test]
-async fn the_cleanup_deadline_of_a_lifecycle_hook_fails_closed() -> Result<(), Box<dyn Error>> {
+async fn an_overdue_lifecycle_hook_cleanup_keeps_waiting() -> Result<(), Box<dyn Error>> {
     let task = BrokerTaskId::new(54).ok_or("invalid test task")?;
     let mut fixture = Fixture::new()?;
     let prepared = prepare_execution(&fixture.config, false)?;
-    fixture.execution.lifecycle = Some(reload_hook(task, LifecycleHookState::Killing));
-    fixture.execution.deadline = Some(TokioInstant::now());
+    let mut hook = reload_hook(task, LifecycleHookState::Killing);
+    hook.deadline = Some(TokioInstant::now());
+    fixture.execution.lifecycle = Some(hook);
 
-    let outcome = handle_executor_timer(
+    let outcome = handle_lifecycle_timer(
         &mut fixture.client,
         &prepared.execution,
         &fixture.config,
@@ -463,17 +475,18 @@ async fn the_cleanup_deadline_of_a_lifecycle_hook_fails_closed() -> Result<(), B
     )
     .await;
 
-    assert!(matches!(
-        outcome,
-        Err(ExecutorError::BrokerTimedOut(
-            "descriptor lifecycle hook cleanup"
-        ))
-    ));
+    assert!(outcome.is_ok(), "{:?}", outcome.err());
+    let hook = fixture.execution.lifecycle.as_ref().ok_or("hook ended")?;
+    assert_eq!(hook.state, LifecycleHookState::Killing);
+    assert!(
+        hook.deadline
+            .is_some_and(|deadline| deadline > TokioInstant::now())
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn the_cleanup_deadline_of_a_condition_fails_closed() -> Result<(), Box<dyn Error>> {
+async fn an_overdue_condition_cleanup_keeps_waiting() -> Result<(), Box<dyn Error>> {
     let mut fixture = Fixture::new()?;
     fixture.config = parse_str(CONDITION)?;
     let prepared = prepare_execution(&fixture.config, false)?;
@@ -491,10 +504,17 @@ async fn the_cleanup_deadline_of_a_condition_fails_closed() -> Result<(), Box<dy
     )
     .await;
 
-    assert!(matches!(
-        outcome,
-        Err(ExecutorError::BrokerTimedOut("condition cleanup"))
-    ));
+    assert!(outcome.is_ok(), "{:?}", outcome.err());
+    assert_eq!(
+        fixture.execution.auxiliary,
+        AuxiliaryExecution::Killing { task, retry: true }
+    );
+    assert!(
+        fixture
+            .execution
+            .deadline
+            .is_some_and(|deadline| deadline > TokioInstant::now())
+    );
     Ok(())
 }
 
@@ -557,10 +577,10 @@ async fn a_condition_reaped_after_the_service_left_waiting_is_not_retried()
 
 /// Regression: a cleanup deadline expiring after the service went down or
 /// exited was reported as an invalid transition, not as the cleanup that
-/// failed to finish.
+/// had not finished. Such a cleanup is now waited for in every final state.
 #[tokio::test]
-async fn an_expired_cleanup_deadline_is_reported_as_the_cleanup_after_the_service_stopped()
--> Result<(), Box<dyn Error>> {
+async fn an_overdue_cleanup_after_the_service_stopped_keeps_waiting() -> Result<(), Box<dyn Error>>
+{
     for stopped_as in ["down", "exited", "failed"] {
         let (mut fixture, _task) = condition_killed_for_a_retry(62)?;
         if stopped_as == "exited" {
@@ -586,15 +606,121 @@ async fn an_expired_cleanup_deadline_is_reported_as_the_cleanup_after_the_servic
         )
         .await;
 
+        if stopped_as == "exited" {
+            // A supervisor told to halt is ending: its cleanup stays bounded.
+            assert!(
+                matches!(
+                    outcome,
+                    Err(ExecutorError::BrokerTimedOut("condition cleanup"))
+                ),
+                "{:?}",
+                outcome.err()
+            );
+            continue;
+        }
         assert!(
-            matches!(
-                outcome,
-                Err(ExecutorError::BrokerTimedOut("condition cleanup"))
-            ),
+            outcome.is_ok(),
             "{:?} in {:?}",
             outcome.err(),
             fixture.execution.machine.state()
         );
+        assert!(matches!(
+            fixture.execution.auxiliary,
+            AuxiliaryExecution::Killing { .. }
+        ));
+        assert_eq!(
+            fixture.execution.task_signals.len(),
+            1,
+            "the kill is asked for again"
+        );
+        assert!(
+            fixture
+                .execution
+                .deadline
+                .is_some_and(|deadline| deadline > TokioInstant::now()),
+            "{stopped_as}"
+        );
     }
+    Ok(())
+}
+
+/// Regression: a reload hook and the live generation shared one deadline, so
+/// the generation's readiness cleared the hook's, and a hook that then hung
+/// was never killed: every later control request was refused as conflicting.
+#[tokio::test]
+async fn a_readiness_declaration_during_a_reload_hook_keeps_the_hook_deadline()
+-> Result<(), Box<dyn Error>> {
+    let mut fixture = Fixture::new()?;
+    let generation = fixture.descriptor_generation()?;
+    let task = BrokerTaskId::new(70).ok_or("invalid test task")?;
+    let mut hook = reload_hook(task, LifecycleHookState::Running);
+    let hook_deadline = TokioInstant::now() + HOOK_TIMEOUT;
+    hook.deadline = Some(hook_deadline);
+    fixture.execution.lifecycle = Some(hook);
+
+    fixture
+        .dispatch(ProcessBrokerEvent::GenerationReady { generation })
+        .await?;
+
+    assert_eq!(
+        fixture.execution.machine.state(),
+        SupervisorState::Ready(generation)
+    );
+    assert_eq!(
+        fixture
+            .execution
+            .lifecycle
+            .as_ref()
+            .and_then(|hook| hook.deadline),
+        Some(hook_deadline)
+    );
+    Ok(())
+}
+
+/// Regression: a generation that completed while a reload hook ran scheduled
+/// its restart, and the hook's end then cleared that shared deadline. The
+/// service stayed in backoff with no timer and was never restarted.
+#[tokio::test]
+async fn a_backoff_scheduled_during_a_reload_hook_survives_the_hook() -> Result<(), Box<dyn Error>>
+{
+    let mut fixture = Fixture::new()?;
+    let generation = fixture.descriptor_generation()?;
+    fixture.execution.machine.child_ready(generation)?;
+    let task = BrokerTaskId::new(71).ok_or("invalid test task")?;
+    let mut hook = reload_hook(task, LifecycleHookState::Running);
+    hook.deadline = Some(TokioInstant::now() + HOOK_TIMEOUT);
+    fixture.execution.lifecycle = Some(hook);
+
+    fixture
+        .dispatch(ProcessBrokerEvent::Child {
+            generation,
+            event: ChildEvent::Exited {
+                pid: process()?,
+                code: 1,
+            },
+        })
+        .await?;
+    fixture
+        .dispatch(ProcessBrokerEvent::LifetimeClosed { generation })
+        .await?;
+    assert!(matches!(
+        fixture.execution.machine.state(),
+        SupervisorState::Backoff { .. }
+    ));
+    let backoff = fixture.execution.deadline;
+    assert!(backoff.is_some());
+
+    fixture
+        .dispatch(ProcessBrokerEvent::TaskChild {
+            task,
+            event: ChildEvent::Exited {
+                pid: process()?,
+                code: 0,
+            },
+        })
+        .await?;
+
+    assert!(fixture.execution.lifecycle.is_none());
+    assert_eq!(fixture.execution.deadline, backoff);
     Ok(())
 }

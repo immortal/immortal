@@ -21,7 +21,7 @@ use crate::supervisor::Generation;
 
 use super::error::ProcessBrokerError;
 use super::reap::{
-    GroupPin, disarm_generation_guard, group_pin, kill_live_group, pinned_by_another,
+    GroupPin, GuardRelease, disarm_generation_guard, group_pin, kill_live_group, pinned_by_another,
     signal_live_group,
 };
 use super::retiring::RetiringGroups;
@@ -32,7 +32,9 @@ use super::state::{
     LifetimeObservation, LifetimeState,
 };
 use super::wire::write_event;
-use super::{BrokerEvent, BrokerRequest, BrokerSignalTarget, ProcessSignal, SignalTarget, signal};
+use super::{
+    BrokerEvent, BrokerRequest, BrokerSignalTarget, ProcessId, ProcessSignal, SignalTarget, signal,
+};
 
 pub(super) async fn handle_broker_request<W>(
     request: BrokerRequest,
@@ -140,7 +142,7 @@ where
         .and_then(|entry| entry.guard.as_ref())
         .and_then(|guard| guard.process().ok());
     if generations.len() != 1
-        || processes.len() != 2
+        || detachable_processes(processes) != 2
         || processes.get(&child.process()) != Some(&BrokerOwnedProcess::Generation(generation))
         || guard_process.is_none_or(|guard| {
             processes.get(&guard) != Some(&BrokerOwnedProcess::Guard(generation))
@@ -148,7 +150,7 @@ where
     {
         return write_event(writer, &BrokerEvent::DetachFailed { generation }).await;
     }
-    if disarm_generation_guard(generation, generations, processes).is_err() {
+    if disarm_generation_guard(generation, generations, processes)? != GuardRelease::Released {
         // Disarming took the guard, so its anchor no longer pins the group and
         // the main-child reap will not kill or retire it; kill and retire it
         // here only if its unreaped PID equals the group ID.
@@ -164,6 +166,16 @@ where
     // The released group is no longer the broker's to drain.
     retiring.forget(child.group());
     write_event(writer, &BrokerEvent::Detached { generation }).await
+}
+
+/// Owned processes that count against a detach: every one but the helper of
+/// an earlier guard whose release failed and which is still exiting. Such a
+/// helper pins nothing, so it must not refuse an otherwise valid detach.
+fn detachable_processes(processes: &BTreeMap<ProcessId, BrokerOwnedProcess>) -> usize {
+    processes
+        .values()
+        .filter(|owned| !matches!(owned, BrokerOwnedProcess::ReleasedGuard(_)))
+        .count()
 }
 
 /// Deliver a supervisor-requested signal to a generation's child or group.
@@ -232,4 +244,31 @@ where
         },
     };
     write_event(writer, &event).await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::error::Error;
+
+    use crate::supervisor::Generation;
+
+    use super::super::state::BrokerOwnedProcess;
+    use super::{ProcessId, detachable_processes};
+
+    /// Regression: the helper of an earlier guard whose release failed refused
+    /// every later detach, although it pins nothing.
+    #[test]
+    fn a_released_guard_helper_does_not_refuse_a_detach() -> Result<(), Box<dyn Error>> {
+        let generation = Generation::new(2).ok_or("invalid test generation")?;
+        let earlier = Generation::new(1).ok_or("invalid test generation")?;
+        let pid = |raw| ProcessId::new(raw).ok_or("invalid test pid");
+        let processes = BTreeMap::from([
+            (pid(10)?, BrokerOwnedProcess::Generation(generation)),
+            (pid(11)?, BrokerOwnedProcess::Guard(generation)),
+            (pid(12)?, BrokerOwnedProcess::ReleasedGuard(earlier)),
+        ]);
+        assert_eq!(detachable_processes(&processes), 2);
+        Ok(())
+    }
 }
