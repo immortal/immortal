@@ -12,6 +12,7 @@
 pub mod build_info;
 pub mod config;
 pub mod control;
+mod diagnostic;
 pub mod executor;
 pub mod exit;
 pub mod logging;

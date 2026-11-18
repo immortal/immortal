@@ -115,7 +115,7 @@ pub(crate) fn start_process_broker_with_logging(
             ) {
                 Ok(()) => 0,
                 Err(error) => {
-                    eprintln!("immortal process broker: {error}");
+                    crate::diagnostic::report(format_args!("immortal process broker: {error}"));
                     BROKER_EXIT_SOFTWARE
                 }
             };
@@ -160,7 +160,9 @@ fn run_broker_process(
 /// other broker diagnostic.
 fn isolate_broker_process_group() {
     if let Err(error) = fork::create_current_process_group() {
-        eprintln!("immortal process broker: process group isolation unavailable: {error}");
+        crate::diagnostic::report(format_args!(
+            "immortal process broker: process group isolation unavailable: {error}"
+        ));
     }
 }
 
@@ -175,7 +177,9 @@ fn acquire_broker_subreaper() -> bool {
     match acquire_subreaper() {
         Ok(status) => status.is_acquired(),
         Err(error) => {
-            eprintln!("immortal process broker: subreaper unavailable: {error}");
+            crate::diagnostic::report(format_args!(
+                "immortal process broker: subreaper unavailable: {error}"
+            ));
             false
         }
     }
@@ -197,6 +201,8 @@ fn acquire_broker_subreaper() -> bool {
 /// never aborts supervision.
 fn acquire_supervisor_subreaper() {
     if let Err(error) = acquire_subreaper() {
-        eprintln!("immortal supervisor: subreaper unavailable: {error}");
+        crate::diagnostic::report(format_args!(
+            "immortal supervisor: subreaper unavailable: {error}"
+        ));
     }
 }

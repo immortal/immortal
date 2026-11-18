@@ -367,7 +367,9 @@ fn reap_adopted_orphan(
         )));
     }
     if event.is_terminal() {
-        eprintln!("immortal process broker: reaped adopted orphan {process}");
+        crate::diagnostic::report(format_args!(
+            "immortal process broker: reaped adopted orphan {process}"
+        ));
     }
     Ok(())
 }
