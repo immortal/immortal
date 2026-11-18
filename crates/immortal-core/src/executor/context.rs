@@ -47,6 +47,10 @@ pub(super) struct ExecutionContext {
     pub(super) descriptor: Option<DescriptorExecution>,
     pub(super) epoch: Instant,
     pub(super) first_start: bool,
+    /// Counts accepted operator requests that change what the supervisor
+    /// wants, so a completion can tell whether one arrived while it was
+    /// pending.
+    pub(super) goal_revision: u64,
     /// Number of logger failures recorded so far, which orders them across
     /// loggers so status reports the most recent one.
     pub(super) logger_failures: u64,
@@ -80,6 +84,7 @@ impl ExecutionContext {
             descriptor: None,
             epoch: Instant::now(),
             first_start: true,
+            goal_revision: 0,
             logger_failures: 0,
             task_signals: OwedTaskAcknowledgements::default(),
             logger_shutdown: LoggerShutdownState::Running,
@@ -424,6 +429,8 @@ impl AuxiliaryExecution {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct PendingCompletion {
     pub(super) generation: Generation,
+    /// The operator goal revision when the generation completed.
+    pub(super) goal_revision: u64,
     pub(super) policy_result: ChildResult,
     pub(super) runtime_seconds: u64,
     pub(super) stop: Option<StopCompletion>,

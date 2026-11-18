@@ -324,7 +324,15 @@ process_mode: foreground  # foreground | descriptor-tracking
 ### Defaults and readiness
 
 All shown sections except `version` and `command` have defaults. Absent restart
-limits mean retry forever. `max_retries` counts starts after the initial start.
+limits mean retry forever. A service its restart policy does not restart,
+under `never` or after a successful exit under `on-failure`, stays down: a
+supervisor with a control socket keeps running with the service down until an
+operator starts it again. A start, restart, or once requested while the
+service's post-exit command still runs is kept and carried out. `immortaldir`
+treats such a service like one an operator stopped and leaves its supervisor in
+place, so a changed definition stays pending while the service is down: it is
+applied once a scan finds the service running again, or, after the supervisor
+is halted, by the new supervisor the next scan launches. `max_retries` counts starts after the initial start.
 Exhausting a restart limit normally leaves the controlled supervisor in
 `Failed`; with `exit_when_done: true`, it instead drains its logging graph and
 exits with the preserved failure reason and temporary-failure status. A burst

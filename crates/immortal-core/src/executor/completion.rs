@@ -259,6 +259,7 @@ pub(super) async fn complete_generation(
     }
     let completion = PendingCompletion {
         generation,
+        goal_revision: execution.goal_revision,
         policy_result,
         runtime_seconds,
         stop,
@@ -342,6 +343,17 @@ pub(super) fn finish_completion(
     );
     if let RestartDecision::ExitFailure(reason) = decision {
         execution.terminal_failure = Some(reason);
+    }
+    // The restart policy, not an operator, chose to leave the service down,
+    // so it stays down until it is started again. Keeping the goal at `Up`
+    // made the event loop start it again at once, without backoff, for ever.
+    // A start, restart, or once an operator asked for while a post-exit hook
+    // still ran is newer than this decision and is kept.
+    if completion.stop.is_none()
+        && completion.goal_revision == execution.goal_revision
+        && matches!(decision, RestartDecision::StayDown)
+    {
+        execution.machine.set_desired(DesiredState::Down);
     }
     if after_hook {
         execution
@@ -427,3 +439,6 @@ pub(super) fn outcome(
         starts: tracker.total_starts(),
     }
 }
+
+#[cfg(test)]
+mod tests;

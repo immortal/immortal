@@ -121,6 +121,11 @@ pub(super) async fn apply_control_command(
     let operation = command.request().operation;
     let decision = decide_request(service_name, &mut execution.machine, command.request());
     let mut response = decision.response;
+    if response.code == ResponseCode::Ok
+        && !matches!(operation, Operation::Status | Operation::Signal)
+    {
+        execution.goal_revision = execution.goal_revision.wrapping_add(1);
+    }
     if operation == Operation::Status && response.code == ResponseCode::Ok {
         response.status = Some(execution.status.snapshot(
             &execution.machine,
