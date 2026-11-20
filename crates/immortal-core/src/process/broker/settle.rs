@@ -94,14 +94,18 @@ mod tests {
 
     /// Without any child signal the wait still returns after one poll, well
     /// before a distant deadline, so a silently drained group is noticed.
+    ///
+    /// `SIGCHLD` reaches every listener in the process, and other tests in
+    /// this binary end children at any moment, so the wait listens to
+    /// `SIGUSR2`, which nothing here sends: no wake can come from the stream.
     #[tokio::test]
     async fn a_wait_without_child_signals_returns_after_one_poll() -> Result<(), Box<dyn Error>> {
-        let mut child_signal = signal(SignalKind::child())?;
+        let mut quiet_signal = signal(SignalKind::user_defined2())?;
         let mut poll = POLL_START;
         let started = Instant::now();
         wait_for_change(
             started + Duration::from_secs(5),
-            &mut child_signal,
+            &mut quiet_signal,
             &mut poll,
         )
         .await?;
